@@ -69,8 +69,10 @@ try {
   }
 
   if (-not $SkipInstall) {
-    & $Sdb -s $Device install $DeployWgt
-    if ($LASTEXITCODE -ne 0) { throw "WGT installation failed with exit code $LASTEXITCODE" }
+    # The NU7100 accepts this package through the Tizen CLI installer. Direct
+    # `sdb install` can upload the WGT and then close without invoking WAS.
+    & $TizenCli install -n (Split-Path -Leaf $DeployWgt) -s $Device -- $DeployDirectory
+    if ($LASTEXITCODE -ne 0) { throw "Tizen CLI installation failed with exit code $LASTEXITCODE" }
   }
 
   if ($Launch) {

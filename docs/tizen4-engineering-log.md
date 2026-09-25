@@ -39,3 +39,11 @@ The Tizen 4 auth QR now uses the QR library's locally generated GIF data URL in 
 - Packaged Web Service startup and module availability.
 - AVPlay format, track, subtitle, seek, suspend/resume, and error behavior.
 - Any local P2P proof of concept.
+
+## Deployment experiment (2026-09-25)
+
+- The candidate was signed successfully with the existing `NU7100-Nuvio` profile. The profile and certificates were not modified.
+- Direct `sdb install` uploaded the WGT but then returned `closed` / exit code 1 without starting the TV installer.
+- `tizen install -n NuvioTV001_1.2.0.wgt -s 192.168.129.0:26101 -- <artifact-directory>` completed the TV WAS installation successfully.
+- `sdb shell 0 execute NuvioTV001.NuvioTV` launched the installed application successfully (PID 5530 for this run).
+- The repeatable deploy script now uses the verified Tizen CLI installation path.
