@@ -4,6 +4,8 @@ export { ScreenUtils } from "../../navigation/screen.js";
 
 export { addonRepository } from "../../../data/repository/addonRepository.js";
 
+export { createTizen4DirectPlaybackProbe } from "../../../core/streams/tizen4DirectPlaybackProbe.js";
+
 export { LocalStore } from "../../../core/storage/localStore.js";
 
 export { SessionStore } from "../../../core/storage/sessionStore.js";

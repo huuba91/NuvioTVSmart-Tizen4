@@ -39,3 +39,7 @@ The frontend validates loopback hosts and does not accept a remote service URL a
 
 - Automated: manifest parsing, resource eligibility, stream normalization, subtitle headers, magnet/direct separation, proxy URL construction, P2P bridge URL construction, player backend selection, build, and WGT packaging.
 - Hardware: controlled legal HTTP/HLS/DASH sources, AVPlay buffering/seeking/transport controls, audio/subtitle tracks, suspend/resume, and all P2P behavior.
+
+### Controlled direct-play probe
+
+The fork-only About action **Tizen 4 direct-play test** creates a synthetic add-on result, passes it through `mapAddonStream()`, verifies that it classifies as `direct-http`, and routes the normalized candidate through the normal player screen. It uses W3C's HTTPS Sintel MP4 test asset (`media.w3.org/2010/05/sintel/trailer.mp4`), which advertises `video/mp4`, byte ranges, and a content length of approximately 4.2 MB. No hosted Nuvio frontend, external player, piracy-specific provider, or PC-side media server is involved.

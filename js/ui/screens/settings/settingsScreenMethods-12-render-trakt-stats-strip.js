@@ -4,6 +4,7 @@ import * as internals from "./settingsScreenContext.js";
 export function createSettingsScreenMethods12() {
   const {
     Router,
+    createTizen4DirectPlaybackProbe,
     ScreenUtils,
     renderMemberBrandWordmark,
     bindRootSidebarEvents,
@@ -132,6 +133,23 @@ export function createSettingsScreenMethods12() {
         await this.render({ refreshModel: false });
       });
       this.actionMap.set("about:debugConsole", () => Router.navigate("debugConsole"));
+      if (globalThis.__NUVIO_FORK_BUILD__) {
+        this.actionMap.set("about:tizen4DirectPlay", () => {
+          const stream = createTizen4DirectPlaybackProbe();
+          Router.navigate("player", {
+            streamUrl: stream.url,
+            itemId: null,
+            itemType: "movie",
+            videoId: null,
+            startFromBeginning: true,
+            playerTitle: "Tizen 4 direct-play test",
+            playerSubtitle: "W3C Sintel MP4",
+            streamCandidates: [stream],
+            preferredStreamId: stream.id,
+            playbackSourceContext: stream.streamOrigin
+          });
+        });
+      }
 
       return `
           ${this.renderSectionHeader(SECTION_META.find((item) => item.id === "about"))}
@@ -176,6 +194,16 @@ export function createSettingsScreenMethods12() {
                 subtitle: t("about_debug_console_subtitle", {}, "Show latest error/warning events"),
                 leadingIcon: "terminal"
               })}
+              ${
+                globalThis.__NUVIO_FORK_BUILD__
+                  ? this.renderActionRow({
+                      focusKey: "about:tizen4DirectPlay",
+                      title: "Tizen 4 direct-play test",
+                      subtitle: "Play the controlled W3C Sintel MP4 through the normal source and player path",
+                      leadingIcon: "play"
+                    })
+                  : ""
+              }
             </div>
           </div>
         `;
