@@ -6,7 +6,6 @@ nuvio.env.js
 local.properties
 local.example.properties
 node_modules/
-tests/
 *.ipk
 *.wgt
 dist/

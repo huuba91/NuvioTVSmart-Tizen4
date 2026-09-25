@@ -117,11 +117,9 @@ export function createAuthQrSignInScreenMethods02() {
       if (!content) {
         qrContainer.innerHTML = `<span class="qr-code-unavailable">${escapeHtml(I18n.t("auth.qr.unavailable"))}</span>`;
       } else {
-        qrContainer.innerHTML = `<canvas class="qr-image qr-image-canvas" aria-label="${escapeHtml(
-          I18n.t("auth.qr.qrImageAlt")
-        )}"></canvas>`;
+        qrContainer.innerHTML = `<img class="qr-image qr-image-legacy" alt="${escapeHtml(I18n.t("auth.qr.qrImageAlt"))}" />`;
         try {
-          QrCodeGenerator.generate(qrContainer.querySelector("canvas"), content, 320);
+          QrCodeGenerator.generate(qrContainer.querySelector("img"), content, 320);
         } catch (error) {
           console.warn("Unable to render QR code locally", error);
           qrContainer.innerHTML = `<span class="qr-code-unavailable">${escapeHtml(I18n.t("auth.qr.unavailable"))}</span>`;
