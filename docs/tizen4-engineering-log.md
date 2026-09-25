@@ -69,3 +69,5 @@ After importing the public runtime configuration, packaging it under a content-h
 - `tizen install -n NuvioTV001_1.2.0.wgt -s 192.168.129.0:26101 -- <artifact-directory>` completed the TV WAS installation successfully.
 - `sdb shell 0 execute NuvioTV001.NuvioTV` launched the installed application successfully (PID 5530 for this run).
 - The repeatable deploy script now uses the verified Tizen CLI installation path.
+- After a hard TV reboot, SDB can take several connection attempts before the target appears even while Developer Mode remains configured. The deploy script now waits up to 45 seconds by default and treats `sdb devices`, rather than the exit status of `sdb connect`, as authoritative. The timeout is adjustable with `-ConnectTimeoutSeconds`; this avoids unnecessary rebuilds or immediate manual reboot advice when the daemon is merely still starting.
+- Direct-play probe build `d1bc629` was signed with the unchanged `NU7100-Nuvio` profile, installed through the verified Tizen CLI path, and launched successfully. Physical media playback behavior remains a hardware-required checkpoint.

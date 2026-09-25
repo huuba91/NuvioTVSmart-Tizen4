@@ -4,6 +4,8 @@ param(
   [string]$DeviceName = "UE49NU7100",
   [string]$SigningProfile = "NU7100-Nuvio",
   [string]$TizenStudio = "C:\tizen-studio",
+  [ValidateRange(0, 300)]
+  [int]$ConnectTimeoutSeconds = 45,
   [switch]$SkipBuild,
   [switch]$SkipInstall,
   [switch]$Launch,
@@ -23,6 +25,36 @@ $DeployDirectory = Join-Path $ProjectRoot ".cache\tizen4-deploy"
 $DeployWgt = Join-Path $DeployDirectory "NuvioTV001_$PackageVersion.wgt"
 $ApplicationId = "NuvioTV001.NuvioTV"
 $RuntimeEnvVerifier = Join-Path $ProjectRoot "scripts\verify-tizen-runtime-env.mjs"
+
+function Wait-TizenDevice {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Target,
+    [Parameter(Mandatory = $true)]
+    [string]$SdbPath,
+    [int]$TimeoutSeconds = 45
+  )
+
+  $Stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+  $Attempt = 0
+  do {
+    $Attempt += 1
+    # SDB can return success while a stale TV daemon remains absent from the
+    # device list, so the authoritative check is always `sdb devices`.
+    & $SdbPath connect $Target 2>&1 | Out-Null
+    $ConnectedDevices = (& $SdbPath devices 2>&1 | Out-String)
+    if ($ConnectedDevices -match [regex]::Escape($Target)) {
+      Write-Host "Tizen TV connected at $Target (attempt $Attempt)."
+      return
+    }
+
+    if ($Stopwatch.Elapsed.TotalSeconds -ge $TimeoutSeconds) {
+      throw "Tizen TV did not appear in SDB at $Target within $TimeoutSeconds seconds. Confirm the TV is awake, Developer Mode is enabled, and the host PC IP is allowed."
+    }
+    Write-Host "Waiting for Tizen TV at $Target..."
+    Start-Sleep -Seconds ([Math]::Min(3, [Math]::Max(1, $TimeoutSeconds - [int]$Stopwatch.Elapsed.TotalSeconds)))
+  } while ($true)
+}
 
 foreach ($RequiredPath in @($TizenCli, $Sdb)) {
   if (-not (Test-Path -LiteralPath $RequiredPath)) {
@@ -70,12 +102,7 @@ try {
   & $TizenCli package -t wgt -s $SigningProfile -- $DeployWgt
   if ($LASTEXITCODE -ne 0) { throw "WGT signing failed with exit code $LASTEXITCODE" }
 
-  & $Sdb connect $Device
-  if ($LASTEXITCODE -ne 0) { throw "SDB connection failed for $Device" }
-  $ConnectedDevices = (& $Sdb devices | Out-String)
-  if ($ConnectedDevices -notmatch [regex]::Escape($Device)) {
-    throw "Tizen TV is not listed by SDB at $Device"
-  }
+  Wait-TizenDevice -Target $Device -SdbPath $Sdb -TimeoutSeconds $ConnectTimeoutSeconds
 
   if (-not $SkipInstall) {
     # The NU7100 accepts this package through the Tizen CLI installer. Direct
