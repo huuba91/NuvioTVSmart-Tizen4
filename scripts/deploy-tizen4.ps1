@@ -107,8 +107,20 @@ try {
   if (-not $SkipInstall) {
     # The NU7100 accepts this package through the Tizen CLI installer. Direct
     # `sdb install` can upload the WGT and then close without invoking WAS.
-    & $TizenCli install -n (Split-Path -Leaf $DeployWgt) -s $Device -- $DeployDirectory
-    if ($LASTEXITCODE -ne 0) { throw "Tizen CLI installation failed with exit code $LASTEXITCODE" }
+    $InstallOutput = @(& $TizenCli install -n (Split-Path -Leaf $DeployWgt) -s $Device -- $DeployDirectory 2>&1)
+    $InstallExitCode = $LASTEXITCODE
+    $InstallOutput | ForEach-Object { Write-Host $_ }
+    if ($InstallExitCode -ne 0) {
+      $InstallText = $InstallOutput -join "`n"
+      if ($InstallText -match "download failed\[116\]") {
+        throw @"
+Tizen CLI installation failed with Samsung WAS download error 116.
+The package transferred and SDB is connected, but the TV rejected it before validation.
+On this TV this can indicate unavailable Smart Hub/app download storage. Check Apps > Settings for free space, remove only unwanted apps if needed, then cold-boot the TV and retry. The installed Nuvio app and its data were not changed.
+"@
+      }
+      throw "Tizen CLI installation failed with exit code $InstallExitCode"
+    }
   }
 
   if ($Launch) {
