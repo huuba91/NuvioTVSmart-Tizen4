@@ -5,6 +5,7 @@ export function createSettingsScreenMethods12() {
   const {
     Router,
     createTizen4DirectPlaybackProbe,
+    openTizen4PlaybackMatrixOverlay,
     ScreenUtils,
     renderMemberBrandWordmark,
     bindRootSidebarEvents,
@@ -134,6 +135,9 @@ export function createSettingsScreenMethods12() {
       });
       this.actionMap.set("about:debugConsole", () => Router.navigate("debugConsole"));
       if (globalThis.__NUVIO_FORK_BUILD__) {
+        this.actionMap.set("about:tizen4PlaybackMatrix", () => {
+          openTizen4PlaybackMatrixOverlay();
+        });
         this.actionMap.set("about:tizen4DirectPlay", () => {
           const stream = createTizen4DirectPlaybackProbe();
           Router.navigate("player", {
@@ -196,6 +200,16 @@ export function createSettingsScreenMethods12() {
                 subtitle: t("about_debug_console_subtitle", {}, "Show latest error/warning events"),
                 leadingIcon: "terminal"
               })}
+              ${
+                globalThis.__NUVIO_FORK_BUILD__
+                  ? this.renderActionRow({
+                      focusKey: "about:tizen4PlaybackMatrix",
+                      title: "Tizen 4 playback matrix (MATRIX1)",
+                      subtitle: "Automatically compare packaged MP4, remote MP4, HLS, HTML video and AVPlay",
+                      leadingIcon: "play"
+                    })
+                  : ""
+              }
               ${
                 globalThis.__NUVIO_FORK_BUILD__
                   ? this.renderActionRow({
