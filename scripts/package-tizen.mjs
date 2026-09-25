@@ -881,7 +881,11 @@ async function packageTizen() {
     await addDirectoryToZip(zip, stagingDir);
     const buffer = await zip.generateAsync({
       type: "nodebuffer",
-      compression: "DEFLATE"
+      compression: "DEFLATE",
+      // Development WGTs are transferred into the TV's constrained Smart Hub
+      // download area before installation. Prefer the smallest deterministic
+      // archive; this does not alter the unpacked application or its services.
+      compressionOptions: { level: 9 }
     });
     await writeFile(outputPath, buffer);
     await assertTizenServicePackage(outputPath, {
