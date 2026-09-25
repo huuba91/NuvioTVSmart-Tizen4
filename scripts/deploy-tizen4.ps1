@@ -23,6 +23,8 @@ $PackageVersion = ([string]$PackageMetadata.version -replace "^v", "")
 $UnsignedWgt = Join-Path $ProjectRoot "NuvioTV001_$PackageVersion.wgt"
 $DeployDirectory = Join-Path $ProjectRoot ".cache\tizen4-deploy"
 $DeployWgt = Join-Path $DeployDirectory "NuvioTV001_$PackageVersion.wgt"
+$SignedDirectory = Join-Path $DeployDirectory "signed"
+$SignedWgt = Join-Path $SignedDirectory "NuvioTV001_$PackageVersion.wgt"
 $ApplicationId = "NuvioTV001.NuvioTV"
 $RuntimeEnvVerifier = Join-Path $ProjectRoot "scripts\verify-tizen-runtime-env.mjs"
 
@@ -54,6 +56,29 @@ function Wait-TizenDevice {
     Write-Host "Waiting for Tizen TV at $Target..."
     Start-Sleep -Seconds ([Math]::Min(3, [Math]::Max(1, $TimeoutSeconds - [int]$Stopwatch.Elapsed.TotalSeconds)))
   } while ($true)
+}
+
+function Assert-SignedWgt {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Path
+  )
+
+  if (-not (Test-Path -LiteralPath $Path)) {
+    throw "Tizen CLI reported success but did not create the signed WGT: $Path"
+  }
+
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $Archive = [System.IO.Compression.ZipFile]::OpenRead($Path)
+  try {
+    foreach ($SignatureName in @("author-signature.xml", "signature1.xml")) {
+      if (-not $Archive.GetEntry($SignatureName)) {
+        throw "Tizen CLI output is unsigned: missing $SignatureName in $Path"
+      }
+    }
+  } finally {
+    $Archive.Dispose()
+  }
 }
 
 foreach ($RequiredPath in @($TizenCli, $Sdb)) {
@@ -97,10 +122,19 @@ try {
   New-Item -ItemType Directory -Force -Path $DeployDirectory | Out-Null
   Copy-Item -LiteralPath $UnsignedWgt -Destination $DeployWgt -Force
 
+  if (Test-Path -LiteralPath $SignedDirectory) {
+    Remove-Item -LiteralPath $SignedDirectory -Recurse -Force
+  }
+  New-Item -ItemType Directory -Force -Path $SignedDirectory | Out-Null
+
   # This uses the existing profile only. It never creates or modifies a
-  # certificate, private key, or security profile.
-  & $TizenCli package -t wgt -s $SigningProfile -- $DeployWgt
+  # certificate, private key, or security profile. Use a distinct output
+  # directory: repackaging a WGT in place can return success without adding
+  # signature files on older Tizen Studio CLI versions.
+  & $TizenCli package -t wgt -s $SigningProfile -o $SignedDirectory -- $DeployWgt
   if ($LASTEXITCODE -ne 0) { throw "WGT signing failed with exit code $LASTEXITCODE" }
+  Assert-SignedWgt -Path $SignedWgt
+  Copy-Item -LiteralPath $SignedWgt -Destination $DeployWgt -Force
 
   Wait-TizenDevice -Target $Device -SdbPath $Sdb -TimeoutSeconds $ConnectTimeoutSeconds
 
