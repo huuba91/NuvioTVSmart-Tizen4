@@ -22,6 +22,7 @@ export function createAuthQrSignInScreenMethods02() {
       this.container.querySelector("#qr-back-btn")?.addEventListener("click", () => {
         void this.handleContinueAction();
       });
+      this.container.querySelector("[data-action='switch-login-mode']")?.addEventListener("click", () => this.switchLoginMode());
       this.container
         .querySelector("[data-action='use-official']")
         ?.addEventListener("click", () => this.openServerConnection("officialReview"));
@@ -60,6 +61,18 @@ export function createAuthQrSignInScreenMethods02() {
       }
       this.isServerMenuOpen = !this.isServerMenuOpen;
       this.render();
+    },
+    switchLoginMode() {
+      if (this.isLeaving || !this.emailLoginAvailable || !this.qrLoginAvailable) return;
+      this.stopIntervals();
+      this.useEmailLogin = !this.useEmailLogin;
+      this.useQrLogin = !this.useEmailLogin;
+      this.emailError = "";
+      this.focusAfterRender = this.useEmailLogin ? "#auth-email-input" : "#qr-refresh-btn";
+      this.render();
+      if (this.useQrLogin) {
+        void this.startQr();
+      }
     },
     openSignOutConfirmation() {
       if (this.isLeaving || !this.isSignedIn) return;

@@ -133,6 +133,12 @@ export function supportsTvLogin(configuration) {
   );
 }
 
-export function supportsEmailPasswordAuth(configuration) {
-  return Boolean(configuration?.capabilities?.emailPasswordAuth);
+export function supportsEmailPasswordAuth(configuration, { allowOfficialFallback = false } = {}) {
+  if (configuration?.capabilities?.emailPasswordAuth) return true;
+  return Boolean(
+    allowOfficialFallback &&
+    configuration?.isCustom === false &&
+    configuration?.backendUrl &&
+    configuration?.publishableKey
+  );
 }

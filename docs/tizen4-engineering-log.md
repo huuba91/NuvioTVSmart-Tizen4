@@ -36,6 +36,8 @@ The first candidate installed and opened the QR login session, but the physical 
 
 Candidate 2 also displayed a completely white frame on the physical TV while its `NU7100-T4 QR2` marker was visible. This proves the expected build was installed and rules out both the generated GIF and direct Canvas surfaces on this firmware. Candidate 3 renders the same local QR matrix as ordinary absolutely positioned HTML elements, coalescing adjacent dark modules into horizontal runs. It does not depend on image decoding, SVG, Canvas, CSS Grid, or pixel-buffer APIs. Its visible marker is `NU7100-T4 QR3 · HTML`.
 
+Candidate 3's marker was visible on the physical TV, but its ordinary HTML dark runs also failed to appear. Because three independent render surfaces all produce the same white result while the login session and surrounding UI remain active, build `NU7100-T4 LOGIN4 · EMAIL` makes the existing email/password flow the default for the packaged Tizen app. The override is limited to the official configured backend in the Tizen package; custom servers still advertise their own authentication capabilities. QR remains available as a secondary mode.
+
 ## Hardware-required checkpoints
 
 - Auth QR is visibly rendered and scannable.

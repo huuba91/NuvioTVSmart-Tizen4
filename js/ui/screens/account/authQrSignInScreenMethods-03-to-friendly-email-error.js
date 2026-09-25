@@ -209,6 +209,8 @@ export function createAuthQrSignInScreenMethods03() {
         this.openServerConnection(action === "use-official" ? "officialReview" : "input");
       } else if (action === "refresh") {
         this.handleRefreshAction();
+      } else if (action === "switch-login-mode") {
+        this.switchLoginMode();
       } else if (action === "signout") {
         this.openSignOutConfirmation();
       } else if (action === "back") {

@@ -28,7 +28,7 @@ const tizenPluginServiceRelativePath = "services/tizen/plugin-service.js";
 const tizenPluginServiceSourceRelativePath = "services/plugin-http.cjs";
 const tizenEngineFsServicePort = 2710;
 const tizenPluginServicePort = 2711;
-const tizen4ForkBuildLabel = "NU7100-T4 QR3 · HTML";
+const tizen4ForkBuildLabel = "NU7100-T4 LOGIN4 · EMAIL";
 
 function buildTizenServiceBridgeMarkup(enabled) {
   if (!enabled) return "";
@@ -202,6 +202,7 @@ function buildMainJs({ packageId, includeEngineFsService, includePluginService }
   });
   return `window.__NUVIO_PLATFORM__ = "tizen";
 window.__NUVIO_FORK_BUILD__ = ${JSON.stringify(tizen4ForkBuildLabel)};
+window.__NUVIO_TIZEN_EMAIL_LOGIN_ENABLED__ = true;
 window.__NUVIO_TIZEN_ENGINEFS_SERVICE_ENABLED__ = ${includeEngineFsService};
 window.__NUVIO_TIZEN_ENGINEFS_SERVICE_ID__ = ${JSON.stringify(configuredServiceId)};
 window.__NUVIO_TIZEN_PLUGIN_SERVICE_ENABLED__ = ${includePluginService};
