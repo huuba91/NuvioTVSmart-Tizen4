@@ -2,7 +2,7 @@
 import * as internals from "./playerController.js";
 
 export function createPlayerControllerMethods18() {
-  const { Platform, TizenPlaybackProxy, WebOsPlaybackProxy, logEngineFsDebug, logTizenAvPlayDebug, logWebOsPlaybackDebug } = internals;
+  const { Platform, TizenPlaybackProxy, WebOsPlaybackProxy, logEngineFsDebug, logTizenAvPlayDebug, logWebOsPlaybackDebug, canFallbackFromPlaybackEngine } = internals;
 
   return {
     async play(
@@ -218,7 +218,7 @@ export function createPlayerControllerMethods18() {
           }
           const isRemoteProgressiveTizenSource =
             Platform.isTizen() && nativeFallbackEngine === "native-file" && this.isRemoteDirectHttpSource(playbackUrl);
-          if (isRemoteProgressiveTizenSource) {
+          if (!canFallbackFromPlaybackEngine(forceEngine) || isRemoteProgressiveTizenSource) {
             if (!this.isPlaybackRequestActive(playToken, playbackUrl)) {
               return;
             }
@@ -236,8 +236,8 @@ export function createPlayerControllerMethods18() {
             warningLabel: "Playback start rejected",
             playToken,
             beforePlay: () => this.waitForNativeMediaId(),
-            onRejected: (error) => {
-              if (!this.isUnsupportedSourceError(error) || !this.canUseAvPlay()) {
+          onRejected: (error) => {
+            if (!canFallbackFromPlaybackEngine(forceEngine) || !this.isUnsupportedSourceError(error) || !this.canUseAvPlay()) {
                 return false;
               }
               const fallbackStarted = this.playWithAvPlay(playbackUrl, requestHeaders, sourceType, playToken);
@@ -275,7 +275,7 @@ export function createPlayerControllerMethods18() {
           playToken,
           beforePlay: () => this.waitForNativeMediaId(),
           onRejected: (error) => {
-            if (!this.isUnsupportedSourceError(error)) {
+            if (!canFallbackFromPlaybackEngine(forceEngine) || !this.isUnsupportedSourceError(error)) {
               return false;
             }
             const fallbackStarted = this.playWithHlsJs(playbackUrl, requestHeaders, playToken);
@@ -292,7 +292,7 @@ export function createPlayerControllerMethods18() {
           playToken,
           beforePlay: () => this.waitForNativeMediaId(),
           onRejected: (error) => {
-            if (!this.isUnsupportedSourceError(error) || !this.canUseDashJs()) {
+            if (!canFallbackFromPlaybackEngine(forceEngine) || !this.isUnsupportedSourceError(error) || !this.canUseDashJs()) {
               return false;
             }
             const fallbackStarted = this.playWithDashJs(playbackUrl, playToken);
@@ -321,7 +321,7 @@ export function createPlayerControllerMethods18() {
           playToken,
           beforePlay: shouldStageWebOsNativePlayback ? null : () => this.waitForNativeMediaId(),
           onRejected: (error) => {
-            if (!this.isUnsupportedSourceError(error) || !this.canUseAvPlay() || !this.isLikelyDirectFileUrl(playbackUrl)) {
+            if (!canFallbackFromPlaybackEngine(forceEngine) || !this.isUnsupportedSourceError(error) || !this.canUseAvPlay() || !this.isLikelyDirectFileUrl(playbackUrl)) {
               return false;
             }
             const fallbackStarted = this.playWithAvPlay(playbackUrl, requestHeaders, sourceType, playToken);

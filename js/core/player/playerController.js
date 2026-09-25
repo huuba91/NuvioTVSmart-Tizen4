@@ -26,6 +26,7 @@ import { WebOSPlayerExtensions } from "../../platform/webos/webosPlayerExtension
 import { loadStreamingLibs } from "../../runtime/loadStreamingLibs.js";
 import { WATCH_PROGRESS_UNKNOWN_DURATION_PERCENT } from "../../domain/model/watchProgress.js";
 import { parseAspectRatio } from "./playerAspect.js";
+import { canFallbackFromPlaybackEngine } from "./playbackEngineFallbackPolicy.js";
 
 import { createPlayerControllerMethods01 } from "./playerControllerMethods-01-is-expected-play-interruption.js";
 import { createPlayerControllerMethods02 } from "./playerControllerMethods-02-is-likely-direct-file-url.js";
@@ -95,6 +96,7 @@ export {
   loadStreamingLibs,
   WATCH_PROGRESS_UNKNOWN_DURATION_PERCENT,
   parseAspectRatio,
+  canFallbackFromPlaybackEngine,
   MIN_PROGRESS_SYNC_DURATION_MS,
   WATCH_PROGRESS_SAVE_INTERVAL_MS,
   WATCH_PROGRESS_SAVE_THRESHOLD_MS,

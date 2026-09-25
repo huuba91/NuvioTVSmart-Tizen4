@@ -142,8 +142,8 @@ export function createSettingsScreenMethods12() {
             itemType: "movie",
             videoId: null,
             startFromBeginning: true,
-            playerTitle: "Tizen 4 direct-play test (PKG2)",
-            playerSubtitle: "DIAG PKG2 pending · Packaged 10-second H.264 MP4",
+            playerTitle: "Tizen 4 direct-play test (PKG3)",
+            playerSubtitle: "DIAG PKG3 pending · HTML-only packaged H.264 MP4",
             streamCandidates: [stream],
             preferredStreamId: stream.id,
             playbackSourceContext: stream.streamOrigin,
@@ -200,7 +200,7 @@ export function createSettingsScreenMethods12() {
                 globalThis.__NUVIO_FORK_BUILD__
                   ? this.renderActionRow({
                       focusKey: "about:tizen4DirectPlay",
-                      title: "Tizen 4 direct-play test (PKG2)",
+                      title: "Tizen 4 direct-play test (PKG3)",
                       subtitle: "Isolate the decoder with a small network-free H.264 file",
                       leadingIcon: "play"
                     })
