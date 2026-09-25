@@ -1,5 +1,6 @@
 import { access, cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,7 +29,7 @@ const tizenPluginServiceRelativePath = "services/tizen/plugin-service.js";
 const tizenPluginServiceSourceRelativePath = "services/plugin-http.cjs";
 const tizenEngineFsServicePort = 2710;
 const tizenPluginServicePort = 2711;
-const tizen4ForkBuildLabel = "NU7100-T4 LOGIN4 · EMAIL";
+const tizen4ForkBuildLabel = "NU7100-T4 QR4 · HASHED";
 
 function buildTizenServiceBridgeMarkup(enabled) {
   if (!enabled) return "";
@@ -189,7 +190,12 @@ ${pluginServiceBridge}  <link rel="stylesheet" href="css/bundle.css" />
 `;
 }
 
-function buildMainJs({ packageId, includeEngineFsService, includePluginService }) {
+function buildMainJs({
+  packageId,
+  includeEngineFsService,
+  includePluginService,
+  appBundleFileName
+}) {
   const engineFsServiceId = `${packageId}.EngineFsService`;
   const pluginServiceId = `${packageId}.PluginService`;
   const configuredServiceId = includeEngineFsService ? engineFsServiceId : "";
@@ -202,7 +208,6 @@ function buildMainJs({ packageId, includeEngineFsService, includePluginService }
   });
   return `window.__NUVIO_PLATFORM__ = "tizen";
 window.__NUVIO_FORK_BUILD__ = ${JSON.stringify(tizen4ForkBuildLabel)};
-window.__NUVIO_TIZEN_EMAIL_LOGIN_ENABLED__ = true;
 window.__NUVIO_TIZEN_ENGINEFS_SERVICE_ENABLED__ = ${includeEngineFsService};
 window.__NUVIO_TIZEN_ENGINEFS_SERVICE_ID__ = ${JSON.stringify(configuredServiceId)};
 window.__NUVIO_TIZEN_PLUGIN_SERVICE_ENABLED__ = ${includePluginService};
@@ -247,7 +252,7 @@ function loadScript(src) {
 function startNuvioApp() {
   loadScript("nuvio.env.js");
   loadScript("assets/libs/qrcode-generator.js");
-  loadScript("app.bundle.js");
+  loadScript(${JSON.stringify(appBundleFileName)});
 }
 
 if (window.NuvioBootGuard && typeof window.NuvioBootGuard.runCompatibilityGate === "function") {
@@ -315,6 +320,10 @@ async function stagePackage({
   includePluginService,
   serviceMetadataXml
 }) {
+  const appBundleSourcePath = path.join(distDir, "app.bundle.js");
+  const appBundleBytes = await readFile(appBundleSourcePath);
+  const appBundleHash = createHash("sha256").update(appBundleBytes).digest("hex").slice(0, 16);
+  const appBundleFileName = `app.bundle.${appBundleHash}.js`;
   await rm(stagingDir, { recursive: true, force: true });
   await mkdir(stagingDir, { recursive: true });
 
@@ -322,7 +331,7 @@ async function stagePackage({
     copyDistFolder("assets"),
     copyDistFolder("css"),
     copyDistFolder("res"),
-    cp(path.join(distDir, "app.bundle.js"), path.join(stagingDir, "app.bundle.js")),
+    cp(appBundleSourcePath, path.join(stagingDir, appBundleFileName)),
     cp(path.join(distDir, "core-js.bundle.js"), path.join(stagingDir, "core-js.bundle.js")),
     cp(path.join(distDir, "boot-guard.js"), path.join(stagingDir, "boot-guard.js")),
     cp(path.join(distDir, "youtube-proxy.html"), path.join(stagingDir, "youtube-proxy.html")),
@@ -349,7 +358,8 @@ async function stagePackage({
       buildMainJs({
         packageId,
         includeEngineFsService,
-        includePluginService
+        includePluginService,
+        appBundleFileName
       }),
       "utf8"
     )

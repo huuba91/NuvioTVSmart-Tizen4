@@ -38,6 +38,10 @@ Candidate 2 also displayed a completely white frame on the physical TV while its
 
 Candidate 3's marker was visible on the physical TV, but its ordinary HTML dark runs also failed to appear. Because three independent render surfaces all produce the same white result while the login session and surrounding UI remain active, build `NU7100-T4 LOGIN4 · EMAIL` makes the existing email/password flow the default for the packaged Tizen app. The override is limited to the official configured backend in the Tizen package; custom servers still advertise their own authentication capabilities. QR remains available as a secondary mode.
 
+The physical TV showed the new `LOGIN4 · EMAIL` label but continued running the old QR screen logic. Package inspection proved the unsigned source WGT and the signed deployment WGT had identical application-bundle hashes and both contained the email override. The label was injected by `main.js`, while the screen logic lives in the dynamically loaded, repeatedly named `app.bundle.js`; this isolates the mismatch to persistent WRT resource caching across same-version updates. Packaging now gives the compiled application bundle a filename derived from its SHA-256 content hash. Build `LOGIN5 · HASHED` also uses a separate `LOGIN5 · BUNDLE` label compiled into the application bundle itself, so the hardware screen can prove that the updated logic—not merely the updated launcher—was loaded.
+
+The email-login override was withdrawn before the cache-busted candidate at the user's request so QR could be validated first. Build `QR4 · HASHED` restores the official QR flow, loads the HTML-run renderer from a content-hashed application bundle, and displays `QR4 · BUNDLE` from code compiled inside that bundle. Seeing that exact bundle marker alongside a rendered QR will validate both cache invalidation and the renderer on hardware.
+
 ## Hardware-required checkpoints
 
 - Auth QR is visibly rendered and scannable.

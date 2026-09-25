@@ -1,6 +1,12 @@
 /* eslint-disable no-unused-vars */
 import * as internals from "./authQrSignInScreen.js";
 
+const AUTH_SCREEN_BUILD_LABEL = "NU7100-T4 QR4 · BUNDLE";
+
+function renderAuthScreenBuildLabel(escapeHtml) {
+  return globalThis.__NUVIO_FORK_BUILD__ ? `<div class="qr-build-label">${escapeHtml(AUTH_SCREEN_BUILD_LABEL)}</div>` : "";
+}
+
 export function createAuthQrSignInScreenMethods01() {
   const {
     Router,
@@ -40,12 +46,8 @@ export function createAuthQrSignInScreenMethods01() {
       this.connectedStats = null;
       this.isConnectedStatsLoading = this.isSignedIn;
       this.serverConfiguration = ServerConfigurationStore.getActive();
-      this.emailLoginAvailable = supportsEmailPasswordAuth(this.serverConfiguration, {
-        allowOfficialFallback: globalThis.__NUVIO_TIZEN_EMAIL_LOGIN_ENABLED__ === true
-      });
-      this.qrLoginAvailable = supportsTvLogin(this.serverConfiguration);
-      this.useEmailLogin = this.emailLoginAvailable;
-      this.useQrLogin = this.qrLoginAvailable && !this.useEmailLogin;
+      this.useEmailLogin = supportsEmailPasswordAuth(this.serverConfiguration);
+      this.useQrLogin = supportsTvLogin(this.serverConfiguration) && !this.useEmailLogin;
       ScreenUtils.show(this.container);
       this.render();
 
@@ -85,7 +87,7 @@ export function createAuthQrSignInScreenMethods01() {
               </div>
 
               <div class="qr-copy-block">
-                <h1 class="qr-title">${I18n.t(this.useEmailLogin ? "auth.signIn.title" : "auth.qr.title")}</h1>
+                <h1 class="qr-title">${I18n.t("auth.qr.title")}</h1>
                 <p id="qr-description" class="qr-description">${this.getLeftDescription()}</p>
                 ${this.renderConnectedAccountIdentity()}
               </div>
@@ -153,14 +155,13 @@ export function createAuthQrSignInScreenMethods01() {
                 ${escapeHtml(I18n.t(this.isEmailSubmitting ? "auth.email.signingIn" : "auth.email.signIn"))}
               </button>
               ${this.emailError ? `<p class="qr-login-error" role="alert">${escapeHtml(this.emailError)}</p>` : ""}
-              ${globalThis.__NUVIO_FORK_BUILD__ ? `<div class="qr-build-label">${escapeHtml(globalThis.__NUVIO_FORK_BUILD__)}</div>` : ""}
             </form>
           `;
       }
 
       return `
           <div id="qr-container" class="qr-code-frame"></div>
-          ${globalThis.__NUVIO_FORK_BUILD__ ? `<div class="qr-build-label">${escapeHtml(globalThis.__NUVIO_FORK_BUILD__)}</div>` : ""}
+          ${renderAuthScreenBuildLabel(escapeHtml)}
           <div id="qr-manual-text" class="qr-manual-text"></div>
           <div id="qr-code-text" class="qr-code-text"></div>
           <div id="qr-expiry" class="qr-expiry"></div>
@@ -262,13 +263,7 @@ export function createAuthQrSignInScreenMethods01() {
       const continueLabel = `<button type="button" id="qr-back-btn" class="qr-action-btn qr-action-btn-secondary focusable" data-action="back">
           ${escapeHtml(backLabel)}
         </button>`;
-      const switchLoginMode =
-        !this.isSignedIn && this.emailLoginAvailable && this.qrLoginAvailable
-          ? `<button type="button" class="qr-action-btn qr-action-btn-secondary focusable" data-action="switch-login-mode">
-               ${escapeHtml(I18n.t(this.useEmailLogin ? "auth.signIn.openQrLogin" : "auth.email.signIn"))}
-             </button>`
-          : "";
-      return `${refreshAction}${switchLoginMode}${continueLabel}`;
+      return `${refreshAction}${continueLabel}`;
     },
     renderServerMenu(items) {
       return `
