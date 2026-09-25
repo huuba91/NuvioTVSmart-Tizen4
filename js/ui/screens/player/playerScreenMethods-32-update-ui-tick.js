@@ -123,7 +123,7 @@ export function createPlayerScreenMethods32() {
               ? "source-child"
               : "current-src"
           : "no-src";
-        const diagnosticText = `DIAG LAN1 · engine=${engine} · ready=${readyState} · network=${networkState} · error=${errorCode} · ${sourceState}`;
+        const diagnosticText = `DIAG PKG1 · engine=${engine} · ready=${readyState} · network=${networkState} · error=${errorCode} · ${sourceState}`;
         const diagnosticNode = uiRefs.loadingSubtitle;
         if (diagnosticNode) {
           diagnosticNode.textContent = diagnosticText;

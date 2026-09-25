@@ -19,6 +19,7 @@ const requireConfiguredRuntimeEnv = /^(1|true|yes|on)$/i.test(
   String(process.env.NUVIO_REQUIRE_LOCAL_PROPERTIES || "")
 );
 const debugBundle = /^(1|true|yes|on)$/i.test(String(process.env.NUVIO_DEBUG_BUNDLE || ""));
+const tizen4ProbeMediaFile = String(process.env.NUVIO_TIZEN4_PROBE_MEDIA_FILE || "").trim();
 const legacyViewport = {
   width: 1920,
   height: 1080,
@@ -611,6 +612,10 @@ async function runBuild() {
       cp(path.join(rootDir, "boot-guard.js"), path.join(distDir, "boot-guard.js")),
       cp(path.join(rootDir, "docs", "youtube-proxy.html"), path.join(distDir, "youtube-proxy.html"))
     ]);
+    if (tizen4ProbeMediaFile) {
+      await cp(tizen4ProbeMediaFile, path.join(distDir, "assets", "tizen4-probe-sintel.mp4"));
+      console.log("included optional Tizen 4 packaged media probe");
+    }
     await buildI18nBundles({ rootDir, distDir });
     await buildCoreJsBundle();
     await Promise.all([

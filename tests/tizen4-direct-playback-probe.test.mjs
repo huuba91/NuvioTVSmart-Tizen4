@@ -10,12 +10,12 @@ import {
   TIZEN4_DIRECT_PLAYBACK_PROBE_URL
 } from "../js/core/streams/tizen4DirectPlaybackProbe.js";
 
-test("controlled Tizen 4 probe follows direct add-on stream normalization", () => {
+test("controlled Tizen 4 packaged probe follows stream normalization", () => {
   const stream = createTizen4DirectPlaybackProbe();
   assert.equal(stream.url, TIZEN4_DIRECT_PLAYBACK_PROBE_URL);
   assert.equal(streamDirectPlaybackUrl(stream), TIZEN4_DIRECT_PLAYBACK_PROBE_URL);
   assert.deepEqual(classifyPlaybackSource(stream), {
-    kind: "direct-http",
+    kind: "direct-other",
     url: TIZEN4_DIRECT_PLAYBACK_PROBE_URL
   });
   assert.equal(stream.mimeType, "video/mp4");

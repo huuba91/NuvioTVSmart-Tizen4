@@ -142,8 +142,8 @@ export function createSettingsScreenMethods12() {
             itemType: "movie",
             videoId: null,
             startFromBeginning: true,
-            playerTitle: "Tizen 4 direct-play test (LAN1)",
-            playerSubtitle: "DIAG LAN1 pending · PC-hosted Sintel MP4",
+            playerTitle: "Tizen 4 direct-play test (PKG1)",
+            playerSubtitle: "DIAG PKG1 pending · Packaged Sintel MP4",
             streamCandidates: [stream],
             preferredStreamId: stream.id,
             playbackSourceContext: stream.streamOrigin,
@@ -200,8 +200,8 @@ export function createSettingsScreenMethods12() {
                 globalThis.__NUVIO_FORK_BUILD__
                   ? this.renderActionRow({
                       focusKey: "about:tizen4DirectPlay",
-                      title: "Tizen 4 direct-play test (LAN1)",
-                      subtitle: "Temporarily isolate HTTPS from the browser player over local HTTP",
+                      title: "Tizen 4 direct-play test (PKG1)",
+                      subtitle: "Isolate the decoder with a network-free packaged media file",
                       leadingIcon: "play"
                     })
                   : ""
