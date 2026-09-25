@@ -253,10 +253,30 @@ export function openTizen4PlaybackMatrixOverlay() {
       }
       output.textContent = results.length ? results.map(formatMatrixResult).join("\n") : "No result yet.";
     }
-  }).catch((error) => {
-    complete = true;
-    status.textContent = "MATRIX ERROR";
-    output.textContent = `${output.textContent}\n${String(error?.stack || error?.message || error)}`;
-  });
+  })
+    .then(async (summary) => {
+      const reportUrl = String(globalThis.__NUVIO_TIZEN4_MATRIX_REPORT_URL__ || "").trim();
+      if (!reportUrl) return;
+      try {
+        await fetch(reportUrl, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain;charset=UTF-8" },
+          body: JSON.stringify(summary)
+        });
+        status.textContent = "COMPLETE · results sent to development PC";
+      } catch (error) {
+        output.textContent += `\nreport-error: ${String(error?.message || error)}`;
+      }
+    })
+    .catch((error) => {
+      complete = true;
+      status.textContent = "MATRIX ERROR";
+      output.textContent = `${output.textContent}\n${String(error?.stack || error?.message || error)}`;
+    });
   return overlay;
+}
+
+if (globalThis.__NUVIO_TIZEN4_MATRIX_AUTO_RUN__ && !globalThis.__NUVIO_TIZEN4_MATRIX_STARTED__) {
+  globalThis.__NUVIO_TIZEN4_MATRIX_STARTED__ = true;
+  setTimeout(() => openTizen4PlaybackMatrixOverlay(), 2500);
 }
