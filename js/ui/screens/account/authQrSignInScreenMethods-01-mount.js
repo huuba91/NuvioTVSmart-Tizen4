@@ -1,12 +1,6 @@
 /* eslint-disable no-unused-vars */
 import * as internals from "./authQrSignInScreen.js";
 
-const AUTH_SCREEN_BUILD_LABEL = "NU7100-T4 QR5 · DIAG";
-
-function renderAuthScreenBuildLabel(escapeHtml) {
-  return globalThis.__NUVIO_FORK_BUILD__ ? `<div class="qr-build-label">${escapeHtml(AUTH_SCREEN_BUILD_LABEL)}</div>` : "";
-}
-
 export function createAuthQrSignInScreenMethods01() {
   const {
     Router,
@@ -161,8 +155,6 @@ export function createAuthQrSignInScreenMethods01() {
 
       return `
           <div id="qr-container" class="qr-code-frame"></div>
-          ${renderAuthScreenBuildLabel(escapeHtml)}
-          <div id="qr-render-diagnostic" class="qr-build-label">QR diagnostic pending</div>
           <div id="qr-manual-text" class="qr-manual-text"></div>
           <div id="qr-code-text" class="qr-code-text"></div>
           <div id="qr-expiry" class="qr-expiry"></div>

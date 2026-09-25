@@ -83,13 +83,9 @@ export const QrCodeGenerator = {
       }
     }
 
-    root.__nuvioQrDiagnostics = {
-      moduleCount,
-      moduleSize,
-      margin,
-      runCount,
-      darkModuleCount
-    };
+    root.dataset.moduleCount = String(moduleCount);
+    root.dataset.darkModuleCount = String(darkModuleCount);
+    root.dataset.runCount = String(runCount);
 
     container.innerHTML = "";
     container.appendChild(root);

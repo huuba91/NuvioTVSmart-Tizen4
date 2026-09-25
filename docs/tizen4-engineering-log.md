@@ -48,6 +48,10 @@ The physical `QR5 · DIAG` screen remained at `QR diagnostic pending`. Package i
 
 The runtime environment is also assigned a SHA-256-derived filename during Tizen packaging. This prevents the TV WRT from reusing the previously installed blank `nuvio.env.js` even after the WGT has been corrected. Package verification requires exactly one hashed environment script, forbids the legacy filename, and confirms `main.js` loads the packaged hash.
 
+### Hardware result
+
+After importing the public runtime configuration, packaging it under a content-hashed filename, signing with the unchanged `NU7100-Nuvio` profile, and reinstalling, the physical UE49NU7100 rendered the QR code successfully. The user scanned it and confirmed that the device linked to the account. The temporary on-screen QR diagnostics were then removed; module/run counts remain as DOM data attributes for nonintrusive inspection. The HTML-run renderer, configured-package preflight, and content-hashed application/environment assets remain in the production candidate.
+
 ## Hardware-required checkpoints
 
 - Auth QR is visibly rendered and scannable.
