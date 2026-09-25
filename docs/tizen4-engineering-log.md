@@ -42,6 +42,8 @@ The physical TV showed the new `LOGIN4 · EMAIL` label but continued running the
 
 The email-login override was withdrawn before the cache-busted candidate at the user's request so QR could be validated first. Build `QR4 · HASHED` restores the official QR flow, loads the HTML-run renderer from a content-hashed application bundle, and displays `QR4 · BUNDLE` from code compiled inside that bundle. Seeing that exact bundle marker alongside a rendered QR will validate both cache invalidation and the renderer on hardware.
 
+The TV displayed `QR4 · BUNDLE`, definitively proving that the cache-busted application bundle loaded, but the QR frame remained white. Build `QR5 · DIAG` adds non-sensitive on-screen diagnostics for matrix modules, dark modules, horizontal runs, DOM children, painted element dimensions, and computed background color. It also changes the empty run elements from semantic `<i>` nodes to ordinary `<div>` nodes to eliminate another firmware-specific rendering variable.
+
 ## Hardware-required checkpoints
 
 - Auth QR is visibly rendered and scannable.

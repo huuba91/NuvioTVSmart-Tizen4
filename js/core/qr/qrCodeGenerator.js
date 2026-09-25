@@ -54,6 +54,8 @@ export const QrCodeGenerator = {
     root.style.cssText =
       `position:relative;display:block;width:${requestedSize}px;height:${requestedSize}px;` +
       "overflow:hidden;background:#fff;";
+    let runCount = 0;
+    let darkModuleCount = 0;
 
     // Render one ordinary HTML element per horizontal dark run. This avoids
     // every image, SVG, and Canvas path while keeping the DOM reasonably small.
@@ -68,15 +70,26 @@ export const QrCodeGenerator = {
         while (column < moduleCount && qr.isDark(row, column)) {
           column += 1;
         }
-        const run = documentRef.createElement("i");
+        const runLength = column - runStart;
+        const run = documentRef.createElement("div");
         run.setAttribute("aria-hidden", "true");
         run.style.cssText =
           `position:absolute;display:block;left:${margin + runStart * moduleSize}px;` +
-          `top:${margin + row * moduleSize}px;width:${(column - runStart) * moduleSize}px;` +
+          `top:${margin + row * moduleSize}px;width:${runLength * moduleSize}px;` +
           `height:${moduleSize}px;background:#000;`;
         root.appendChild(run);
+        runCount += 1;
+        darkModuleCount += runLength;
       }
     }
+
+    root.__nuvioQrDiagnostics = {
+      moduleCount,
+      moduleSize,
+      margin,
+      runCount,
+      darkModuleCount
+    };
 
     container.innerHTML = "";
     container.appendChild(root);

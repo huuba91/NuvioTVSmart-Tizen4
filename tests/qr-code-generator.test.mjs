@@ -120,8 +120,11 @@ test("HTML renderer paints integer-aligned dark runs without image or canvas API
   assert.match(root.style.cssText, /width:320px;height:320px/);
   assert.match(root.style.cssText, /background:#fff/);
   assert.ok(root.children.length > 0);
+  assert.equal(root.__nuvioQrDiagnostics.moduleCount, 21);
+  assert.equal(root.__nuvioQrDiagnostics.runCount, root.children.length);
+  assert.ok(root.__nuvioQrDiagnostics.darkModuleCount > 0);
   root.children.forEach((run) => {
-    assert.equal(run.tagName, "I");
+    assert.equal(run.tagName, "DIV");
     assert.match(run.style.cssText, /background:#000/);
     assert.match(run.style.cssText, /left:\d+px;top:\d+px;width:\d+px;height:\d+px/);
   });

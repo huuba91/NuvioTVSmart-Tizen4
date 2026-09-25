@@ -112,6 +112,7 @@ export function createAuthQrSignInScreenMethods02() {
       const qrContainer = this.container?.querySelector("#qr-container");
       const codeText = this.container?.querySelector("#qr-code-text");
       const manualText = this.container?.querySelector("#qr-manual-text");
+      const diagnosticText = this.container?.querySelector("#qr-render-diagnostic");
       if (!qrContainer || !codeText) return;
       const content = String(loginUrl || "").trim();
       if (!content) {
@@ -120,9 +121,24 @@ export function createAuthQrSignInScreenMethods02() {
         try {
           const qrNode = QrCodeGenerator.renderHtml(qrContainer, content, 320);
           qrNode.setAttribute("aria-label", I18n.t("auth.qr.qrImageAlt"));
+          const details = qrNode.__nuvioQrDiagnostics || {};
+          const firstRun = qrNode.firstElementChild;
+          const computedBackground =
+            firstRun && typeof getComputedStyle === "function" ? String(getComputedStyle(firstRun).backgroundColor || "?") : "n/a";
+          if (diagnosticText) {
+            diagnosticText.innerText =
+              `M${details.moduleCount || 0} D${details.darkModuleCount || 0} ` +
+              `R${details.runCount || 0} DOM${qrNode.children.length} ` +
+              `W${qrNode.offsetWidth || 0}/${firstRun?.offsetWidth || 0} BG:${computedBackground}`;
+          }
         } catch (error) {
           console.warn("Unable to render QR code locally", error);
           qrContainer.innerHTML = `<span class="qr-code-unavailable">${escapeHtml(I18n.t("auth.qr.unavailable"))}</span>`;
+          if (diagnosticText) {
+            diagnosticText.innerText = `QR ERROR: ${String(error?.message || error || "unknown")}`;
+            diagnosticText.style.color = "#ff8a80";
+            diagnosticText.style.fontSize = "16px";
+          }
         }
       }
       if (manualText) {
