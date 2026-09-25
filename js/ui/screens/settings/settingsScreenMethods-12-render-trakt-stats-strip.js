@@ -142,11 +142,12 @@ export function createSettingsScreenMethods12() {
             itemType: "movie",
             videoId: null,
             startFromBeginning: true,
-            playerTitle: "Tizen 4 direct-play test",
+            playerTitle: "Tizen 4 direct-play test (HTML)",
             playerSubtitle: "W3C Sintel MP4",
             streamCandidates: [stream],
             preferredStreamId: stream.id,
-            playbackSourceContext: stream.streamOrigin
+            playbackSourceContext: stream.streamOrigin,
+            forcePlaybackEngine: "native-file"
           });
         });
       }
@@ -198,8 +199,8 @@ export function createSettingsScreenMethods12() {
                 globalThis.__NUVIO_FORK_BUILD__
                   ? this.renderActionRow({
                       focusKey: "about:tizen4DirectPlay",
-                      title: "Tizen 4 direct-play test",
-                      subtitle: "Play the controlled W3C Sintel MP4 through the normal source and player path",
+                      title: "Tizen 4 direct-play test (HTML)",
+                      subtitle: "Test the controlled W3C Sintel MP4 with the browser media pipeline",
                       leadingIcon: "play"
                     })
                   : ""

@@ -233,6 +233,7 @@ export function createPlayerScreenMethods06() {
         cloudSessionToken: this.params.cloudSessionToken || null,
         requestHeaders,
         mediaSourceType,
+        forceEngine: String(this.params.forcePlaybackEngine || "").trim() || null,
         streamIdentity: streamCandidate ? buildStreamResumeIdentity(streamCandidate) || streamMergeKey(streamCandidate) || null : null
       };
     },
