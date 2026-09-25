@@ -86,3 +86,43 @@ test("canvas renderer uses integer modules and never reads the pixel buffer", as
     assert.ok(Number.isInteger(height));
   });
 });
+
+test("HTML renderer paints integer-aligned dark runs without image or canvas APIs", async () => {
+  installQrStub();
+  const { QrCodeGenerator } = await import("../js/core/qr/qrCodeGenerator.js");
+  const documentRef = {
+    createElement(tagName) {
+      return {
+        tagName: tagName.toUpperCase(),
+        ownerDocument: documentRef,
+        className: "",
+        attributes: {},
+        children: [],
+        style: { cssText: "" },
+        setAttribute(name, value) {
+          this.attributes[name] = value;
+        },
+        appendChild(child) {
+          this.children.push(child);
+          return child;
+        }
+      };
+    }
+  };
+  const container = documentRef.createElement("div");
+  container.innerHTML = "old content";
+
+  const root = QrCodeGenerator.renderHtml(container, "legal-test-payload", 320);
+
+  assert.equal(container.innerHTML, "");
+  assert.equal(container.children.at(-1), root);
+  assert.equal(root.className, "qr-html-grid");
+  assert.match(root.style.cssText, /width:320px;height:320px/);
+  assert.match(root.style.cssText, /background:#fff/);
+  assert.ok(root.children.length > 0);
+  root.children.forEach((run) => {
+    assert.equal(run.tagName, "I");
+    assert.match(run.style.cssText, /background:#000/);
+    assert.match(run.style.cssText, /left:\d+px;top:\d+px;width:\d+px;height:\d+px/);
+  });
+});

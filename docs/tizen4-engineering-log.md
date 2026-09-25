@@ -34,6 +34,8 @@ Candidate 1 changed the auth QR to the library's locally generated GIF data URL 
 
 The first candidate installed and opened the QR login session, but the physical TV displayed a completely white QR frame. The surrounding instructions and waiting state rendered correctly. This disproves the GIF data-URL path as a sufficient Tizen 4 fallback; the runtime either fails to decode the generated image or does not repaint it. Candidate 2 uses the direct integer-aligned Canvas renderer, which performs only `fillRect()` operations and never calls `getImageData()` or `putImageData()`. It also shows the visible marker `NU7100-T4 QR2` on the QR and About screens so the installed candidate can be identified unambiguously.
 
+Candidate 2 also displayed a completely white frame on the physical TV while its `NU7100-T4 QR2` marker was visible. This proves the expected build was installed and rules out both the generated GIF and direct Canvas surfaces on this firmware. Candidate 3 renders the same local QR matrix as ordinary absolutely positioned HTML elements, coalescing adjacent dark modules into horizontal runs. It does not depend on image decoding, SVG, Canvas, CSS Grid, or pixel-buffer APIs. Its visible marker is `NU7100-T4 QR3 · HTML`.
+
 ## Hardware-required checkpoints
 
 - Auth QR is visibly rendered and scannable.

@@ -36,6 +36,53 @@ export const QrCodeGenerator = {
     return qr.createDataURL(moduleSize, margin);
   },
 
+  renderHtml(container, content, size = 512) {
+    if (!container) {
+      throw new Error("QR code container is required");
+    }
+    const documentRef =
+      container.ownerDocument || (typeof document !== "undefined" ? document : null);
+    if (!documentRef || typeof documentRef.createElement !== "function") {
+      throw new Error("HTML document is unavailable");
+    }
+
+    const qr = this.create(content);
+    const { requestedSize, moduleCount, moduleSize, margin } = this.getLayout(qr, size);
+    const root = documentRef.createElement("div");
+    root.className = "qr-html-grid";
+    root.setAttribute("role", "img");
+    root.style.cssText =
+      `position:relative;display:block;width:${requestedSize}px;height:${requestedSize}px;` +
+      "overflow:hidden;background:#fff;";
+
+    // Render one ordinary HTML element per horizontal dark run. This avoids
+    // every image, SVG, and Canvas path while keeping the DOM reasonably small.
+    for (let row = 0; row < moduleCount; row++) {
+      let column = 0;
+      while (column < moduleCount) {
+        if (!qr.isDark(row, column)) {
+          column += 1;
+          continue;
+        }
+        const runStart = column;
+        while (column < moduleCount && qr.isDark(row, column)) {
+          column += 1;
+        }
+        const run = documentRef.createElement("i");
+        run.setAttribute("aria-hidden", "true");
+        run.style.cssText =
+          `position:absolute;display:block;left:${margin + runStart * moduleSize}px;` +
+          `top:${margin + row * moduleSize}px;width:${(column - runStart) * moduleSize}px;` +
+          `height:${moduleSize}px;background:#000;`;
+        root.appendChild(run);
+      }
+    }
+
+    container.innerHTML = "";
+    container.appendChild(root);
+    return root;
+  },
+
   generate(target, content, size = 512) {
     if (!target) {
       throw new Error("QR code target is required");

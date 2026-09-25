@@ -28,7 +28,7 @@ const tizenPluginServiceRelativePath = "services/tizen/plugin-service.js";
 const tizenPluginServiceSourceRelativePath = "services/plugin-http.cjs";
 const tizenEngineFsServicePort = 2710;
 const tizenPluginServicePort = 2711;
-const tizen4ForkBuildLabel = "NU7100-T4 QR2";
+const tizen4ForkBuildLabel = "NU7100-T4 QR3 · HTML";
 
 function buildTizenServiceBridgeMarkup(enabled) {
   if (!enabled) return "";
