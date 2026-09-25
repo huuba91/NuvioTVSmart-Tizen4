@@ -613,7 +613,7 @@ async function runBuild() {
       cp(path.join(rootDir, "docs", "youtube-proxy.html"), path.join(distDir, "youtube-proxy.html"))
     ]);
     if (tizen4ProbeMediaFile) {
-      await cp(tizen4ProbeMediaFile, path.join(distDir, "assets", "tizen4-probe-sintel.mp4"));
+      await cp(tizen4ProbeMediaFile, path.join(distDir, "assets", "tizen4-probe.mp4"));
       console.log("included optional Tizen 4 packaged media probe");
     }
     await buildI18nBundles({ rootDir, distDir });
