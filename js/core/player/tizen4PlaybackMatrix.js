@@ -38,6 +38,15 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function withWatchdog(promise, timeoutMs, label) {
+  return Promise.race([
+    Promise.resolve(promise),
+    wait(timeoutMs).then(() => {
+      throw new Error(`${label}-timeout`);
+    })
+  ]);
+}
+
 async function runHtmlCase(testCase, video, timeoutMs) {
   const startedAt = Date.now();
   const result = { id: testCase.id, engine: "html", startupMs: 0, progressMs: 0, durationMs: 0, stalls: 0, error: "" };
@@ -86,9 +95,15 @@ async function runHtmlCase(testCase, video, timeoutMs) {
     video.load();
     video.src = testCase.source.url;
     video.load();
-    await Promise.resolve(video.play()).catch((error) => {
-      result.error = String(error?.name || error?.message || error || "play-rejected");
-    });
+    const playPromise = video.play();
+    if (playPromise && typeof playPromise.then === "function") {
+      // Chromium 56 can leave play() pending forever for an unsupported or
+      // unreachable source. Start measuring immediately and observe only a
+      // short rejection window; the outer deadline remains authoritative.
+      await Promise.race([playPromise, wait(750)]).catch((error) => {
+        result.error = String(error?.name || error?.message || error || "play-rejected");
+      });
+    }
     const deadline = Date.now() + timeoutMs;
     while (!settled && Date.now() < deadline && result.progressMs < 5000) {
       await wait(250);
@@ -147,7 +162,11 @@ async function runAvPlayCase(testCase, timeoutMs) {
     avplay.setListener(listener);
     avplay.open(testCase.source.url);
     avplay.setDisplayRect(0, 0, 1920, 1080);
-    await new Promise((resolve, reject) => avplay.prepareAsync(resolve, reject));
+    await withWatchdog(
+      new Promise((resolve, reject) => avplay.prepareAsync(resolve, reject)),
+      timeoutMs,
+      "prepare"
+    );
     result.durationMs = Number(avplay.getDuration?.() || 0);
     avplay.play();
     const deadline = Date.now() + timeoutMs;
