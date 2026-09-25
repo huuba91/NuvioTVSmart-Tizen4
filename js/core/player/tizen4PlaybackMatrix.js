@@ -47,6 +47,16 @@ function withWatchdog(promise, timeoutMs, label) {
   ]);
 }
 
+function describePlaybackError(error, fallback = "unknown-error") {
+  if (error == null) return fallback;
+  if (typeof error === "string") return error || fallback;
+  const details = [];
+  if (error.name) details.push(String(error.name));
+  if (error.message && String(error.message) !== String(error.name || "")) details.push(String(error.message));
+  if (error.code != null) details.push(`code=${String(error.code)}`);
+  return details.join(": ") || String(error) || fallback;
+}
+
 async function runHtmlCase(testCase, video, timeoutMs) {
   const startedAt = Date.now();
   const result = { id: testCase.id, engine: "html", startupMs: 0, progressMs: 0, durationMs: 0, stalls: 0, error: "" };
@@ -130,6 +140,7 @@ async function runAvPlayCase(testCase, timeoutMs) {
   const result = { id: testCase.id, engine: "avplay", startupMs: 0, progressMs: 0, durationMs: 0, stalls: 0, error: "" };
   if (!avplay) return { ...result, error: "avplay-unavailable", ...scoreTizen4PlaybackResult(result) };
   let completed = false;
+  let phase = "reset";
   const listener = {
     onbufferingstart() {
       if (result.progressMs) result.stalls += 1;
@@ -144,11 +155,11 @@ async function runAvPlayCase(testCase, timeoutMs) {
       completed = true;
     },
     onerror(error) {
-      result.error = String(error || "avplay-error");
+      result.error = `${phase}: ${describePlaybackError(error, "avplay-error")}`;
       completed = true;
     },
     onerrormsg(error, message) {
-      result.error = `${String(error || "avplay-error")}: ${String(message || "")}`;
+      result.error = `${phase}: ${describePlaybackError(error, "avplay-error")}: ${String(message || "")}`;
       completed = true;
     },
     onevent() {},
@@ -159,21 +170,28 @@ async function runAvPlayCase(testCase, timeoutMs) {
     try {
       if (avplay.getState?.() !== "NONE") avplay.close();
     } catch (_) {}
-    avplay.setListener(listener);
+    // Samsung's documented state sequence is open (NONE -> IDLE), then
+    // listener/display configuration, prepareAsync, and finally play.
+    phase = "open";
     avplay.open(testCase.source.url);
+    phase = "listener";
+    avplay.setListener(listener);
+    phase = "display";
     avplay.setDisplayRect(0, 0, 1920, 1080);
+    phase = "prepare";
     await withWatchdog(
       new Promise((resolve, reject) => avplay.prepareAsync(resolve, reject)),
       timeoutMs,
       "prepare"
     );
     result.durationMs = Number(avplay.getDuration?.() || 0);
+    phase = "play";
     avplay.play();
     const deadline = Date.now() + timeoutMs;
     while (!completed && Date.now() < deadline && result.progressMs < 5000) await wait(250);
     if (!result.error && result.progressMs < 1500) result.error = "no-time-progress";
   } catch (error) {
-    result.error = String(error?.name || error?.message || error || "avplay-exception");
+    result.error = `${phase}: ${describePlaybackError(error, "avplay-exception")}`;
   } finally {
     try {
       avplay.stop();
@@ -182,7 +200,7 @@ async function runAvPlayCase(testCase, timeoutMs) {
       avplay.close();
     } catch (_) {}
   }
-  return { ...result, state: String(avplay.getState?.() || "NONE"), ...scoreTizen4PlaybackResult(result) };
+  return { ...result, phase, state: String(avplay.getState?.() || "NONE"), ...scoreTizen4PlaybackResult(result) };
 }
 
 export async function runTizen4PlaybackMatrix({ onUpdate = () => {}, timeoutMs = 10000 } = {}) {
