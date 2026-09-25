@@ -107,6 +107,21 @@ export function createPlayerScreenMethods32() {
         }
       }
 
+      if (this.params?.tizen4DiagnosticProbe) {
+        const video = PlayerController.video;
+        const readyState = Number(PlayerController.getPlaybackReadyState?.() ?? video?.readyState ?? 0);
+        const networkState = Number(video?.networkState ?? 0);
+        const errorCode = Number(video?.error?.code || PlayerController.getLastPlaybackErrorCode?.() || 0);
+        const engine = String(PlayerController.playbackEngine || "none");
+        const sourceState = String(video?.currentSrc || video?.getAttribute?.("src") || "").trim() ? "src" : "no-src";
+        const diagnosticText = `DIAG HTML2 · engine=${engine} · ready=${readyState} · network=${networkState} · error=${errorCode} · ${sourceState}`;
+        const diagnosticNode = uiRefs.loadingSubtitle;
+        if (diagnosticNode) {
+          diagnosticNode.textContent = diagnosticText;
+          diagnosticNode.classList.remove("hidden");
+        }
+      }
+
       this.syncPauseOverlayState();
       this.renderNextEpisodeCard();
 

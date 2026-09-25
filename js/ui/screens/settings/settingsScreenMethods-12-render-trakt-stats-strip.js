@@ -142,12 +142,13 @@ export function createSettingsScreenMethods12() {
             itemType: "movie",
             videoId: null,
             startFromBeginning: true,
-            playerTitle: "Tizen 4 direct-play test (HTML)",
-            playerSubtitle: "Blender Sintel MP4",
+            playerTitle: "Tizen 4 direct-play test (HTML2)",
+            playerSubtitle: "DIAG HTML2 pending · Blender Sintel MP4",
             streamCandidates: [stream],
             preferredStreamId: stream.id,
             playbackSourceContext: stream.streamOrigin,
-            forcePlaybackEngine: "native-file"
+            forcePlaybackEngine: "native-file",
+            tizen4DiagnosticProbe: true
           });
         });
       }
@@ -199,8 +200,8 @@ export function createSettingsScreenMethods12() {
                 globalThis.__NUVIO_FORK_BUILD__
                   ? this.renderActionRow({
                       focusKey: "about:tizen4DirectPlay",
-                      title: "Tizen 4 direct-play test (HTML)",
-                      subtitle: "Test Blender's controlled Sintel MP4 with the browser media pipeline",
+                      title: "Tizen 4 direct-play test (HTML2)",
+                      subtitle: "Show live browser-player state while testing Blender's Sintel MP4",
                       leadingIcon: "play"
                     })
                   : ""
