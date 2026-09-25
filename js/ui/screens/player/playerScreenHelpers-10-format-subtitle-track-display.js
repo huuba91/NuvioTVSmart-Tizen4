@@ -36,6 +36,12 @@ import { buildClockFormatOptions, resolveSystemHour12 } from "../../../core/play
 
 import { calculateRemainingPlaybackMilliseconds } from "../../../core/player/playbackEndTime.js";
 
+import {
+  directPlaybackUrl as coreDirectPlaybackUrl,
+  isMagnetUrl as coreIsMagnetUrl,
+  streamDirectPlaybackUrl as coreStreamDirectPlaybackUrl
+} from "../../../core/streams/playbackSource.js";
+
 import { resolveSubtitleStyleControlAvailability } from "../../../core/player/subtitlePresentationCapabilities.js";
 
 import { shouldTreatAsNaturalPlaybackCompletion } from "../../../core/player/naturalPlaybackCompletion.js";
@@ -312,19 +318,15 @@ export function supportsTvWebAudioAmplification() {
 }
 
 export function isMagnetUrl(value = "") {
-  return String(value || "")
-    .trim()
-    .toLowerCase()
-    .startsWith("magnet:");
+  return coreIsMagnetUrl(value);
 }
 
 export function directPlaybackUrl(value = "") {
-  const url = String(value || "").trim();
-  return url && !isMagnetUrl(url) ? url : "";
+  return coreDirectPlaybackUrl(value);
 }
 
 export function streamDirectPlaybackUrl(stream = {}) {
-  return directPlaybackUrl(stream?.url) || directPlaybackUrl(stream?.externalUrl);
+  return coreStreamDirectPlaybackUrl(stream);
 }
 
 export function streamDebridIdentity(item = {}) {

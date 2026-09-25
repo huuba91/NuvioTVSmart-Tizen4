@@ -17,6 +17,7 @@ import { DebridStreamPresentation } from "../../core/debrid/directDebridStreamPr
 import { PluginStore, getEffectivePluginProfileId } from "../local/pluginStore.js";
 import { DebridSettingsStore } from "../local/debridSettingsStore.js";
 import { StreamSearchSessionCache } from "./streamSearchSessionCache.js";
+import { mapAddonStream } from "../../core/streams/playbackSource.js";
 
 const STREAM_SOURCE_REQUEST_TIMEOUT_MS = 60_000;
 const PLUGIN_STREAM_REQUEST_TIMEOUT_MS = 120_000;
@@ -634,37 +635,7 @@ class StreamRepository {
   }
 
   mapStream(stream = {}) {
-    const sidecarSubtitles = Array.isArray(stream.subtitles)
-      ? stream.subtitles
-          .filter((entry) => entry && entry.url)
-          .map((entry) => {
-            const headers = entry.headers || entry.behaviorHints?.proxyHeaders?.request;
-            return {
-              id: entry.id || null,
-              url: entry.url,
-              lang: entry.lang || "unknown",
-              ...(headers ? { headers } : {})
-            };
-          })
-      : [];
-
-    return {
-      name: stream.name || null,
-      title: stream.title || null,
-      description: stream.description || null,
-      url: stream.url || null,
-      ytId: stream.ytId || null,
-      infoHash: stream.infoHash || null,
-      fileIdx: stream.fileIdx ?? null,
-      externalUrl: stream.externalUrl || null,
-      behaviorHints: stream.behaviorHints || null,
-      sources: Array.isArray(stream.sources) ? stream.sources : [],
-      quality: stream.quality || null,
-      qualityValue: Number.isFinite(Number(stream.qualityValue)) ? Number(stream.qualityValue) : -1,
-      clientResolve: stream.clientResolve || null,
-      debridCacheStatus: stream.debridCacheStatus || null,
-      subtitles: sidecarSubtitles
-    };
+    return mapAddonStream(stream);
   }
 
   async fetchInlineStreamsFromMeta(addon, type, videoId, { signal = null } = {}) {
