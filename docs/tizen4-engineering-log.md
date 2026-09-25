@@ -44,6 +44,10 @@ The email-login override was withdrawn before the cache-busted candidate at the 
 
 The TV displayed `QR4 · BUNDLE`, definitively proving that the cache-busted application bundle loaded, but the QR frame remained white. Build `QR5 · DIAG` adds non-sensitive on-screen diagnostics for matrix modules, dark modules, horizontal runs, DOM children, painted element dimensions, and computed background color. It also changes the empty run elements from semantic `<i>` nodes to ordinary `<div>` nodes to eliminate another firmware-specific rendering variable.
 
+The physical `QR5 · DIAG` screen remained at `QR diagnostic pending`. Package inspection then established the root cause: the locally built WGT contained empty `NUVIO_SUPABASE_URL` and `NUVIO_SUPABASE_ANON_KEY` values because no ignored `local.properties` existed and the build silently fell back to `local.example.properties`. Consequently `supportsTvLogin()` returned false and `startQr()` never ran; none of the renderer candidates had received QR content. The official NuvioTVSmart 1.2.0 Tizen release contains a configured public runtime environment. A local import tool now extracts that environment without executing package JavaScript, and deployment refuses to sign or install a WGT that lacks the QR backend, public client key, or login URLs.
+
+The runtime environment is also assigned a SHA-256-derived filename during Tizen packaging. This prevents the TV WRT from reusing the previously installed blank `nuvio.env.js` even after the WGT has been corrected. Package verification requires exactly one hashed environment script, forbids the legacy filename, and confirms `main.js` loads the packaged hash.
+
 ## Hardware-required checkpoints
 
 - Auth QR is visibly rendered and scannable.

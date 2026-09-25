@@ -22,6 +22,7 @@ $UnsignedWgt = Join-Path $ProjectRoot "NuvioTV001_$PackageVersion.wgt"
 $DeployDirectory = Join-Path $ProjectRoot ".cache\tizen4-deploy"
 $DeployWgt = Join-Path $DeployDirectory "NuvioTV001_$PackageVersion.wgt"
 $ApplicationId = "NuvioTV001.NuvioTV"
+$RuntimeEnvVerifier = Join-Path $ProjectRoot "scripts\verify-tizen-runtime-env.mjs"
 
 foreach ($RequiredPath in @($TizenCli, $Sdb)) {
   if (-not (Test-Path -LiteralPath $RequiredPath)) {
@@ -38,6 +39,8 @@ if (-not (Test-Path -LiteralPath $NpmCli)) {
 Push-Location $ProjectRoot
 try {
   if (-not $SkipBuild) {
+    $PreviousRequireLocalProperties = $env:NUVIO_REQUIRE_LOCAL_PROPERTIES
+    $env:NUVIO_REQUIRE_LOCAL_PROPERTIES = "1"
     if ($NpmCommand) {
       & $NpmCommand run build
     } else {
@@ -47,10 +50,16 @@ try {
 
     & $Node (Join-Path $ProjectRoot "scripts\package-tizen.mjs")
     if ($LASTEXITCODE -ne 0) { throw "Tizen packaging failed with exit code $LASTEXITCODE" }
+    $env:NUVIO_REQUIRE_LOCAL_PROPERTIES = $PreviousRequireLocalProperties
   }
 
   if (-not (Test-Path -LiteralPath $UnsignedWgt)) {
     throw "Unsigned WGT not found: $UnsignedWgt"
+  }
+
+  & $Node $RuntimeEnvVerifier $UnsignedWgt
+  if ($LASTEXITCODE -ne 0) {
+    throw "Tizen WGT runtime configuration verification failed with exit code $LASTEXITCODE"
   }
 
   New-Item -ItemType Directory -Force -Path $DeployDirectory | Out-Null

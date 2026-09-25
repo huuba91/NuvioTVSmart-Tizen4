@@ -1,4 +1,4 @@
-import { access, cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
@@ -194,7 +194,8 @@ function buildMainJs({
   packageId,
   includeEngineFsService,
   includePluginService,
-  appBundleFileName
+  appBundleFileName,
+  runtimeEnvFileName
 }) {
   const engineFsServiceId = `${packageId}.EngineFsService`;
   const pluginServiceId = `${packageId}.PluginService`;
@@ -250,7 +251,7 @@ function loadScript(src) {
 }
 
 function startNuvioApp() {
-  loadScript("nuvio.env.js");
+  loadScript(${JSON.stringify(runtimeEnvFileName)});
   loadScript("assets/libs/qrcode-generator.js");
   loadScript(${JSON.stringify(appBundleFileName)});
 }
@@ -327,6 +328,20 @@ async function stagePackage({
   await rm(stagingDir, { recursive: true, force: true });
   await mkdir(stagingDir, { recursive: true });
 
+  const temporaryRuntimeEnvPath = path.join(stagingDir, "nuvio.env.js");
+  if (envSourcePath) {
+    await writeRuntimeEnvScriptFile(temporaryRuntimeEnvPath, {
+      rootDir,
+      sourcePath: envSourcePath
+    });
+  } else {
+    await cp(path.join(distDir, "nuvio.env.js"), temporaryRuntimeEnvPath);
+  }
+  const runtimeEnvBytes = await readFile(temporaryRuntimeEnvPath);
+  const runtimeEnvHash = createHash("sha256").update(runtimeEnvBytes).digest("hex").slice(0, 16);
+  const runtimeEnvFileName = `nuvio.env.${runtimeEnvHash}.js`;
+  await rename(temporaryRuntimeEnvPath, path.join(stagingDir, runtimeEnvFileName));
+
   await Promise.all([
     copyDistFolder("assets"),
     copyDistFolder("css"),
@@ -359,7 +374,8 @@ async function stagePackage({
         packageId,
         includeEngineFsService,
         includePluginService,
-        appBundleFileName
+        appBundleFileName,
+        runtimeEnvFileName
       }),
       "utf8"
     )
@@ -369,15 +385,6 @@ async function stagePackage({
   }
   if (includePluginService) {
     await stageTizenPluginService();
-  }
-
-  if (envSourcePath) {
-    await writeRuntimeEnvScriptFile(path.join(stagingDir, "nuvio.env.js"), {
-      rootDir,
-      sourcePath: envSourcePath
-    });
-  } else {
-    await cp(path.join(distDir, "nuvio.env.js"), path.join(stagingDir, "nuvio.env.js"));
   }
 
   if (await pathExists(path.join(distDir, "app.bundle.js.map"))) {
@@ -624,6 +631,14 @@ async function assertTizenServicePackage(
   { requireEngineFsService = false, requirePluginService = false } = {}
 ) {
   const zip = await JSZip.loadAsync(await readFile(outputPath));
+  const runtimeEnvEntries = Object.keys(zip.files).filter((name) =>
+    /^nuvio\.env\.[a-f0-9]{16}\.js$/.test(name)
+  );
+  if (runtimeEnvEntries.length !== 1 || zip.file("nuvio.env.js")) {
+    throw new Error(
+      "Tizen WGT must contain exactly one content-hashed runtime env script and no legacy nuvio.env.js"
+    );
+  }
   const configEntry = zip.file("config.xml");
   if (!configEntry) {
     throw new Error("Tizen WGT is missing config.xml.");
@@ -635,6 +650,17 @@ async function assertTizenServicePackage(
     requirePluginService
   });
 
+  const mainEntry = zip.file("main.js");
+  if (!mainEntry) {
+    throw new Error("Tizen WGT is missing main.js");
+  }
+  const mainJs = await mainEntry.async("string");
+  if (!mainJs.includes(JSON.stringify(runtimeEnvEntries[0]))) {
+    throw new Error(
+      `Tizen WGT main.js does not load the packaged runtime env ${runtimeEnvEntries[0]}`
+    );
+  }
+
   const missingServiceEntry = requiredTizenServiceFiles({
     requireEngineFsService,
     requirePluginService
@@ -644,11 +670,6 @@ async function assertTizenServicePackage(
   }
 
   if (requireEngineFsService || requirePluginService) {
-    const mainEntry = zip.file("main.js");
-    if (!mainEntry) {
-      throw new Error("Tizen WGT is missing main.js for the packaged service identifiers.");
-    }
-    const mainJs = await mainEntry.async("string");
     if (
       requireEngineFsService &&
       !/__NUVIO_TIZEN_ENGINEFS_SERVICE_ENABLED__\s*=\s*true\b/.test(mainJs)
