@@ -20,5 +20,5 @@ test("controlled Tizen 4 probe follows direct add-on stream normalization", () =
   });
   assert.equal(stream.mimeType, "video/mp4");
   assert.equal(stream.addonName, "Tizen 4 diagnostics");
-  assert.equal(stream.behaviorHints.filename, "w3c-sintel-trailer.mp4");
+  assert.equal(stream.behaviorHints.filename, "blender-sintel-trailer-480p.mp4");
 });

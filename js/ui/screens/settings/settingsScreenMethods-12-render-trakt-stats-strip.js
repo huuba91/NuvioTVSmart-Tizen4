@@ -143,7 +143,7 @@ export function createSettingsScreenMethods12() {
             videoId: null,
             startFromBeginning: true,
             playerTitle: "Tizen 4 direct-play test (HTML)",
-            playerSubtitle: "W3C Sintel MP4",
+            playerSubtitle: "Blender Sintel MP4",
             streamCandidates: [stream],
             preferredStreamId: stream.id,
             playbackSourceContext: stream.streamOrigin,
@@ -200,7 +200,7 @@ export function createSettingsScreenMethods12() {
                   ? this.renderActionRow({
                       focusKey: "about:tizen4DirectPlay",
                       title: "Tizen 4 direct-play test (HTML)",
-                      subtitle: "Test the controlled W3C Sintel MP4 with the browser media pipeline",
+                      subtitle: "Test Blender's controlled Sintel MP4 with the browser media pipeline",
                       leadingIcon: "play"
                     })
                   : ""
