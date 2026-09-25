@@ -224,7 +224,8 @@ export function createPlayerControllerMethods12() {
       const normalizedMimeType = this.normalizeMimeType(mimeType);
       const sourceMimeType =
         Platform.isWebOS() && (this.isEngineFsPlaybackUrl(url) || normalizedMimeType === "video/x-matroska") ? null : mimeType;
-      if (!nativeVideoEngine.load(this.video, url, sourceMimeType)) {
+      const preferDirectSrc = Platform.isTizen() && String(engineName || "") === "native-file";
+      if (!nativeVideoEngine.load(this.video, url, sourceMimeType, { preferDirectSrc })) {
         return false;
       }
       this.playbackEngine = String(engineName || "native-file");

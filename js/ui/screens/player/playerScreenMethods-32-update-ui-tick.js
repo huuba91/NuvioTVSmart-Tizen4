@@ -113,8 +113,17 @@ export function createPlayerScreenMethods32() {
         const networkState = Number(video?.networkState ?? 0);
         const errorCode = Number(video?.error?.code || PlayerController.getLastPlaybackErrorCode?.() || 0);
         const engine = String(PlayerController.playbackEngine || "none");
-        const sourceState = String(video?.currentSrc || video?.getAttribute?.("src") || "").trim() ? "src" : "no-src";
-        const diagnosticText = `DIAG HTML2 · engine=${engine} · ready=${readyState} · network=${networkState} · error=${errorCode} · ${sourceState}`;
+        const sourceNode = video?.querySelector?.("source");
+        const sourceState = String(
+          video?.currentSrc || video?.getAttribute?.("src") || sourceNode?.getAttribute?.("src") || sourceNode?.src || ""
+        ).trim()
+          ? video?.getAttribute?.("src")
+            ? "direct-src"
+            : sourceNode
+              ? "source-child"
+              : "current-src"
+          : "no-src";
+        const diagnosticText = `DIAG HTML3 · engine=${engine} · ready=${readyState} · network=${networkState} · error=${errorCode} · ${sourceState}`;
         const diagnosticNode = uiRefs.loadingSubtitle;
         if (diagnosticNode) {
           diagnosticNode.textContent = diagnosticText;

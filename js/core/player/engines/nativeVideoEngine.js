@@ -13,13 +13,13 @@ export const nativeVideoEngine = {
     }
   },
 
-  load(videoElement, url, mimeType = null) {
+  load(videoElement, url, mimeType = null, { preferDirectSrc = false } = {}) {
     if (!videoElement) {
       return false;
     }
     videoElement.removeAttribute("src");
     Array.from(videoElement.querySelectorAll("source")).forEach((node) => node.remove());
-    if (mimeType) {
+    if (mimeType && !preferDirectSrc) {
       const sourceNode = document.createElement("source");
       sourceNode.src = url;
       sourceNode.type = mimeType;
