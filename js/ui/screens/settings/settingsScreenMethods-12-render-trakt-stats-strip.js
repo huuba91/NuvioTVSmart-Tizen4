@@ -144,6 +144,7 @@ export function createSettingsScreenMethods12() {
               })}
               <p class="settings-about-copy">${t("settings.about.madeWithLove")}</p>
               <p class="settings-about-copy">${t("settings.about.version", { version: SETTINGS_VERSION_LABEL })}</p>
+              ${globalThis.__NUVIO_FORK_BUILD__ ? `<p class="settings-about-copy">${escapeHtml(globalThis.__NUVIO_FORK_BUILD__)}</p>` : ""}
               <p class="settings-about-copy">${t("settings.about.portedBy")}</p>
             </div>
             <div class="settings-stack">

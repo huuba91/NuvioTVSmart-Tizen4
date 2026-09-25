@@ -21,7 +21,7 @@ function installQrStub() {
   });
 }
 
-test("Tizen 4 image fallback renders a local QR data URL without canvas", async () => {
+test("QR image fallback renders a local data URL without canvas", async () => {
   installQrStub();
   const { QrCodeGenerator } = await import("../js/core/qr/qrCodeGenerator.js");
   const image = { tagName: "IMG", src: "", width: 0, height: 0 };

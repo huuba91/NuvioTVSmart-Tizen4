@@ -155,6 +155,7 @@ export function createAuthQrSignInScreenMethods01() {
 
       return `
           <div id="qr-container" class="qr-code-frame"></div>
+          ${globalThis.__NUVIO_FORK_BUILD__ ? `<div class="qr-build-label">${escapeHtml(globalThis.__NUVIO_FORK_BUILD__)}</div>` : ""}
           <div id="qr-manual-text" class="qr-manual-text"></div>
           <div id="qr-code-text" class="qr-code-text"></div>
           <div id="qr-expiry" class="qr-expiry"></div>

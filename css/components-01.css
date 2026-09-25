@@ -160,6 +160,15 @@ button:focus-visible {
   border-radius: 0;
 }
 
+.qr-build-label {
+  margin: -4px 0 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.2;
+  text-align: center;
+  letter-spacing: 0.08em;
+}
+
 .qr-code-text {
   margin: 0;
   font-size: 22px;

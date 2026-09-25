@@ -28,7 +28,11 @@ Target hardware: Samsung UE49NU7100 (2018), Tizen 4.0 / Chromium 56.
 
 The QR generator painted a canvas and then performed a full `getImageData()` / `putImageData()` round trip only to round the outer corners. The QR screen remained visible on the physical TV but its code was blank, which isolates the failure to rendering rather than routing. Pixel-buffer readback is unnecessary for QR output and is a fragile path on the older TV canvas implementation.
 
-The Tizen 4 auth QR now uses the QR library's locally generated GIF data URL in an `<img>`. No hosted QR service is used and the login payload remains local. The generic canvas path was also changed to integer-aligned square modules and no longer reads or rewrites the canvas pixel buffer. Automated tests cover both paths. Physical TV validation is still required before calling the regression fixed.
+Candidate 1 changed the auth QR to the library's locally generated GIF data URL in an `<img>`. No hosted QR service was used and the login payload remained local. The generic canvas path was also changed to integer-aligned square modules and no longer reads or rewrites the canvas pixel buffer. Automated tests cover both rendering primitives.
+
+### Hardware result and second hypothesis
+
+The first candidate installed and opened the QR login session, but the physical TV displayed a completely white QR frame. The surrounding instructions and waiting state rendered correctly. This disproves the GIF data-URL path as a sufficient Tizen 4 fallback; the runtime either fails to decode the generated image or does not repaint it. Candidate 2 uses the direct integer-aligned Canvas renderer, which performs only `fillRect()` operations and never calls `getImageData()` or `putImageData()`. It also shows the visible marker `NU7100-T4 QR2` on the QR and About screens so the installed candidate can be identified unambiguously.
 
 ## Hardware-required checkpoints
 
