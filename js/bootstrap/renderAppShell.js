@@ -16,6 +16,7 @@ const APP_SHELL = `
     <div id="discover" class="screen"></div>
     <div id="settings" class="screen"></div>
     <div id="debugConsole" class="screen"></div>
+    <div id="tizen4PlaybackMatrix" class="screen"></div>
     <div id="trakt" class="screen"></div>
     <div id="supportersContributors" class="screen"></div>
     <div id="licensesAttributions" class="screen"></div>

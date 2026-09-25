@@ -6,8 +6,6 @@ export { addonRepository } from "../../../data/repository/addonRepository.js";
 
 export { createTizen4DirectPlaybackProbe } from "../../../core/streams/tizen4DirectPlaybackProbe.js";
 
-export { openTizen4PlaybackMatrixOverlay } from "../../../core/player/tizen4PlaybackMatrix.js";
-
 export { LocalStore } from "../../../core/storage/localStore.js";
 
 export { SessionStore } from "../../../core/storage/sessionStore.js";

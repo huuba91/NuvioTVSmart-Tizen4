@@ -12,6 +12,7 @@ import { SearchScreen } from "../screens/search/searchScreen.js";
 import { DiscoverScreen } from "../screens/search/discoverScreen.js";
 import { SettingsScreen } from "../screens/settings/settingsScreen.js";
 import { ConsoleDebugScreen } from "../screens/debug/consoleDebugScreen.js";
+import { Tizen4PlaybackMatrixScreen } from "../screens/debug/tizen4PlaybackMatrixScreen.js";
 import { TraktScreen } from "../screens/trakt/traktScreen.js";
 import { SupportersContributorsScreen } from "../screens/supporters/supportersContributorsScreen.js";
 import { ExperienceModeSelectionScreen } from "../screens/onboarding/experienceModeSelectionScreen.js";
@@ -178,6 +179,7 @@ Object.assign(Router, {
     discover: DiscoverScreen,
     settings: SettingsScreen,
     debugConsole: ConsoleDebugScreen,
+    tizen4PlaybackMatrix: Tizen4PlaybackMatrixScreen,
     trakt: TraktScreen,
     supportersContributors: SupportersContributorsScreen,
     licensesAttributions: LicensesAttributionsScreen,
