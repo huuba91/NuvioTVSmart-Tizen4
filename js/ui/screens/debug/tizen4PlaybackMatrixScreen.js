@@ -31,6 +31,7 @@ export const Tizen4PlaybackMatrixScreen = {
   status: "Starting…",
 
   async mount() {
+    globalThis.__NUVIO_TIZEN4_REPORT_STAGE__?.("matrix-screen-mount");
     this.container = document.getElementById("tizen4PlaybackMatrix");
     ScreenUtils.show(this.container);
     this.complete = false;
