@@ -13,14 +13,14 @@ test("Tizen 4 playback matrix compares controlled HTTP with direct HTTPS native 
     [
       ["controlled-http-html", "html"],
       ["controlled-http-avplay", "avplay"],
-      ["direct-https-mp4-html", "html"],
-      ["direct-https-hls-hlsjs", "hls.js"],
-      ["direct-https-hls-avplay", "avplay"],
-      ["direct-https-mp4-avplay", "avplay"]
+      ["google-http-mp4-html", "html"],
+      ["google-https-mp4-html", "html"],
+      ["google-https-hls-hlsjs", "hls.js"],
+      ["w3c-https-mp4-html", "html"]
     ]
   );
   assert.equal(cases[0].source.url, "http://192.0.2.1/probe.mp4");
-  assert.equal(cases[3].source.sourceType, "application/vnd.apple.mpegurl");
+  assert.equal(cases[4].source.sourceType, "application/vnd.apple.mpegurl");
   assert.ok(cases.every(({ source }) => source.addonId === "tizen4-playback-matrix"));
 });
 
