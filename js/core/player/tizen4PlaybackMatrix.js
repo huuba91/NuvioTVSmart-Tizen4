@@ -415,7 +415,10 @@ async function runDashJsCase(testCase, video, timeoutMs) {
   } catch (error) {
     result.error = error?.message || String(error || "dash-exception");
   } finally {
-    try { player?.reset?.(); } catch (_) {}
+    // dash.js reset can block the Tizen 4 renderer after successful MSE
+    // playback. The diagnostic element is removed immediately after the final
+    // case, so release the reference and let the app teardown reclaim it.
+    player = null;
     video.pause();
     video.removeAttribute("src");
     video.load();
@@ -469,7 +472,11 @@ export async function runTizen4PlaybackMatrix({ onUpdate = () => {}, timeoutMs =
     }
   } catch (_) {}
   try {
-    summary.privateResultFileWritten = await persistTizen4PlaybackMatrixResult(summary);
+    summary.privateResultFileWritten = await withWatchdog(
+      persistTizen4PlaybackMatrixResult(summary),
+      3000,
+      "matrix-result-file"
+    );
   } catch (_) {
     summary.privateResultFileWritten = false;
   }
