@@ -203,7 +203,7 @@ export function createSettingsScreenMethods12() {
                 globalThis.__NUVIO_FORK_BUILD__
                   ? this.renderActionRow({
                       focusKey: "about:tizen4PlaybackMatrix",
-                      title: "Tizen 4 playback matrix (MATRIX4)",
+                      title: "Tizen 4 playback matrix (MATRIX5)",
                       subtitle: "Automatically compare packaged MP4, remote MP4, HLS, HTML video and AVPlay",
                       leadingIcon: "play"
                     })

@@ -1,6 +1,7 @@
 import { mapAddonStream } from "../streams/playbackSource.js";
 
 export const TIZEN4_PLAYBACK_MATRIX_STORAGE_KEY = "nuvio_tizen4_playback_matrix_v1";
+export const TIZEN4_PLAYBACK_MATRIX_RESULT_FILE = "tizen4-playback-matrix.json";
 export const TIZEN4_MATRIX_REMOTE_MP4 =
   "https://download.blender.org/durian/trailer/sintel_trailer-480p.mp4";
 export const TIZEN4_MATRIX_REMOTE_HLS =
@@ -45,6 +46,52 @@ function withWatchdog(promise, timeoutMs, label) {
       throw new Error(`${label}-timeout`);
     })
   ]);
+}
+
+export async function persistTizen4PlaybackMatrixResult(summary) {
+  const payload = JSON.stringify(summary);
+  try {
+    console.log(`NUVIO_TIZEN4_MATRIX_RESULT ${payload}`);
+  } catch (_) {}
+
+  const filesystem = globalThis.tizen?.filesystem;
+  if (!filesystem?.resolve) return false;
+  return new Promise((resolve) => {
+    filesystem.resolve(
+      "wgt-private",
+      (directory) => {
+        try {
+          let file;
+          try {
+            file = directory.resolve(TIZEN4_PLAYBACK_MATRIX_RESULT_FILE);
+          } catch (_) {
+            file = directory.createFile(TIZEN4_PLAYBACK_MATRIX_RESULT_FILE);
+          }
+          file.openStream(
+            "w",
+            (stream) => {
+              try {
+                stream.write(payload);
+                stream.close();
+                resolve(true);
+              } catch (_) {
+                try {
+                  stream.close();
+                } catch (_) {}
+                resolve(false);
+              }
+            },
+            () => resolve(false),
+            "UTF-8"
+          );
+        } catch (_) {
+          resolve(false);
+        }
+      },
+      () => resolve(false),
+      "rw"
+    );
+  });
 }
 
 function describePlaybackError(error, fallback = "unknown-error") {
@@ -230,6 +277,7 @@ export async function runTizen4PlaybackMatrix({ onUpdate = () => {}, timeoutMs =
   try {
     localStorage.setItem(TIZEN4_PLAYBACK_MATRIX_STORAGE_KEY, JSON.stringify(summary));
   } catch (_) {}
+  summary.privateResultFileWritten = await persistTizen4PlaybackMatrixResult(summary);
   onUpdate({ phase: "complete", results: [...results], summary });
   return summary;
 }
