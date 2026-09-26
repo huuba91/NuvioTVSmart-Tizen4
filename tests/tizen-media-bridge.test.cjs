@@ -56,6 +56,7 @@ test("Tizen media bridge preserves byte ranges and required media headers", asyn
     assert.equal(result.headers["content-range"], "bytes 2-5/10");
     assert.equal(result.headers["accept-ranges"], "bytes");
     assert.equal(result.headers["access-control-allow-origin"], "*");
+    assert.equal(result.headers.connection, "close");
   } finally {
     await close(proxy);
     await close(upstream);

@@ -99,13 +99,18 @@ function forward(target, request, response, declaredHeaders, redirectsLeft) {
 
       var responseHeaders = {
         "Access-Control-Allow-Origin": "*",
-        "Accept-Ranges": "bytes"
+        "Accept-Ranges": "bytes",
+        Connection: "close"
       };
       Object.keys(upstreamResponse.headers || {}).forEach(function (name) {
         if (RESPONSE_HEADER_ALLOWLIST[name] && upstreamResponse.headers[name] != null) {
           responseHeaders[name] = upstreamResponse.headers[name];
         }
       });
+      // Samsung's Tizen 4 media loaders fail against otherwise valid local
+      // keep-alive responses. Match the controlled HTTP/1.0 probe by closing
+      // every media response after its declared payload.
+      response.shouldKeepAlive = false;
       response.writeHead(status, responseHeaders);
       upstreamResponse.on("error", function () {
         if (!response.finished) response.destroy();
