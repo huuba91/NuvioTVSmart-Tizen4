@@ -82,6 +82,7 @@ function buildConfigXml({
   appId,
   packageId,
   version,
+  contentSrc = "index.html",
   includeEngineFsService,
   includePluginService,
   serviceMetadataXml = ""
@@ -121,7 +122,7 @@ function buildConfigXml({
   <access origin="*" subdomains="true"/>
   <tizen:application id="${appId}" package="${packageId}" required_version="${compatibilityPolicy.tizenInstallMinimumVersion}"/>
   <author href="${defaultWidgetUri}">Nuvio</author>
-  <content src="index.html"/>
+  <content src="${contentSrc}"/>
   <feature name="http://tizen.org/feature/screen.size.all"/>
 ${serviceFeature}  <icon src="icon.png"/>
   <name>${appName}</name>
@@ -170,7 +171,7 @@ function validateStoreServiceOptions({
   }
 }
 
-function buildIndexHtml({ includeEngineFsService = false, includePluginService = false } = {}) {
+function buildIndexHtml({ includeEngineFsService = false, includePluginService = false, mainEntryFileName = "main.js" } = {}) {
   const pluginServiceBridge = buildTizenServiceBridgeMarkup(
     includeEngineFsService || includePluginService
   );
@@ -188,7 +189,7 @@ ${pluginServiceBridge}  <link rel="stylesheet" href="css/bundle.css" />
 <body>
   <script src="boot-guard.js"></script>
   <script src="core-js.bundle.js" onerror="window.NuvioBootGuard &amp;&amp; window.NuvioBootGuard.scriptFailed(this.src)"></script>
-  <script defer src="main.js" onerror="window.NuvioBootGuard &amp;&amp; window.NuvioBootGuard.scriptFailed(this.src)"></script>
+  <script defer src="${mainEntryFileName}" onerror="window.NuvioBootGuard &amp;&amp; window.NuvioBootGuard.scriptFailed(this.src)"></script>
 </body>
 </html>
 `;
@@ -332,6 +333,9 @@ async function stagePackage({
   const appBundleBytes = await readFile(appBundleSourcePath);
   const appBundleHash = createHash("sha256").update(appBundleBytes).digest("hex").slice(0, 16);
   const appBundleFileName = `app.bundle.${appBundleHash}.js`;
+  const entryVersion = normalizeVersion(version).replace(/[^0-9.]/g, "");
+  const indexEntryFileName = `index.${entryVersion}.html`;
+  const mainEntryFileName = `main.${entryVersion}.js`;
   await rm(stagingDir, { recursive: true, force: true });
   await mkdir(stagingDir, { recursive: true });
 
@@ -364,6 +368,7 @@ async function stagePackage({
         appId,
         packageId,
         version,
+        contentSrc: indexEntryFileName,
         includeEngineFsService,
         includePluginService,
         serviceMetadataXml
@@ -371,12 +376,12 @@ async function stagePackage({
       "utf8"
     ),
     writeFile(
-      path.join(stagingDir, "index.html"),
-      buildIndexHtml({ includeEngineFsService, includePluginService }),
+      path.join(stagingDir, indexEntryFileName),
+      buildIndexHtml({ includeEngineFsService, includePluginService, mainEntryFileName }),
       "utf8"
     ),
     writeFile(
-      path.join(stagingDir, "main.js"),
+      path.join(stagingDir, mainEntryFileName),
       buildMainJs({
         packageId,
         includeEngineFsService,
@@ -657,9 +662,16 @@ async function assertTizenServicePackage(
     requirePluginService
   });
 
-  const mainEntry = zip.file("main.js");
+  const contentSource = configXml.match(/<content\s+src=["']([^"']+)["']/i)?.[1] || "";
+  const indexEntry = zip.file(contentSource);
+  if (!contentSource || !indexEntry) {
+    throw new Error(`Tizen WGT is missing its configured entry document: ${contentSource || "(blank)"}`);
+  }
+  const indexHtml = await indexEntry.async("string");
+  const mainSource = indexHtml.match(/<script\b[^>]*\bsrc=["'](main\.[^"']+\.js)["']/i)?.[1] || "";
+  const mainEntry = zip.file(mainSource);
   if (!mainEntry) {
-    throw new Error("Tizen WGT is missing main.js");
+    throw new Error(`Tizen WGT is missing its versioned bootstrap script: ${mainSource || "(blank)"}`);
   }
   const mainJs = await mainEntry.async("string");
   if (!mainJs.includes(JSON.stringify(runtimeEnvEntries[0]))) {
@@ -708,11 +720,6 @@ async function assertTizenServicePackage(
   }
 
   if (requireEngineFsService || requirePluginService) {
-    const indexEntry = zip.file("index.html");
-    if (!indexEntry) {
-      throw new Error("Tizen WGT is missing index.html for the Tizen service bridge.");
-    }
-    const indexHtml = await indexEntry.async("string");
     if (
       !/<script\s+type=["']module["']>\s*import\s+\*\s+as\s+service\s+from\s+["']wrt:service["'];/is.test(
         indexHtml
