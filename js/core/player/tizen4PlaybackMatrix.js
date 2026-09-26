@@ -388,8 +388,3 @@ export function openTizen4PlaybackMatrixOverlay() {
     });
   return overlay;
 }
-
-if (globalThis.__NUVIO_TIZEN4_MATRIX_AUTO_RUN__ && !globalThis.__NUVIO_TIZEN4_MATRIX_STARTED__) {
-  globalThis.__NUVIO_TIZEN4_MATRIX_STARTED__ = true;
-  setTimeout(() => openTizen4PlaybackMatrixOverlay(), 2500);
-}
