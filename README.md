@@ -52,6 +52,46 @@ npm run package:webos
 
 `package:tizen` creates the unsigned WGT used by development and the Nuvio TV Installer. The installer signs it locally for the target TV before installation. `package:tizen:store` is a separate Seller Office build: it requires Tizen Studio/Web CLI and a configured security profile, and creates the signed Store package with the local EngineFS service included so Tizen 4+ retains torrent/P2P playback. Nuvio TV is built with JavaScript, HTML, CSS, and platform TV APIs. Building requires Node.js and npm; package installation additionally requires the relevant Tizen or webOS tools.
 
+## UE49NU7100 development deployment
+
+This fork keeps the upstream project as the `upstream` remote and develops the Tizen 4 compatibility work on `tizen4/nu7100`. On Windows, the complete build/sign/connect/install/launch loop is:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\deploy-tizen4.ps1 -Launch
+```
+
+The script builds from source, packages the WGT, verifies the configured runtime environment, signs into a separate staging directory with the existing `NU7100-Nuvio` profile, verifies both signature files, refreshes the TV's temporary install permission, installs, and optionally launches. Override `-Device`, `-DeviceName`, `-SigningProfile`, or `-TizenStudio` when needed. `-FollowLogs` attaches the Samsung device log after launch.
+
+The signed development artifact is written to `.cache/tizen4-deploy/NuvioTV001_<version>.wgt`. The low-level `scripts/package-tizen.mjs` command now rejects stale frontend output; use `npm run package:tizen` unless a diagnostic workflow has explicitly run `npm run build` first.
+
+Samsung author/distributor certificates, private keys, profile exports, `local.properties`, generated WGTs, build output, and deployment caches are excluded from Git. The deployment script only references an existing signing profile and never creates or modifies signing identities.
+
+## Tizen 4 architecture and validation
+
+- [Streaming and P2P architecture](docs/tizen4-streaming-architecture.md)
+- [Hardware engineering log](docs/tizen4-engineering-log.md)
+
+The app remains a locally packaged frontend. User-configured Stremio-compatible HTTP add-ons flow through manifest/resource validation, normalized stream objects, resolver selection, and the shared player. Progressive MP4 uses AVPlay first; HLS and DASH use the hardware-tested MSE paths on this TV. Torrent sources use the packaged on-TV EngineFS service and expose a local byte-range stream to AVPlay—no PC, phone, cloud transcoder, or external streaming server is required after installation.
+
+The physical UE49NU7100 has validated QR login, controlled direct HTTP MP4, HLS, DASH, EngineFS torrent metadata/file selection/range delivery, torrent playback, pause/resume, a two-minute torrent seek, and torrent cancellation. AVPlay is required for reliable torrent seeking; the HTML-video fallback can start the tested MP4 but did not complete the same seek. Tizen 4 executable scraper plugins remain disabled, while ordinary remote HTTP add-ons remain supported.
+
+## Updating from upstream
+
+Keep compatibility work isolated and replay it onto an inspected upstream update:
+
+```bash
+git fetch upstream
+git switch tizen4/nu7100
+git rebase upstream/main
+npm test
+npm run lint
+npm run package:tizen
+```
+
+Resolve upstream player/service changes in the centralized Tizen capability, EngineFS, playback-proxy, and player-engine layers instead of adding scattered model checks. After every rebase, repeat the signed deployment and the relevant hardware checks; desktop tests do not establish Tizen 4 media compatibility.
+
+There is currently no writable `origin` remote because GitHub CLI/authentication is not installed in this development environment. Creating `NuvioTVSmart-Tizen4` under the owner's GitHub account and adding it as `origin` is the remaining remote-hosting step; the upstream remote and local logical history are already preserved.
+
 ## License
 
 [GNU General Public License v3.0](./LICENSE)

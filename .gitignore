@@ -8,6 +8,11 @@ local.example.properties
 node_modules/
 *.ipk
 *.wgt
+*.p12
+*.pfx
+*.pem
+profiles.xml
+.security-profile*
 dist/
 .cache/
 .pm2/
