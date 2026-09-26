@@ -288,6 +288,10 @@ async function enterWithLastProfile({ restoreWebOsRoute = false } = {}) {
 
 async function routeAfterAuthentication() {
   loginTrace("authenticated route begin", { currentRoute: Router.getCurrent() || "" });
+  if (Platform.isTizen() && globalThis.__NUVIO_TIZEN4_MATRIX_AUTO_RUN__) {
+    await Router.navigate("tizen4PlaybackMatrix", {}, { replaceHistory: true, skipStackPush: true });
+    return;
+  }
   const profileRoute = await shouldShowProfileSelection();
   loginTrace("authenticated route profile decision", { show: profileRoute.show === true });
   if (profileRoute.show) {
