@@ -1,4 +1,5 @@
 import { TizenEngineFsService } from "./tizenEngineFsService.js";
+import { TizenCapabilities } from "./tizenCapabilities.js";
 
 const NATIVE_AVPLAY_REQUEST_HEADERS = new Set(["cookie", "user-agent"]);
 const HLS_BROWSER_RESTRICTED_HEADERS = new Set(["cookie", "user-agent"]);
@@ -61,7 +62,7 @@ export function buildTizenPlaybackProxyUrl(baseUrl, sourceUrl, headers = {}) {
   const base = parseHttpUrl(baseUrl);
   const source = parseHttpUrl(sourceUrl);
   const entries = normalizeHeaderEntries(headers);
-  if (!base || !source || !entries.length) {
+  if (!base || !source) {
     return "";
   }
 
@@ -76,19 +77,31 @@ export function buildTizenPlaybackProxyUrl(baseUrl, sourceUrl, headers = {}) {
 }
 
 export const TizenPlaybackProxy = {
-  requiresProxy(sourceUrl = "", headers = {}, { playbackEngine = "" } = {}) {
+  requiresProxy(
+    sourceUrl = "",
+    headers = {},
+    { playbackEngine = "", capabilities = TizenCapabilities.get() } = {}
+  ) {
+    const source = parseHttpUrl(sourceUrl);
     const engine = String(playbackEngine || "")
       .trim()
       .toLowerCase();
+    const legacyTizenHttpsAvPlay = Boolean(
+      source?.protocol === "https:" &&
+      engine.includes("avplay") &&
+      capabilities.isTizen &&
+      Number(capabilities.tizenMajorVersion || 0) > 0 &&
+      Number(capabilities.tizenMajorVersion || 0) <= 4
+    );
     // AVPlay can set Cookie and User-Agent itself. Browser HLS paths cannot,
     // so keep those declared source headers on the EngineFS request instead.
     const browserHlsNeedsRestrictedHeaders =
       BROWSER_HLS_ENGINES.has(engine) &&
       normalizeHeaderEntries(headers).some(([key]) => HLS_BROWSER_RESTRICTED_HEADERS.has(key.toLowerCase()));
     return Boolean(
-      parseHttpUrl(sourceUrl) &&
+      source &&
       !isLocalProxyUrl(sourceUrl) &&
-      (hasTizenUnsupportedPlaybackHeaders(headers) || browserHlsNeedsRestrictedHeaders)
+      (legacyTizenHttpsAvPlay || hasTizenUnsupportedPlaybackHeaders(headers) || browserHlsNeedsRestrictedHeaders)
     );
   },
 

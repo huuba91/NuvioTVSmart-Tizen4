@@ -9,7 +9,8 @@ import {
 import {
   buildTizenPlaybackProxyUrl,
   buildTizenAvPlayProxyBaseUrl,
-  hasTizenUnsupportedPlaybackHeaders
+  hasTizenUnsupportedPlaybackHeaders,
+  TizenPlaybackProxy
 } from "../js/platform/tizen/tizenPlaybackProxy.js";
 import {
   buildPeerSearchSources,
@@ -71,6 +72,33 @@ test("Tizen playback proxy preserves path/query while encoding source headers", 
   assert.match(proxyUrl, /\/video\/master\.m3u8\?token=legal-test$/);
   assert.match(proxyUrl, /d=https%3A%2F%2Fmedia\.example\.test/);
   assert.match(proxyUrl, /h=Referer%3Ahttps%3A%2F%2Fcatalog\.example\.test%2F/);
+});
+
+test("Tizen playback proxy can bridge HTTPS media without synthetic headers", () => {
+  assert.equal(
+    buildTizenPlaybackProxyUrl(
+      "http://192.168.129.0:2710",
+      "https://media.w3.org/2010/05/bunny/trailer.mp4"
+    ),
+    "http://192.168.129.0:2710/proxy/d=https%3A%2F%2Fmedia.w3.org/2010/05/bunny/trailer.mp4"
+  );
+});
+
+test("Tizen 4 AVPlay routes plain HTTPS addon streams through EngineFS", () => {
+  assert.equal(
+    TizenPlaybackProxy.requiresProxy("https://media.example.test/movie.mp4", {}, {
+      playbackEngine: "tizen-avplay",
+      capabilities: { isTizen: true, tizenMajorVersion: 4 }
+    }),
+    true
+  );
+  assert.equal(
+    TizenPlaybackProxy.requiresProxy("https://media.example.test/movie.mp4", {}, {
+      playbackEngine: "tizen-avplay",
+      capabilities: { isTizen: true, tizenMajorVersion: 6 }
+    }),
+    false
+  );
 });
 
 test("Tizen AVPlay proxy advertises the TV LAN address instead of renderer loopback", () => {
