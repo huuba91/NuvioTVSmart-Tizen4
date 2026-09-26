@@ -643,6 +643,7 @@ function requiredTizenServiceFiles({
       ? [
           tizenEngineFsServiceRelativePath,
           `${tizenEngineFsRuntimeDirRelativePath}/media-http.cjs`,
+          `${tizenEngineFsRuntimeDirRelativePath}/tizen-media-bridge.cjs`,
           `${tizenEngineFsRuntimeDirRelativePath}/tx3g-subtitle-parser.cjs`,
           `${tizenEngineFsRuntimeDirRelativePath}/tx3g-subtitle-service.cjs`,
           `${tizenEngineFsRuntimeDirRelativePath}/embedded-text-subtitle-parser.cjs`

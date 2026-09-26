@@ -224,6 +224,8 @@ function startEngineFsRuntime() {
   started = true;
   loadTizenMediaRuntime();
   diagnostic("EngineFS runtime module loaded", { port: process.env.PORT });
+  require("./runtime/tizen-media-bridge.cjs").start({ port: 2712 });
+  diagnostic("media bridge start requested", { port: 2712 });
   // AVPlay can expose text tracks without rendering them. Keep the fallback
   // extractors beside the existing runtime so Tizen 4+ devices with the
   // packaged web service can render supported timed text through the app HTML
@@ -261,6 +263,9 @@ function stopEngineFsRuntime() {
   diagnostic("onExit", { service: "EngineFsService", port: process.env.PORT || "2710" });
   try {
     require("./runtime/tx3g-subtitle-service.cjs").stop();
+  } catch (_) {}
+  try {
+    require("./runtime/tizen-media-bridge.cjs").stop();
   } catch (_) {}
   requestRemoveAll();
 }

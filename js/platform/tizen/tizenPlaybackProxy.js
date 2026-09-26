@@ -34,7 +34,7 @@ function isLocalProxyUrl(value = "") {
   if (!parsed || !["127.0.0.1", "localhost", "::1"].includes(parsed.hostname)) {
     return false;
   }
-  return parsed.pathname.startsWith("/proxy/");
+  return parsed.pathname.startsWith("/proxy/") || parsed.pathname === "/media";
 }
 
 export function buildTizenAvPlayProxyBaseUrl(baseUrl, networkApi = globalThis.webapis?.network) {
@@ -67,19 +67,16 @@ export function buildTizenPlaybackProxyUrl(baseUrl, sourceUrl, headers = {}) {
   }
 
   const options = new URLSearchParams();
-  options.set("d", `${source.protocol}//${source.host}`);
-  // EngineFS intentionally forwards only a small response-header allowlist.
-  // Chromium 56's media loader requires explicit cross-origin permission for
-  // renderer-loopback playback, and Samsung's seek path expects ranges to be
-  // advertised on every partial response rather than only on HEAD.
-  options.append("r", "Access-Control-Allow-Origin:*");
-  options.append("r", "Accept-Ranges:bytes");
+  options.set("url", source.href);
   entries.forEach(([key, value]) => {
     options.append("h", `${key}:${value}`);
   });
 
-  const root = `${base.protocol}//${base.host}`.replace(/\/+$/, "");
-  return `${root}/proxy/${options.toString()}${source.pathname || "/"}${source.search}`;
+  // EngineFS remains on 2710 for torrents and service health. The readable,
+  // range-preserving media bridge shares the same service process on 2712.
+  const port = base.port === "2710" ? "2712" : base.port;
+  const root = `${base.protocol}//${base.hostname}${port ? `:${port}` : ""}`.replace(/\/+$/, "");
+  return `${root}/media?${options.toString()}`;
 }
 
 export const TizenPlaybackProxy = {

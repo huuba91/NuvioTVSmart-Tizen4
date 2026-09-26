@@ -2,11 +2,11 @@
   "name": "nuvio-tv-smart",
   "private": true,
   "type": "module",
-  "version": "1.2.24",
+  "version": "1.2.25",
   "scripts": {
     "build": "node ./scripts/build.mjs",
     "test": "npm run build && npm run test:unit",
-    "test:unit": "node --test ./tests/*.test.mjs ./js/domain/model/*.test.mjs",
+    "test:unit": "node --test ./tests/*.test.mjs ./tests/*.test.cjs ./js/domain/model/*.test.mjs",
     "prepare": "husky || true",
     "build:on-release": "node ./scripts/release-build-poller.mjs",
     "install:webos": "node ./scripts/ares-install-webos.mjs",
