@@ -1,5 +1,6 @@
 import { mapAddonStream } from "../streams/playbackSource.js";
 import { TizenPlaybackProxy } from "../../platform/tizen/tizenPlaybackProxy.js";
+import { loadStreamingLibs } from "../../runtime/loadStreamingLibs.js";
 
 export const TIZEN4_PLAYBACK_MATRIX_STORAGE_KEY = "nuvio_tizen4_playback_matrix_v1";
 export const TIZEN4_PLAYBACK_MATRIX_RESULT_FILE = "tizen4-playback-matrix.json";
@@ -24,12 +25,10 @@ export function createTizen4PlaybackMatrixCases(
   return [
     { id: "controlled-http-html", engine: "html", source: source("Controlled HTTP MP4", controlledUrl, "video/mp4") },
     { id: "controlled-http-avplay", engine: "avplay", source: source("Controlled HTTP MP4", controlledUrl, "video/mp4") },
+    { id: "direct-https-mp4-html", engine: "html", crossOrigin: true, source: source("Direct HTTPS MP4", TIZEN4_MATRIX_REMOTE_MP4, "video/mp4") },
+    { id: "direct-https-hls-hlsjs", engine: "hls.js", source: source("Direct HTTPS HLS via MSE", TIZEN4_MATRIX_REMOTE_HLS, "application/vnd.apple.mpegurl") },
+    { id: "direct-https-hls-avplay", engine: "avplay", source: source("Direct HTTPS HLS", TIZEN4_MATRIX_REMOTE_HLS, "application/vnd.apple.mpegurl") },
     { id: "direct-https-mp4-avplay", engine: "avplay", source: source("Direct HTTPS MP4", TIZEN4_MATRIX_REMOTE_MP4, "video/mp4") },
-    { id: "proxied-https-mp4-html", engine: "html", viaProxy: true, crossOrigin: true, source: source("Proxied HTTPS MP4", TIZEN4_MATRIX_REMOTE_MP4, "video/mp4") },
-    { id: "proxied-https-mp4-lan-html", engine: "html", viaProxy: true, preferDeviceAddress: true, crossOrigin: true, source: source("LAN-addressed proxied HTTPS MP4", TIZEN4_MATRIX_REMOTE_MP4, "video/mp4") },
-    { id: "proxied-https-mp4-blob-html", engine: "blob-html", viaProxy: true, viaBlob: true, source: source("Proxied HTTPS MP4 blob", TIZEN4_MATRIX_REMOTE_MP4, "video/mp4") },
-    { id: "proxied-https-mp4-avplay", engine: "avplay", viaProxy: true, source: source("Proxied HTTPS MP4", TIZEN4_MATRIX_REMOTE_MP4, "video/mp4") },
-    { id: "proxied-https-hls-avplay", engine: "avplay", viaProxy: true, skipCleanupOnPrepareTimeout: true, source: source("Proxied HTTPS HLS", TIZEN4_MATRIX_REMOTE_HLS, "application/vnd.apple.mpegurl") }
   ];
 }
 
@@ -37,7 +36,7 @@ async function resolveMatrixCase(testCase) {
   if (!testCase.viaProxy) return testCase;
   const proxyResult = await TizenPlaybackProxy.resolve(
     testCase.source.url,
-    { "X-Nuvio-Playback-Probe": "matrix13" },
+    { "X-Nuvio-Playback-Probe": "matrix14" },
     {
       playbackEngine: testCase.engine.includes("html") ? "native-file" : "tizen-avplay",
       preferDeviceAddress: testCase.preferDeviceAddress === true
@@ -310,6 +309,55 @@ async function runAvPlayCase(testCase, timeoutMs) {
   return { ...result, phase, state: String(avplay.getState?.() || "NONE"), ...scoreTizen4PlaybackResult(result) };
 }
 
+async function runHlsJsCase(testCase, video, timeoutMs) {
+  const startedAt = Date.now();
+  const result = { id: testCase.id, engine: "hls.js", startupMs: 0, progressMs: 0, durationMs: 0, stalls: 0, error: "" };
+  let hls = null;
+  const onPlaying = () => { if (!result.startupMs) result.startupMs = Date.now() - startedAt; };
+  const onTimeUpdate = () => { result.progressMs = Math.max(result.progressMs, Math.round((Number(video.currentTime) || 0) * 1000)); };
+  const onWaiting = () => { if (result.progressMs) result.stalls += 1; };
+  try {
+    await withWatchdog(loadStreamingLibs({ hls: true, dash: false }), timeoutMs, "hls-library");
+    const Hls = globalThis.Hls;
+    if (!Hls?.isSupported?.()) throw new Error("hls-mse-unsupported");
+    hls = new Hls({ enableWorker: false, maxBufferLength: 20, backBufferLength: 1 });
+    video.addEventListener("playing", onPlaying);
+    video.addEventListener("timeupdate", onTimeUpdate);
+    video.addEventListener("waiting", onWaiting);
+    video.addEventListener("stalled", onWaiting);
+    hls.on(Hls.Events.ERROR, (_, data = {}) => {
+      if (data.fatal && !result.error) result.error = `${String(data.type || "hls-error")}: ${String(data.details || "fatal")}`;
+    });
+    hls.loadSource(testCase.source.url);
+    hls.attachMedia(video);
+    await withWatchdog(
+      new Promise((resolve, reject) => {
+        hls.on(Hls.Events.MANIFEST_PARSED, resolve);
+        hls.on(Hls.Events.ERROR, (_, data = {}) => { if (data.fatal) reject(new Error(String(data.details || data.type || "hls-error"))); });
+      }),
+      timeoutMs,
+      "hls-manifest"
+    );
+    await video.play();
+    const deadline = Date.now() + timeoutMs;
+    while (!result.error && Date.now() < deadline && result.progressMs < 5000) await wait(250);
+    result.durationMs = Number.isFinite(video.duration) ? Math.round(video.duration * 1000) : 0;
+    if (!result.error && result.progressMs < 1500) result.error = "no-time-progress";
+  } catch (error) {
+    result.error = error?.message || String(error || "hls-exception");
+  } finally {
+    try { hls?.destroy?.(); } catch (_) {}
+    video.pause();
+    video.removeAttribute("src");
+    video.load();
+    video.removeEventListener("playing", onPlaying);
+    video.removeEventListener("timeupdate", onTimeUpdate);
+    video.removeEventListener("waiting", onWaiting);
+    video.removeEventListener("stalled", onWaiting);
+  }
+  return { ...result, ...scoreTizen4PlaybackResult(result) };
+}
+
 export async function runTizen4PlaybackMatrix({ onUpdate = () => {}, timeoutMs = 10000 } = {}) {
   globalThis.__NUVIO_TIZEN4_REPORT_STAGE__?.("matrix-run-start");
   const video = document.createElement("video");
@@ -328,6 +376,8 @@ export async function runTizen4PlaybackMatrix({ onUpdate = () => {}, timeoutMs =
         ? { id: testCase.id, engine: testCase.engine, startupMs: 0, progressMs: 0, durationMs: 0, stalls: 0, error: testCase.setupError, verdict: "FAIL", score: 0 }
         : testCase.engine === "avplay"
           ? await runAvPlayCase(testCase, timeoutMs)
+          : testCase.engine === "hls.js"
+            ? await runHlsJsCase(testCase, video, timeoutMs)
           : await runHtmlCase(testCase, video, timeoutMs);
       results.push(result);
       globalThis.__NUVIO_TIZEN4_REPORT_STAGE__?.(`matrix-result-${testCase.id}`, { results: [...results] });

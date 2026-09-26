@@ -6,23 +6,21 @@ import {
   scoreTizen4PlaybackResult
 } from "../js/core/player/tizen4PlaybackMatrix.js";
 
-test("Tizen 4 playback matrix compares controlled HTTP, direct HTTPS, and proxied AVPlay", () => {
+test("Tizen 4 playback matrix compares controlled HTTP with direct HTTPS native and MSE paths", () => {
   const cases = createTizen4PlaybackMatrixCases("https://app.test/index.html", "http://192.0.2.1/probe.mp4");
   assert.deepEqual(
     cases.map(({ id, engine }) => [id, engine]),
     [
       ["controlled-http-html", "html"],
       ["controlled-http-avplay", "avplay"],
-      ["direct-https-mp4-avplay", "avplay"],
-      ["proxied-https-mp4-html", "html"],
-      ["proxied-https-mp4-lan-html", "html"],
-      ["proxied-https-mp4-blob-html", "blob-html"],
-      ["proxied-https-mp4-avplay", "avplay"],
-      ["proxied-https-hls-avplay", "avplay"]
+      ["direct-https-mp4-html", "html"],
+      ["direct-https-hls-hlsjs", "hls.js"],
+      ["direct-https-hls-avplay", "avplay"],
+      ["direct-https-mp4-avplay", "avplay"]
     ]
   );
   assert.equal(cases[0].source.url, "http://192.0.2.1/probe.mp4");
-  assert.equal(cases[3].viaProxy, true);
+  assert.equal(cases[3].source.sourceType, "application/vnd.apple.mpegurl");
   assert.ok(cases.every(({ source }) => source.addonId === "tizen4-playback-matrix"));
 });
 
