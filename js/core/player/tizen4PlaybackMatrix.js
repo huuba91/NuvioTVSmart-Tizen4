@@ -34,7 +34,7 @@ export function createTizen4PlaybackMatrixCases(
   return [
     { id: "controlled-http-html", engine: "html", source: source("Controlled HTTP MP4", controlledUrl, "video/mp4") },
     { id: "google-hls-hlsjs", engine: "hls.js", source: source("Google HLS via MSE", TIZEN4_MATRIX_GOOGLE_HLS, "application/vnd.apple.mpegurl") },
-    { id: "loader-proxied-google-hls-hlsjs", engine: "hls.js", viaProxy: true, proxyEachRequest: true, source: source("Header-proxied Google HLS via MSE", TIZEN4_MATRIX_GOOGLE_HLS, "application/vnd.apple.mpegurl") }
+    { id: "xhr-proxied-google-hls-hlsjs", engine: "hls.js", viaProxy: true, proxyEachRequest: true, source: source("Header-proxied Google HLS via MSE", TIZEN4_MATRIX_GOOGLE_HLS, "application/vnd.apple.mpegurl") }
   ];
 }
 
@@ -42,7 +42,7 @@ async function resolveMatrixCase(testCase) {
   if (!testCase.viaProxy) return testCase;
   const proxyResult = await TizenPlaybackProxy.resolve(
     testCase.source.url,
-    { "X-Nuvio-Playback-Probe": "matrix17" },
+    { "X-Nuvio-Playback-Probe": "matrix18" },
     {
       playbackEngine: testCase.engine === "hls.js" ? "hls.js" : testCase.engine.includes("html") ? "native-file" : "tizen-avplay",
       preferDeviceAddress: testCase.preferDeviceAddress === true
@@ -58,7 +58,7 @@ async function resolveMatrixCase(testCase) {
     return {
       ...testCase,
       proxyBaseUrl: proxyResult.baseUrl,
-      proxyHeaders: { "X-Nuvio-Playback-Probe": "matrix17" },
+      proxyHeaders: { "X-Nuvio-Playback-Probe": "matrix18" },
       proxyStatus: proxyResult.status
     };
   }
@@ -336,17 +336,17 @@ async function runHlsJsCase(testCase, video, timeoutMs) {
     if (!Hls?.isSupported?.()) throw new Error("hls-mse-unsupported");
     const hlsConfig = { enableWorker: false, maxBufferLength: 20, backBufferLength: 1 };
     if (testCase.proxyBaseUrl) {
-      const BaseLoader = Hls.DefaultConfig?.loader;
-      if (typeof BaseLoader !== "function") throw new Error("hls-default-loader-unavailable");
-      hlsConfig.loader = class TizenHeaderProxyLoader extends BaseLoader {
-        load(context, config, callbacks) {
-          const proxyUrl = buildTizenPlaybackProxyUrl(
-            testCase.proxyBaseUrl,
-            context?.url,
-            testCase.proxyHeaders || {}
-          );
-          return super.load({ ...context, url: proxyUrl }, config, callbacks);
-        }
+      // Keep hls.js's original URLs for playlist and segment resolution, then
+      // redirect only each outgoing request. This avoids subclassing its XHR
+      // loader, which can remain pending indefinitely on Chromium 56.
+      hlsConfig.xhrSetup = (xhr, url) => {
+        const proxyUrl = buildTizenPlaybackProxyUrl(
+          testCase.proxyBaseUrl,
+          url,
+          testCase.proxyHeaders || {}
+        );
+        if (!proxyUrl) throw new Error("hls-proxy-url-unavailable");
+        xhr.open("GET", proxyUrl, true);
       };
     }
     hls = new Hls(hlsConfig);

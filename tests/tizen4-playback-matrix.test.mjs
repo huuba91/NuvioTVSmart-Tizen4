@@ -13,7 +13,7 @@ test("Tizen 4 playback matrix compares controlled HTTP with direct HTTPS native 
     [
       ["controlled-http-html", "html"],
       ["google-hls-hlsjs", "hls.js"],
-      ["loader-proxied-google-hls-hlsjs", "hls.js"]
+      ["xhr-proxied-google-hls-hlsjs", "hls.js"]
     ]
   );
   assert.equal(cases[0].source.url, "http://192.0.2.1/probe.mp4");
