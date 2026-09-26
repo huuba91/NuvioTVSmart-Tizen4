@@ -172,7 +172,10 @@ Cold-boot the TV, confirm Developer Mode is still enabled for this PC, and retry
   }
 
   if ($Launch) {
-    & $Sdb -s $Device shell 0 execute $ApplicationId
+    # This firmware may close interactive `sdb shell` even while package
+    # installation works. The Tizen CLI run command uses the same connected
+    # serial and is the reliable launcher on the NU7100.
+    & $TizenCli run -p $ApplicationId -s $Device
     if ($LASTEXITCODE -ne 0) { throw "Application launch failed with exit code $LASTEXITCODE" }
   }
 
