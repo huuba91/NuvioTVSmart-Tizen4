@@ -1,7 +1,8 @@
 const TIZEN_PLATFORM_VERSION_CAPABILITY = "http://tizen.org/feature/platform.version";
 const TIZEN_WEB_SERVICE_CAPABILITY = "http://tizen.org/feature/web.service";
-const TIZEN_P2P_MIN_MAJOR_VERSION = 5;
+const TIZEN_P2P_MIN_MAJOR_VERSION = 4;
 const TIZEN_P2P_MIN_CHROMIUM_VERSION = 63;
+const TIZEN_AVPLAY_DASH_AUDIO_MIN_MAJOR_VERSION = 5;
 const TIZEN_PLUGIN_MIN_MAJOR_VERSION = 6;
 
 let cachedCapabilities = null;
@@ -135,7 +136,7 @@ export function getTizenCapabilities(runtime = globalThis) {
   // Samsung exposes web.service as an optional capability. Some supported
   // TVs/firmwares report false even though the packaged service can still be
   // started through wrt:service. Let the real local service probe decide in
-  // that case; keep the version and package gates authoritative so Tizen 4
+  // that case; keep the version and package gates authoritative so unknown
   // and service-less packages remain unsupported.
   const supportsP2p = isTizen && engineFsServicePackaged && p2pVersionSupported;
   // The Tizen plugin runtime is intentionally disabled on older firmware.
@@ -161,10 +162,9 @@ export function getTizenCapabilities(runtime = globalThis) {
     tizenPluginVersionSupported,
     supportsTizenAvPlayDashAudioSwitching:
       isTizen &&
-      supportsP2pByVersion({
-        tizenMajorVersion: tizenVersion.major,
-        chromiumMajorVersion
-      }),
+      (tizenVersion.major > 0
+        ? tizenVersion.major >= TIZEN_AVPLAY_DASH_AUDIO_MIN_MAJOR_VERSION
+        : chromiumMajorVersion >= TIZEN_P2P_MIN_CHROMIUM_VERSION),
     advancedSubtitleStylingLimited: isTizen && typeof runtime?.ResizeObserver !== "function"
   });
 

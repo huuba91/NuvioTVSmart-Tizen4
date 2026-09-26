@@ -22,13 +22,13 @@ function tizenRuntime(version, { webService = true, packaged = true } = {}) {
   };
 }
 
-test("Tizen 4 is detected as Chromium 56-era direct-play capable but P2P gated", () => {
+test("Tizen 4 supports packaged EngineFS P2P while retaining newer-feature gates", () => {
   const capabilities = getTizenCapabilities(tizenRuntime("4.0"));
 
   assert.equal(capabilities.isTizen, true);
   assert.equal(capabilities.tizenMajorVersion, 4);
   assert.equal(capabilities.supportsWebService, true);
-  assert.equal(capabilities.supportsP2p, false);
+  assert.equal(capabilities.supportsP2p, true);
   assert.equal(capabilities.tizenPluginVersionSupported, false);
   assert.equal(capabilities.supportsTizenAvPlayDashAudioSwitching, false);
 });
