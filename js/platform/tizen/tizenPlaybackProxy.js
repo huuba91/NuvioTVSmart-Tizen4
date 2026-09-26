@@ -68,6 +68,12 @@ export function buildTizenPlaybackProxyUrl(baseUrl, sourceUrl, headers = {}) {
 
   const options = new URLSearchParams();
   options.set("d", `${source.protocol}//${source.host}`);
+  // EngineFS intentionally forwards only a small response-header allowlist.
+  // Chromium 56's media loader requires explicit cross-origin permission for
+  // renderer-loopback playback, and Samsung's seek path expects ranges to be
+  // advertised on every partial response rather than only on HEAD.
+  options.append("r", "Access-Control-Allow-Origin:*");
+  options.append("r", "Accept-Ranges:bytes");
   entries.forEach(([key, value]) => {
     options.append("h", `${key}:${value}`);
   });
