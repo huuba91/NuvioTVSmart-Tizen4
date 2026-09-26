@@ -1,8 +1,10 @@
 import { safeApiCall } from "../../core/network/safeApiCall.js";
 import { addonRepository } from "./addonRepository.js";
 import { MetaApi } from "../remote/api/metaApi.js";
+import { mapWithConcurrency } from "../../core/network/mapWithConcurrency.js";
 
 const INSTALLED_ADDONS_WAIT_MS = 750;
+const META_ADDON_PROBE_CONCURRENCY = 6;
 
 function normalizeDisplayText(value) {
   return String(value ?? "")
@@ -175,7 +177,7 @@ class MetaRepository {
         });
       }
 
-      for (const { addon, type: candidateType } of candidates) {
+      for (const { addon } of candidates) {
         // Android treats the catalog/source addon as sufficient for a
         // recommendation candidate: it uses the candidate preview metadata
         // instead of issuing a second detail request to that same addon.
@@ -188,11 +190,20 @@ class MetaRepository {
             message: "Source addon metadata is sufficient"
           };
         }
-        const result = await this.getMeta(addon.baseUrl, candidateType, id);
-        if (result.status === "success") {
-          this.metaCache.set(cacheKey, result.data);
-          return result;
-        }
+      }
+
+      // Preserve candidate priority in the result, but overlap independent
+      // network requests. Sequentially waiting for several unavailable
+      // add-ons made title opening scale with the sum of their timeouts.
+      const results = await mapWithConcurrency(
+        candidates,
+        META_ADDON_PROBE_CONCURRENCY,
+        ({ addon, type: candidateType }) => this.getMeta(addon.baseUrl, candidateType, id)
+      );
+      const successful = results.find((result) => result?.status === "success");
+      if (successful) {
+        this.metaCache.set(cacheKey, successful.data);
+        return successful;
       }
 
       return { status: "error", message: "Meta not found in installed addons", code: 404 };

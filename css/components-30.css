@@ -102,23 +102,30 @@
 }
 
 .player-startup-error-message {
+  width: min(92vw, 1500px);
   color: rgba(255, 255, 255, 0.82);
   font-size: clamp(18px, 1.25vw, 24px);
   line-height: 1.35;
   white-space: pre-line;
+  overflow-wrap: anywhere;
 }
 
 .player-startup-error-details {
-  width: 100%;
-  max-height: none;
-  overflow: visible;
-  padding: 0;
+  width: min(92vw, 1600px);
+  max-height: min(42vh, 420px);
+  overflow: hidden;
+  padding: 0 clamp(8px, 1vw, 18px);
+  box-sizing: border-box;
   color: rgba(255, 255, 255, 0.72);
-  font-size: clamp(11px, 1vw, 16px);
+  font-size: clamp(12px, 0.88vw, 17px);
   line-height: 1.35;
-  text-align: center;
+  text-align: left;
   word-break: break-word;
   overflow-wrap: anywhere;
+}
+
+.player-startup-error-details > div {
+  max-width: 100%;
 }
 
 .player-startup-error-actions {

@@ -71,6 +71,7 @@ export function createPlayerControllerMethods18() {
       this.currentStreamIdentity = streamIdentity || null;
       this.currentPlaybackUrl = requestedUrl;
       this.currentPlaybackHeaders = { ...(requestHeaders || {}) };
+      this.currentTizenHlsProxyBaseUrl = "";
       this.currentPlaybackMediaSourceType = this.resolveRuntimeSourceType(mediaSourceType);
       this.lastPlaybackErrorCode = 0;
       this.lastHlsErrorDiagnostic = null;
@@ -135,6 +136,13 @@ export function createPlayerControllerMethods18() {
         }
         playbackUrl = String(proxyResult?.url || requestedUrl).trim() || requestedUrl;
         if (proxyResult?.proxied) {
+          if (Platform.isTizen() && preferredEngine === "hls.js" && this.isLikelyHlsMimeType(sourceType)) {
+            // hls.js resolves child playlists and segments itself. Keep its
+            // canonical source URL and proxy every individual request in
+            // buildHlsConfig(), preserving required headers end to end.
+            playbackUrl = requestedUrl;
+            this.currentTizenHlsProxyBaseUrl = String(proxyResult.baseUrl || "").trim();
+          }
           this.currentPlaybackUrl = playbackUrl;
           this.startWebOsPlaybackKeepAlive();
           if (Platform.isTizen()) {
@@ -251,6 +259,17 @@ export function createPlayerControllerMethods18() {
       } else if (preferredEngine === "hls.js") {
         const hlsStarted = this.playWithHlsJs(playbackUrl, requestHeaders, playToken);
         if (!hlsStarted) {
+          if (this.currentTizenHlsProxyBaseUrl) {
+            this.isPlaying = false;
+            this.stopProgressSaving();
+            this.emitVideoEvent("error", {
+              playbackEngine: "hls.js",
+              mediaErrorCode: 4,
+              hlsErrorType: "proxy-required",
+              hlsErrorDetails: "Header-aware HLS requires hls.js on this Tizen version"
+            });
+            return;
+          }
           this.applyNativeSource(playbackUrl, sourceType || "application/vnd.apple.mpegurl", "native-hls");
           this.attemptVideoPlay({
             warningLabel: "Playback start rejected",

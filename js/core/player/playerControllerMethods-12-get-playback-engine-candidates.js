@@ -136,6 +136,12 @@ export function createPlayerControllerMethods12() {
       }
       const attemptedEngines = this.getAttemptedPlaybackEngines(normalizedUrl);
       const currentEngine = String(this.playbackEngine || "").trim();
+      if (Platform.isTizen() && currentEngine === "hls.js" && this.currentTizenHlsProxyBaseUrl) {
+        // Native HLS and AVPlay cannot propagate arbitrary add-on headers to
+        // every child request. Do not replace an actionable hls.js error with
+        // a guaranteed header-loss fallback.
+        return null;
+      }
       const candidates = this.getPlaybackEngineCandidates(normalizedUrl, sourceType, itemType);
       return candidates.find((candidate) => candidate !== currentEngine && !attemptedEngines.has(candidate)) || null;
     },

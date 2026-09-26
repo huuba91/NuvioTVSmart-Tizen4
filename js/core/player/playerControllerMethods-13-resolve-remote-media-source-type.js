@@ -4,6 +4,7 @@ import * as internals from "./playerController.js";
 export function createPlayerControllerMethods13() {
   const {
     Platform,
+    buildTizenPlaybackProxyUrl,
     hlsJsEngine,
     dashJsEngine,
     isTerminalHlsHttpStatus,
@@ -32,6 +33,13 @@ export function createPlayerControllerMethods13() {
       const forwardedHeaders = this.normalizePlaybackHeaders(requestHeaders);
       const isWebOs = Platform.isWebOS();
       const isLivePlayback = this.isLivePlaybackItemType();
+      const tizenProxyBaseUrl = String(this.currentTizenHlsProxyBaseUrl || "").trim();
+      const proxiedRequestUrl = (url) =>
+        tizenProxyBaseUrl
+          ? buildTizenPlaybackProxyUrl(tizenProxyBaseUrl, url, requestHeaders, {
+              browserTransport: true
+            })
+          : "";
       return {
         autoStartLoad: false,
         enableWorker: !isWebOs,
@@ -42,7 +50,15 @@ export function createPlayerControllerMethods13() {
         maxMaxBufferLength: HLS_MAX_BUFFER_SECONDS,
         maxBufferHole: 0.5,
         startFragPrefetch: false,
-        xhrSetup: (xhr) => {
+        xhrSetup: (xhr, url) => {
+          const proxyUrl = proxiedRequestUrl(url);
+          if (proxyUrl) {
+            // Every manifest, child playlist, key, and segment must cross the
+            // bridge. Rewriting only the top-level manifest loses the add-on's
+            // required headers as soon as hls.js follows a child URL.
+            xhr.open("GET", proxyUrl, true);
+            return;
+          }
           Object.entries(forwardedHeaders).forEach(([headerName, headerValue]) => {
             try {
               xhr.setRequestHeader(headerName, headerValue);
@@ -52,6 +68,10 @@ export function createPlayerControllerMethods13() {
           });
         },
         fetchSetup: (context, initParams = {}) => {
+          const proxyUrl = proxiedRequestUrl(context.url);
+          if (proxyUrl) {
+            return new Request(proxyUrl, initParams);
+          }
           const headers = new Headers(initParams.headers || {});
           Object.entries(forwardedHeaders).forEach(([headerName, headerValue]) => {
             try {

@@ -7,7 +7,10 @@ import {
   cloudPlaybackFileForSession
 } from "../../data/local/cloudLibraryPlaybackStore.js";
 import { Platform } from "../../platform/index.js";
-import { TizenPlaybackProxy } from "../../platform/tizen/tizenPlaybackProxy.js";
+import {
+  buildTizenPlaybackProxyUrl,
+  TizenPlaybackProxy
+} from "../../platform/tizen/tizenPlaybackProxy.js";
 import { WebOsPlaybackProxy } from "../../platform/webos/webosPlaybackProxy.js";
 import { WatchProgressSyncService } from "../profile/watchProgressSyncService.js";
 import { nativeVideoEngine } from "./engines/nativeVideoEngine.js";
@@ -80,6 +83,7 @@ export {
   cloudPlaybackFileForSession,
   Platform,
   TizenPlaybackProxy,
+  buildTizenPlaybackProxyUrl,
   WebOsPlaybackProxy,
   WatchProgressSyncService,
   nativeVideoEngine,
@@ -314,6 +318,7 @@ export const PlayerController = {
   hlsBufferStallWarningTimer: null,
   currentPlaybackUrl: "",
   currentPlaybackHeaders: {},
+  currentTizenHlsProxyBaseUrl: "",
   currentPlaybackMediaSourceType: null,
   webOsPlaybackKeepAliveHandle: null,
   webOsPlaybackKeepAliveToken: "",

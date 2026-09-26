@@ -45,7 +45,18 @@ export function createMetaDetailsScreenMethods03() {
       // aggregator may expose a `channel` catalog whose entries are `tv`; using
       // the row type here makes the original TV addon miss both meta and streams.
       const sourceItemType = String(itemType || this.params?.catalogType).trim() || "movie";
-      const canonicalItemId = await this.resolveCanonicalDetailItemId(itemId, itemType);
+      // Start the source add-on request immediately. Canonical TMDB/IMDb
+      // resolution is useful for cross-addon enrichment, but it must not
+      // serialize the request most likely to paint the selected title.
+      const sourceMetaPromise =
+        sourceAddonBaseUrl && LayoutPreferences.get().preferExternalMetaAddonDetail !== false
+          ? metaRepository.getMeta(sourceAddonBaseUrl, sourceItemType, sourceItemId)
+          : null;
+      const canonicalItemId = await withTimeout(
+        this.resolveCanonicalDetailItemId(itemId, itemType),
+        1200,
+        itemId
+      );
       if (token !== this.detailLoadToken) {
         return;
       }
@@ -60,8 +71,8 @@ export function createMetaDetailsScreenMethods03() {
 
       const loadMeta = async () => {
         const globalResultPromise = metaRepository.getMetaFromAllAddons(itemType, itemId);
-        if (sourceAddonBaseUrl && LayoutPreferences.get().preferExternalMetaAddonDetail !== false) {
-          const sourceResult = await withTimeout(metaRepository.getMeta(sourceAddonBaseUrl, sourceItemType, sourceItemId), 1800, {
+        if (sourceMetaPromise) {
+          const sourceResult = await withTimeout(sourceMetaPromise, 1800, {
             status: "error",
             message: "timeout"
           });
