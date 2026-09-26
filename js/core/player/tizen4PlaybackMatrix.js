@@ -1,4 +1,5 @@
 import { mapAddonStream } from "../streams/playbackSource.js";
+import { TizenPlaybackProxy } from "../../platform/tizen/tizenPlaybackProxy.js";
 
 export const TIZEN4_PLAYBACK_MATRIX_STORAGE_KEY = "nuvio_tizen4_playback_matrix_v1";
 export const TIZEN4_PLAYBACK_MATRIX_RESULT_FILE = "tizen4-playback-matrix.json";
@@ -7,8 +8,12 @@ export const TIZEN4_MATRIX_REMOTE_MP4 =
 export const TIZEN4_MATRIX_REMOTE_HLS =
   "https://devstreaming-cdn.apple.com/videos/streaming/examples/bipbop_4x3/bipbop_4x3_variant.m3u8";
 
-export function createTizen4PlaybackMatrixCases(baseUrl = globalThis.location?.href || "") {
+export function createTizen4PlaybackMatrixCases(
+  baseUrl = globalThis.location?.href || "",
+  lanMediaUrl = globalThis.__NUVIO_TIZEN4_MATRIX_LAN_MEDIA_URL__ || ""
+) {
   const packagedUrl = new URL("assets/tizen4-probe.mp4", baseUrl).href;
+  const controlledUrl = String(lanMediaUrl || packagedUrl).trim();
   const source = (name, url, mimeType) => ({
     ...mapAddonStream({ name, title: name, url }),
     mimeType,
@@ -17,12 +22,32 @@ export function createTizen4PlaybackMatrixCases(baseUrl = globalThis.location?.h
     addonName: "Tizen 4 playback matrix"
   });
   return [
-    { id: "packaged-html", engine: "html", source: source("Packaged MP4", packagedUrl, "video/mp4") },
-    { id: "remote-mp4-html", engine: "html", source: source("Remote MP4", TIZEN4_MATRIX_REMOTE_MP4, "video/mp4") },
-    { id: "remote-mp4-avplay", engine: "avplay", source: source("Remote MP4", TIZEN4_MATRIX_REMOTE_MP4, "video/mp4") },
-    { id: "remote-hls-html", engine: "html", source: source("Remote HLS", TIZEN4_MATRIX_REMOTE_HLS, "application/vnd.apple.mpegurl") },
-    { id: "remote-hls-avplay", engine: "avplay", source: source("Remote HLS", TIZEN4_MATRIX_REMOTE_HLS, "application/vnd.apple.mpegurl") }
+    { id: "controlled-http-html", engine: "html", source: source("Controlled HTTP MP4", controlledUrl, "video/mp4") },
+    { id: "controlled-http-avplay", engine: "avplay", source: source("Controlled HTTP MP4", controlledUrl, "video/mp4") },
+    { id: "direct-https-mp4-avplay", engine: "avplay", source: source("Direct HTTPS MP4", TIZEN4_MATRIX_REMOTE_MP4, "video/mp4") },
+    { id: "proxied-https-mp4-avplay", engine: "avplay", viaProxy: true, source: source("Proxied HTTPS MP4", TIZEN4_MATRIX_REMOTE_MP4, "video/mp4") },
+    { id: "proxied-https-hls-avplay", engine: "avplay", viaProxy: true, source: source("Proxied HTTPS HLS", TIZEN4_MATRIX_REMOTE_HLS, "application/vnd.apple.mpegurl") }
   ];
+}
+
+async function resolveMatrixCase(testCase) {
+  if (!testCase.viaProxy) return testCase;
+  const proxyResult = await TizenPlaybackProxy.resolve(
+    testCase.source.url,
+    { "X-Nuvio-Playback-Probe": "matrix5" },
+    { playbackEngine: "tizen-avplay" }
+  );
+  if (proxyResult?.status !== "success" || !proxyResult.url) {
+    return {
+      ...testCase,
+      setupError: `proxy-${String(proxyResult?.status || "unknown")}: ${String(proxyResult?.detail || "no proxy URL")}`
+    };
+  }
+  return {
+    ...testCase,
+    source: { ...testCase.source, url: proxyResult.url },
+    proxyStatus: proxyResult.status
+  };
 }
 
 export function scoreTizen4PlaybackResult(result) {
@@ -260,10 +285,11 @@ export async function runTizen4PlaybackMatrix({ onUpdate = () => {}, timeoutMs =
   try {
     const cases = createTizen4PlaybackMatrixCases();
     for (let index = 0; index < cases.length; index += 1) {
-      const testCase = cases[index];
+      const testCase = await resolveMatrixCase(cases[index]);
       onUpdate({ phase: "running", index, total: cases.length, testCase, results: [...results] });
-      const result =
-        testCase.engine === "avplay"
+      const result = testCase.setupError
+        ? { id: testCase.id, engine: testCase.engine, startupMs: 0, progressMs: 0, durationMs: 0, stalls: 0, error: testCase.setupError, verdict: "FAIL", score: 0 }
+        : testCase.engine === "avplay"
           ? await runAvPlayCase(testCase, timeoutMs)
           : await runHtmlCase(testCase, video, timeoutMs);
       results.push(result);
