@@ -68,7 +68,7 @@ test("Tizen playback bridge preserves the complete source URL and declared heade
 
   assert.equal(hasTizenUnsupportedPlaybackHeaders({ Cookie: "session=test" }), false);
   assert.equal(hasTizenUnsupportedPlaybackHeaders(headers), true);
-  assert.match(proxyUrl, /^http:\/\/127\.0\.0\.1:2712\/media\?/);
+  assert.match(proxyUrl, /^http:\/\/127\.0\.0\.1:2710\/media\?/);
   assert.match(proxyUrl, /url=https%3A%2F%2Fmedia\.example\.test%2Fvideo%2Fmaster\.m3u8%3Ftoken%3Dlegal-test/);
   assert.match(proxyUrl, /h=Referer%3Ahttps%3A%2F%2Fcatalog\.example\.test%2F/);
 });
@@ -79,7 +79,7 @@ test("Tizen playback proxy can bridge HTTPS media without synthetic headers", ()
       "http://192.168.129.0:2710",
       "https://media.w3.org/2010/05/bunny/trailer.mp4"
     ),
-    "http://192.168.129.0:2712/media?url=https%3A%2F%2Fmedia.w3.org%2F2010%2F05%2Fbunny%2Ftrailer.mp4"
+    "http://192.168.129.0:2710/media?url=https%3A%2F%2Fmedia.w3.org%2F2010%2F05%2Fbunny%2Ftrailer.mp4"
   );
 });
 

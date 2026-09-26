@@ -72,10 +72,9 @@ export function buildTizenPlaybackProxyUrl(baseUrl, sourceUrl, headers = {}) {
     options.append("h", `${key}:${value}`);
   });
 
-  // EngineFS remains on 2710 for torrents and service health. The readable,
-  // range-preserving media bridge shares the same service process on 2712.
-  const port = base.port === "2710" ? "2712" : base.port;
-  const root = `${base.protocol}//${base.hostname}${port ? `:${port}` : ""}`.replace(/\/+$/, "");
+  // The bridge shares EngineFS's existing listener because Tizen 4 web
+  // services reject a second listening port in the same service sandbox.
+  const root = `${base.protocol}//${base.host}`.replace(/\/+$/, "");
   return `${root}/media?${options.toString()}`;
 }
 
