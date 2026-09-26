@@ -456,6 +456,15 @@ export async function runTizen4PlaybackMatrix({ onUpdate = () => {}, timeoutMs =
       results.push(result);
       globalThis.__NUVIO_TIZEN4_REPORT_STAGE__?.(`matrix-result-${testCase.id}`, { results: [...results] });
       onUpdate({ phase: "result", index, total: cases.length, testCase, result, results: [...results] });
+      if (index === cases.length - 1) {
+        // Publish the authoritative result before optional media/filesystem
+        // cleanup. Old Tizen renderers can keep adaptive-player teardown
+        // pending even though playback evidence is already complete.
+        const completedAt = new Date().toISOString();
+        const earlySummary = { completedAt, userAgent: navigator.userAgent, results: [...results] };
+        globalThis.__NUVIO_TIZEN4_REPORT_STAGE__?.("complete", { results: [...results], summary: earlySummary });
+        onUpdate({ phase: "complete", results: [...results], summary: earlySummary });
+      }
       if (testCase.objectUrl) URL.revokeObjectURL(testCase.objectUrl);
       await wait(500);
     }
