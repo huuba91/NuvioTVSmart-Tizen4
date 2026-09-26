@@ -227,6 +227,9 @@ export function createPlayerScreenMethods38() {
           if (!this.currentEngineFsStream && this.tryNextStartupStreamCandidate?.()) {
             return;
           }
+          if (!this.currentEngineFsStream && (await this.refreshAndTryStartupStreamCandidate?.())) {
+            return;
+          }
           const mediaErrorCode = startupMediaErrorCode;
           const sourceCandidate = this.getStreamCandidateByUrl(this.activePlaybackUrl) || this.getCurrentStreamCandidate();
           const startupErrorMessage = this.getStartupErrorMessage(mediaErrorCode, terminalHlsErrorDetail, sourceCandidate);

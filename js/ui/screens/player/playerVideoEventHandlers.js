@@ -225,6 +225,9 @@ export function createPlayerVideoEventHandlers(video, isTizenAvPlayPlayback) {
       if (this.tryNextStartupStreamCandidate?.()) {
         return;
       }
+      if (await this.refreshAndTryStartupStreamCandidate?.()) {
+        return;
+      }
       this.markPlaybackSourceFailed(this.activePlaybackUrl);
       const startupErrorMessage = this.getStartupErrorMessage(mediaErrorCode, playbackErrorDetail, currentSourceCandidate);
       this.clearPlaybackStallGuard();

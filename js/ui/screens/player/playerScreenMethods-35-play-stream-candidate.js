@@ -305,6 +305,36 @@ export function createPlayerScreenMethods35() {
       });
       return true;
     },
+    async refreshAndTryStartupStreamCandidate() {
+      if (Number(this.startupSourceRefreshAttempts || 0) >= 1) return false;
+      if (this.startupSourceRefreshPromise) return this.startupSourceRefreshPromise;
+      this.startupSourceRefreshAttempts = Number(this.startupSourceRefreshAttempts || 0) + 1;
+      this.loadingVisible = true;
+      this.updateLoadingVisibility();
+      const refreshPromise = (async () => {
+        await this.reloadSources({ forceRefresh: true });
+        const candidate = this.getNextStartupStreamCandidate();
+        if (!candidate) return false;
+        this.startupSourceFallbackAttempts = 0;
+        this.lastPlaybackErrorAt = 0;
+        this.clearStartupError();
+        void this.playStreamCandidate(candidate, {
+          preservePanel: true,
+          resetSilentAudioState: false,
+          preservePendingRestore: Boolean(this.pendingPlaybackRestore)
+        });
+        return true;
+      })()
+        .catch((error) => {
+          console.warn("Fresh live-source resolution failed", error);
+          return false;
+        })
+        .finally(() => {
+          if (this.startupSourceRefreshPromise === refreshPromise) this.startupSourceRefreshPromise = null;
+        });
+      this.startupSourceRefreshPromise = refreshPromise;
+      return refreshPromise;
+    },
     mediaErrorMessage(errorCode = 0, detail = "", streamCandidate = this.getCurrentStreamCandidate()) {
       const code = Number(errorCode || 0);
       const text = String(detail || "").toLowerCase();

@@ -72,6 +72,7 @@ export function createPlayerVideoLifecycleHandlers(video, isTizenAvPlayPlayback)
     this.playbackRecoveryActive = false;
     this.playbackRecoveryAttempts = 0;
     this.startupSourceFallbackAttempts = 0;
+    this.startupSourceRefreshAttempts = 0;
     this.beginPlaybackEngineValidation();
     this.bufferingActive = false;
     this.clearBufferingSpinnerTimer();

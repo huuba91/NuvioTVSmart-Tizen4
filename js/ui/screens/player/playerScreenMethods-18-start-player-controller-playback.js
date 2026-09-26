@@ -41,7 +41,7 @@ export function createPlayerScreenMethods18() {
         ...(Object.keys(requestHeaders).length ? { requestHeaders } : {})
       };
       PlayerController.setStartupPresentationAudioMuted?.(true);
-      return Promise.resolve(PlayerController.play(playbackUrl, playbackContext)).catch((error) => {
+      return Promise.resolve(PlayerController.play(playbackUrl, playbackContext)).catch(async (error) => {
         if (!this.isActiveMountToken(mountToken) || this.isExternalFrameMode()) {
           return;
         }
@@ -58,6 +58,9 @@ export function createPlayerScreenMethods18() {
         this.markPlaybackSourceFailed(playbackUrl);
         if (!this.hasPresentedPlaybackFrame) {
           if (this.tryNextStartupStreamCandidate?.()) {
+            return;
+          }
+          if (await this.refreshAndTryStartupStreamCandidate?.()) {
             return;
           }
           this.showStartupError(this.getStartupErrorMessage(mediaErrorCode, detail, candidate), {
@@ -96,10 +99,9 @@ export function createPlayerScreenMethods18() {
     },
     getStartupErrorMessage(mediaErrorCode = 0, detail = "", streamCandidate = this.getCurrentStreamCandidate()) {
       const code = Number(mediaErrorCode || 0);
-      const compatibilityMessage = this.getWebHeaderRestrictedStreamMessage(streamCandidate);
-      if (compatibilityMessage && (code === 0 || code === 2 || code === 4)) {
-        return compatibilityMessage;
-      }
+      // mediaErrorMessage checks concrete HTTP failures before falling back to
+      // the generic proxy-header compatibility hint. Preserve that ordering so
+      // an expired/removed live feed reports 404 instead of blaming headers.
       const baseMessage = this.mediaErrorMessage(code, detail, streamCandidate);
       const extra = String(detail || "").trim();
       if (!extra || (code === 4 && this.isDebridPlaybackCandidate(streamCandidate))) {
