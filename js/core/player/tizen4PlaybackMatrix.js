@@ -1,5 +1,8 @@
 import { mapAddonStream } from "../streams/playbackSource.js";
-import { TizenPlaybackProxy } from "../../platform/tizen/tizenPlaybackProxy.js";
+import {
+  buildTizenPlaybackProxyUrl,
+  TizenPlaybackProxy
+} from "../../platform/tizen/tizenPlaybackProxy.js";
 import { loadStreamingLibs } from "../../runtime/loadStreamingLibs.js";
 
 export const TIZEN4_PLAYBACK_MATRIX_STORAGE_KEY = "nuvio_tizen4_playback_matrix_v1";
@@ -31,8 +34,7 @@ export function createTizen4PlaybackMatrixCases(
   return [
     { id: "controlled-http-html", engine: "html", source: source("Controlled HTTP MP4", controlledUrl, "video/mp4") },
     { id: "google-hls-hlsjs", engine: "hls.js", source: source("Google HLS via MSE", TIZEN4_MATRIX_GOOGLE_HLS, "application/vnd.apple.mpegurl") },
-    { id: "google-hls-avplay", engine: "avplay", source: source("Google HLS via AVPlay", TIZEN4_MATRIX_GOOGLE_HLS, "application/vnd.apple.mpegurl") },
-    { id: "proxied-google-hls-hlsjs", engine: "hls.js", viaProxy: true, source: source("Header-proxied Google HLS via MSE", TIZEN4_MATRIX_GOOGLE_HLS, "application/vnd.apple.mpegurl") }
+    { id: "loader-proxied-google-hls-hlsjs", engine: "hls.js", viaProxy: true, proxyEachRequest: true, source: source("Header-proxied Google HLS via MSE", TIZEN4_MATRIX_GOOGLE_HLS, "application/vnd.apple.mpegurl") }
   ];
 }
 
@@ -40,7 +42,7 @@ async function resolveMatrixCase(testCase) {
   if (!testCase.viaProxy) return testCase;
   const proxyResult = await TizenPlaybackProxy.resolve(
     testCase.source.url,
-    { "X-Nuvio-Playback-Probe": "matrix16" },
+    { "X-Nuvio-Playback-Probe": "matrix17" },
     {
       playbackEngine: testCase.engine === "hls.js" ? "hls.js" : testCase.engine.includes("html") ? "native-file" : "tizen-avplay",
       preferDeviceAddress: testCase.preferDeviceAddress === true
@@ -50,6 +52,14 @@ async function resolveMatrixCase(testCase) {
     return {
       ...testCase,
       setupError: `proxy-${String(proxyResult?.status || "unknown")}: ${String(proxyResult?.detail || "no proxy URL")}`
+    };
+  }
+  if (testCase.proxyEachRequest) {
+    return {
+      ...testCase,
+      proxyBaseUrl: proxyResult.baseUrl,
+      proxyHeaders: { "X-Nuvio-Playback-Probe": "matrix17" },
+      proxyStatus: proxyResult.status
     };
   }
   if (testCase.viaBlob) {
@@ -324,7 +334,22 @@ async function runHlsJsCase(testCase, video, timeoutMs) {
     await withWatchdog(loadStreamingLibs({ hls: true, dash: false }), timeoutMs, "hls-library");
     const Hls = globalThis.Hls;
     if (!Hls?.isSupported?.()) throw new Error("hls-mse-unsupported");
-    hls = new Hls({ enableWorker: false, maxBufferLength: 20, backBufferLength: 1 });
+    const hlsConfig = { enableWorker: false, maxBufferLength: 20, backBufferLength: 1 };
+    if (testCase.proxyBaseUrl) {
+      const BaseLoader = Hls.DefaultConfig?.loader;
+      if (typeof BaseLoader !== "function") throw new Error("hls-default-loader-unavailable");
+      hlsConfig.loader = class TizenHeaderProxyLoader extends BaseLoader {
+        load(context, config, callbacks) {
+          const proxyUrl = buildTizenPlaybackProxyUrl(
+            testCase.proxyBaseUrl,
+            context?.url,
+            testCase.proxyHeaders || {}
+          );
+          return super.load({ ...context, url: proxyUrl }, config, callbacks);
+        }
+      };
+    }
+    hls = new Hls(hlsConfig);
     video.addEventListener("playing", onPlaying);
     video.addEventListener("timeupdate", onTimeUpdate);
     video.addEventListener("waiting", onWaiting);
