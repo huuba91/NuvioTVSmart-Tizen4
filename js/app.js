@@ -557,6 +557,15 @@ async function bootstrapApp() {
   setupPluginRuntimeLifecycle();
   setupWebOsAppLifecycle();
 
+  // Diagnostic packages must be able to exercise playback on a clean TV
+  // install before authentication. The flag is injected only into explicit
+  // matrix builds; normal production packages continue through auth below.
+  if (Platform.isTizen() && globalThis.__NUVIO_TIZEN4_MATRIX_AUTO_RUN__) {
+    globalThis.__NUVIO_TIZEN4_REPORT_STAGE__?.("diagnostic-route");
+    await Router.navigate("tizen4PlaybackMatrix", {}, { replaceHistory: true, skipStackPush: true });
+    return;
+  }
+
   ThemeManager.apply();
   I18n.apply();
   warmStreamingLibs({ delayMs: 1400 });
