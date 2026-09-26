@@ -234,6 +234,8 @@ export function createPlayerScreenMethods06() {
         requestHeaders,
         mediaSourceType,
         forceEngine: String(this.params.forcePlaybackEngine || "").trim() || null,
+        addonId: streamCandidate?.addonId || streamCandidate?.streamOrigin?.addonId || null,
+        addonBaseUrl: streamCandidate?.addonBaseUrl || streamCandidate?.streamOrigin?.addonBaseUrl || null,
         streamIdentity: streamCandidate ? buildStreamResumeIdentity(streamCandidate) || streamMergeKey(streamCandidate) || null : null
       };
     },

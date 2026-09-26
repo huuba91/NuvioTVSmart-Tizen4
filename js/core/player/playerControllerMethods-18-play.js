@@ -2,7 +2,7 @@
 import * as internals from "./playerController.js";
 
 export function createPlayerControllerMethods18() {
-  const { Platform, TizenPlaybackProxy, WebOsPlaybackProxy, logEngineFsDebug, logTizenAvPlayDebug, logWebOsPlaybackDebug, canFallbackFromPlaybackEngine } = internals;
+  const { Platform, TizenPlaybackProxy, WebOsPlaybackProxy, logEngineFsDebug, logTizenAvPlayDebug, logWebOsPlaybackDebug, canFallbackFromPlaybackEngine, buildTizenAddonHlsProxyUrl } = internals;
 
   return {
     async play(
@@ -25,12 +25,17 @@ export function createPlayerControllerMethods18() {
         forceEngine = null,
         streamIdentity = null,
         cloudSessionToken = null,
-        preserveTrackSelections = false
+        preserveTrackSelections = false,
+        addonId = null,
+        addonBaseUrl = null
       } = {}
     ) {
       if (!this.video) return;
 
-      const requestedUrl = String(url || "").trim();
+      const directRequestedUrl = String(url || "").trim();
+      const requestedUrl = Platform.isTizen()
+        ? buildTizenAddonHlsProxyUrl(directRequestedUrl, { addonId, addonBaseUrl, requestHeaders })
+        : directRequestedUrl;
       const playToken = Number(this.playRequestToken || 0) + 1;
       this.playRequestToken = playToken;
       this.stopProgressSaving();
