@@ -63,3 +63,40 @@ test("Tizen media bridge preserves byte ranges and required media headers", asyn
     await close(upstream);
   }
 });
+
+test("Tizen media bridge canonicalizes add-on-relative HLS resources", async function () {
+  var manifest = [
+    "#EXTM3U",
+    "#EXT-X-STREAM-INF:BANDWIDTH=800000",
+    "/api/manifest?url=child.m3u8",
+    "#EXT-X-KEY:METHOD=AES-128,URI=\"keys/live.key\"",
+    "#EXT-X-MAP:URI='../init.mp4'",
+    "segments/0001.ts"
+  ].join("\n");
+  var upstream = http.createServer(function (_req, res) {
+    res.writeHead(200, {
+      "Content-Type": "application/vnd.apple.mpegurl",
+      "Content-Length": Buffer.byteLength(manifest)
+    });
+    res.end(manifest);
+  });
+  var upstreamPort = await listen(upstream);
+  var proxy = http.createServer(bridge.handleRequest);
+  var proxyPort = await listen(proxy);
+
+  try {
+    var target = "http://127.0.0.1:" + upstreamPort + "/api/manifest?url=master.m3u8";
+    var path = "/media?transport=browser&url=" + encodeURIComponent(target);
+    var result = await request(proxyPort, path);
+    var body = result.body.toString();
+    assert.equal(result.status, 200);
+    assert.match(body, new RegExp("http://127\\.0\\.0\\.1:" + upstreamPort + "/api/manifest\\?url=child\\.m3u8"));
+    assert.match(body, new RegExp('URI="http://127\\.0\\.0\\.1:' + upstreamPort + '/api/keys/live\\.key"'));
+    assert.match(body, new RegExp("URI='http://127\\.0\\.0\\.1:" + upstreamPort + "/init\\.mp4'"));
+    assert.match(body, new RegExp("http://127\\.0\\.0\\.1:" + upstreamPort + "/api/segments/0001\\.ts"));
+    assert.equal(Number(result.headers["content-length"]), result.body.length);
+  } finally {
+    await close(proxy);
+    await close(upstream);
+  }
+});

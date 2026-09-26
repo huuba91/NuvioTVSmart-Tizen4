@@ -8,6 +8,7 @@ var url = require("url");
 var server = null;
 var DEFAULT_PORT = 2712;
 var MAX_REDIRECTS = 5;
+var MAX_HLS_MANIFEST_BYTES = 4 * 1024 * 1024;
 var REQUEST_HEADER_ALLOWLIST = {
   accept: true,
   cookie: true,
@@ -50,6 +51,58 @@ function writeBrowserResponse(response, status, headers, upstreamResponse) {
   response.shouldKeepAlive = false;
   response.writeHead(status, headers);
   upstreamResponse.pipe(response);
+}
+
+function isLikelyHlsManifest(target, headers) {
+  var contentType = String((headers && headers["content-type"]) || "").toLowerCase();
+  return /mpegurl|m3u8/.test(contentType) || /(?:\.m3u8(?:[?#]|$)|\/api\/manifest(?:[?#]|$))/i.test(String(target || ""));
+}
+
+function absoluteHlsUri(value, target) {
+  var text = String(value || "").trim();
+  if (!text || /^(?:[a-z][a-z0-9+.-]*:|#)/i.test(text)) return text;
+  return url.resolve(target, text);
+}
+
+function rewriteHlsManifest(text, target) {
+  return String(text || "")
+    .split(/\r?\n/)
+    .map(function (line) {
+      var trimmed = line.trim();
+      if (!trimmed) return line;
+      if (trimmed.charAt(0) !== "#") return absoluteHlsUri(trimmed, target);
+      return line.replace(/URI=("([^"]+)"|'([^']+)')/gi, function (match, quoted, doubleValue, singleValue) {
+        var quote = quoted.charAt(0);
+        return "URI=" + quote + absoluteHlsUri(doubleValue || singleValue, target) + quote;
+      });
+    })
+    .join("\n");
+}
+
+function writeBrowserHlsResponse(response, status, headers, upstreamResponse, target) {
+  var chunks = [];
+  var size = 0;
+  upstreamResponse.on("data", function (chunk) {
+    size += chunk.length;
+    if (size <= MAX_HLS_MANIFEST_BYTES) chunks.push(chunk);
+  });
+  upstreamResponse.on("end", function () {
+    if (size > MAX_HLS_MANIFEST_BYTES) {
+      if (!response.headersSent) sendError(response, 502, "HLS manifest is too large");
+      return;
+    }
+    var body = Buffer.concat(chunks).toString("utf8");
+    var rewritten = rewriteHlsManifest(body, target);
+    var nextHeaders = {};
+    Object.keys(headers).forEach(function (name) {
+      if (String(name).toLowerCase() !== "content-length") nextHeaders[name] = headers[name];
+    });
+    nextHeaders["Content-Type"] = "application/vnd.apple.mpegurl";
+    nextHeaders["Content-Length"] = Buffer.byteLength(rewritten);
+    response.shouldKeepAlive = false;
+    response.writeHead(status, nextHeaders);
+    response.end(rewritten);
+  });
 }
 
 function sendError(response, status, message) {
@@ -142,7 +195,13 @@ function forward(target, request, response, declaredHeaders, redirectsLeft, brow
       upstreamResponse.on("error", function () {
         if (!response.finished) response.destroy();
       });
-      if (browserTransport) writeBrowserResponse(response, status, responseHeaders, upstreamResponse);
+      if (browserTransport && request.method !== "HEAD" && isLikelyHlsManifest(target, upstreamResponse.headers)) {
+        // The local bridge URL becomes XMLHttpRequest.responseURL on legacy
+        // Tizen. Without canonicalization, hls.js resolves an add-on's
+        // root-relative child manifests against 127.0.0.1 instead of the
+        // upstream add-on host and then attempts to parse the bridge's error.
+        writeBrowserHlsResponse(response, status, responseHeaders, upstreamResponse, target);
+      } else if (browserTransport) writeBrowserResponse(response, status, responseHeaders, upstreamResponse);
       else writeHttp10Response(response, status, responseHeaders, upstreamResponse);
     }
   );
@@ -211,4 +270,9 @@ function stop() {
   } catch (_) {}
 }
 
-module.exports = { start: start, stop: stop, handleRequest: handleRequest };
+module.exports = {
+  start: start,
+  stop: stop,
+  handleRequest: handleRequest,
+  rewriteHlsManifest: rewriteHlsManifest
+};
