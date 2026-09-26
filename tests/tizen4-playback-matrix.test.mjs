@@ -15,6 +15,7 @@ test("Tizen 4 playback matrix compares controlled HTTP, direct HTTPS, and proxie
       ["controlled-http-avplay", "avplay"],
       ["direct-https-mp4-avplay", "avplay"],
       ["proxied-https-mp4-html", "html"],
+      ["proxied-https-mp4-lan-html", "html"],
       ["proxied-https-mp4-blob-html", "blob-html"],
       ["proxied-https-mp4-avplay", "avplay"],
       ["proxied-https-hls-avplay", "avplay"]

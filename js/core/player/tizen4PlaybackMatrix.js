@@ -26,6 +26,7 @@ export function createTizen4PlaybackMatrixCases(
     { id: "controlled-http-avplay", engine: "avplay", source: source("Controlled HTTP MP4", controlledUrl, "video/mp4") },
     { id: "direct-https-mp4-avplay", engine: "avplay", source: source("Direct HTTPS MP4", TIZEN4_MATRIX_REMOTE_MP4, "video/mp4") },
     { id: "proxied-https-mp4-html", engine: "html", viaProxy: true, crossOrigin: true, source: source("Proxied HTTPS MP4", TIZEN4_MATRIX_REMOTE_MP4, "video/mp4") },
+    { id: "proxied-https-mp4-lan-html", engine: "html", viaProxy: true, preferDeviceAddress: true, crossOrigin: true, source: source("LAN-addressed proxied HTTPS MP4", TIZEN4_MATRIX_REMOTE_MP4, "video/mp4") },
     { id: "proxied-https-mp4-blob-html", engine: "blob-html", viaProxy: true, viaBlob: true, source: source("Proxied HTTPS MP4 blob", TIZEN4_MATRIX_REMOTE_MP4, "video/mp4") },
     { id: "proxied-https-mp4-avplay", engine: "avplay", viaProxy: true, source: source("Proxied HTTPS MP4", TIZEN4_MATRIX_REMOTE_MP4, "video/mp4") },
     { id: "proxied-https-hls-avplay", engine: "avplay", viaProxy: true, skipCleanupOnPrepareTimeout: true, source: source("Proxied HTTPS HLS", TIZEN4_MATRIX_REMOTE_HLS, "application/vnd.apple.mpegurl") }
@@ -36,8 +37,11 @@ async function resolveMatrixCase(testCase) {
   if (!testCase.viaProxy) return testCase;
   const proxyResult = await TizenPlaybackProxy.resolve(
     testCase.source.url,
-    { "X-Nuvio-Playback-Probe": "matrix8" },
-    { playbackEngine: testCase.engine.includes("html") ? "native-file" : "tizen-avplay" }
+    { "X-Nuvio-Playback-Probe": "matrix9" },
+    {
+      playbackEngine: testCase.engine.includes("html") ? "native-file" : "tizen-avplay",
+      preferDeviceAddress: testCase.preferDeviceAddress === true
+    }
   );
   if (proxyResult?.status !== "success" || !proxyResult.url) {
     return {
@@ -374,7 +378,7 @@ export function openTizen4PlaybackMatrixOverlay() {
   title.textContent = "Tizen 4 playback matrix · MATRIX1";
   title.style.cssText = "font-size:48px;margin:0 0 22px";
   const status = document.createElement("p");
-  status.textContent = "Starting seven controlled playback paths…";
+  status.textContent = "Starting eight controlled playback paths…";
   const output = document.createElement("pre");
   output.style.cssText = "white-space:pre-wrap;font:24px/1.5 monospace;margin-top:24px";
   const hint = document.createElement("p");

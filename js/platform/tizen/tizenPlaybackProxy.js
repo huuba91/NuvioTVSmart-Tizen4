@@ -111,7 +111,11 @@ export const TizenPlaybackProxy = {
     );
   },
 
-  async resolve(sourceUrl = "", headers = {}, { playbackEngine = "" } = {}) {
+  async resolve(
+    sourceUrl = "",
+    headers = {},
+    { playbackEngine = "", preferDeviceAddress = false } = {}
+  ) {
     const originalUrl = String(sourceUrl || "").trim();
     if (!this.requiresProxy(originalUrl, headers, { playbackEngine })) {
       return { status: "not-required", url: originalUrl, proxied: false };
@@ -138,7 +142,7 @@ export const TizenPlaybackProxy = {
       };
     }
 
-    const playbackBaseUrl = String(playbackEngine || "").toLowerCase().includes("avplay")
+    const playbackBaseUrl = preferDeviceAddress || String(playbackEngine || "").toLowerCase().includes("avplay")
       ? buildTizenAvPlayProxyBaseUrl(baseUrl)
       : baseUrl;
     const proxyUrl = buildTizenPlaybackProxyUrl(playbackBaseUrl, originalUrl, headers);
