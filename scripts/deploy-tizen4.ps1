@@ -9,7 +9,8 @@ param(
   [switch]$SkipBuild,
   [switch]$SkipInstall,
   [switch]$Launch,
-  [switch]$FollowLogs
+  [switch]$FollowLogs,
+  [switch]$IncludePluginService
 )
 
 $ErrorActionPreference = "Stop"
@@ -97,7 +98,12 @@ Push-Location $ProjectRoot
 try {
   if (-not $SkipBuild) {
     $PreviousRequireLocalProperties = $env:NUVIO_REQUIRE_LOCAL_PROPERTIES
+    $PreviousIncludePluginService = $env:TIZEN_INCLUDE_PLUGIN_SERVICE
     $env:NUVIO_REQUIRE_LOCAL_PROPERTIES = "1"
+    # Executable scraper plugins require the newer Tizen service runtime.
+    # The Tizen 4 deployment always keeps EngineFS but excludes PluginService
+    # unless an explicit diagnostic run requests it.
+    $env:TIZEN_INCLUDE_PLUGIN_SERVICE = if ($IncludePluginService) { "1" } else { "0" }
     if ($NpmCommand) {
       & $NpmCommand run build
     } else {
@@ -108,6 +114,7 @@ try {
     & $Node (Join-Path $ProjectRoot "scripts\package-tizen.mjs")
     if ($LASTEXITCODE -ne 0) { throw "Tizen packaging failed with exit code $LASTEXITCODE" }
     $env:NUVIO_REQUIRE_LOCAL_PROPERTIES = $PreviousRequireLocalProperties
+    $env:TIZEN_INCLUDE_PLUGIN_SERVICE = $PreviousIncludePluginService
   }
 
   if (-not (Test-Path -LiteralPath $UnsignedWgt)) {

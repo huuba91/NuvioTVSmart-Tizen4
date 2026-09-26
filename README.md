@@ -60,7 +60,7 @@ This fork keeps the upstream project as the `upstream` remote and develops the T
 powershell -ExecutionPolicy Bypass -File .\scripts\deploy-tizen4.ps1 -Launch
 ```
 
-The script builds from source, packages the WGT, verifies the configured runtime environment, signs into a separate staging directory with the existing `NU7100-Nuvio` profile, verifies both signature files, refreshes the TV's temporary install permission, installs, and optionally launches. Override `-Device`, `-DeviceName`, `-SigningProfile`, or `-TizenStudio` when needed. `-FollowLogs` attaches the Samsung device log after launch.
+The script builds from source, packages the WGT with EngineFS and without the unsupported Tizen 4 PluginService, verifies the configured runtime environment, signs into a separate staging directory with the existing `NU7100-Nuvio` profile, verifies both signature files, refreshes the TV's temporary install permission, installs, and optionally launches. Override `-Device`, `-DeviceName`, `-SigningProfile`, or `-TizenStudio` when needed. `-FollowLogs` attaches the Samsung device log after launch. `-IncludePluginService` exists only for explicit compatibility experiments and is not used for this TV.
 
 The signed development artifact is written to `.cache/tizen4-deploy/NuvioTV001_<version>.wgt`. The low-level `scripts/package-tizen.mjs` command now rejects stale frontend output; use `npm run package:tizen` unless a diagnostic workflow has explicitly run `npm run build` first.
 
