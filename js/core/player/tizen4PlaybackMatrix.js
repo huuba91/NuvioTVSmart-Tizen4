@@ -17,6 +17,8 @@ export const TIZEN4_MATRIX_GOOGLE_MP4_HTTP =
   "http://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4";
 export const TIZEN4_MATRIX_GOOGLE_HLS =
   "https://storage.googleapis.com/shaka-demo-assets/angel-one-hls/hls.m3u8";
+export const TIZEN4_MATRIX_GOOGLE_DASH =
+  "https://storage.googleapis.com/shaka-demo-assets/angel-one/dash.mpd";
 
 export function createTizen4PlaybackMatrixCases(
   baseUrl = globalThis.location?.href || "",
@@ -34,7 +36,7 @@ export function createTizen4PlaybackMatrixCases(
   return [
     { id: "controlled-http-html", engine: "html", source: source("Controlled HTTP MP4", controlledUrl, "video/mp4") },
     { id: "google-hls-hlsjs", engine: "hls.js", source: source("Google HLS via MSE", TIZEN4_MATRIX_GOOGLE_HLS, "application/vnd.apple.mpegurl") },
-    { id: "xhr-proxied-google-hls-hlsjs", engine: "hls.js", viaProxy: true, proxyEachRequest: true, source: source("Header-proxied Google HLS via MSE", TIZEN4_MATRIX_GOOGLE_HLS, "application/vnd.apple.mpegurl") }
+    { id: "google-dash-dashjs", engine: "dash.js", source: source("Google DASH via MSE", TIZEN4_MATRIX_GOOGLE_DASH, "application/dash+xml") }
   ];
 }
 
@@ -388,6 +390,43 @@ async function runHlsJsCase(testCase, video, timeoutMs) {
   return { ...result, ...scoreTizen4PlaybackResult(result) };
 }
 
+async function runDashJsCase(testCase, video, timeoutMs) {
+  const startedAt = Date.now();
+  const result = { id: testCase.id, engine: "dash.js", startupMs: 0, progressMs: 0, durationMs: 0, stalls: 0, error: "" };
+  let player = null;
+  const onPlaying = () => { if (!result.startupMs) result.startupMs = Date.now() - startedAt; };
+  const onTimeUpdate = () => { result.progressMs = Math.max(result.progressMs, Math.round((Number(video.currentTime) || 0) * 1000)); };
+  const onWaiting = () => { if (result.progressMs) result.stalls += 1; };
+  try {
+    await withWatchdog(loadStreamingLibs({ hls: false, dash: true }), timeoutMs, "dash-library");
+    const dashjs = globalThis.dashjs;
+    if (!dashjs?.MediaPlayer) throw new Error("dash-mse-unsupported");
+    player = dashjs.MediaPlayer().create();
+    video.addEventListener("playing", onPlaying);
+    video.addEventListener("timeupdate", onTimeUpdate);
+    video.addEventListener("waiting", onWaiting);
+    video.addEventListener("stalled", onWaiting);
+    player.updateSettings?.({ streaming: { buffer: { bufferToKeep: 10, bufferTimeDefault: 10 } } });
+    player.initialize(video, testCase.source.url, true);
+    const deadline = Date.now() + timeoutMs;
+    while (!result.error && Date.now() < deadline && result.progressMs < 5000) await wait(250);
+    result.durationMs = Number.isFinite(video.duration) ? Math.round(video.duration * 1000) : 0;
+    if (!result.error && result.progressMs < 1500) result.error = "no-time-progress";
+  } catch (error) {
+    result.error = error?.message || String(error || "dash-exception");
+  } finally {
+    try { player?.reset?.(); } catch (_) {}
+    video.pause();
+    video.removeAttribute("src");
+    video.load();
+    video.removeEventListener("playing", onPlaying);
+    video.removeEventListener("timeupdate", onTimeUpdate);
+    video.removeEventListener("waiting", onWaiting);
+    video.removeEventListener("stalled", onWaiting);
+  }
+  return { ...result, ...scoreTizen4PlaybackResult(result) };
+}
+
 export async function runTizen4PlaybackMatrix({ onUpdate = () => {}, timeoutMs = 10000 } = {}) {
   globalThis.__NUVIO_TIZEN4_REPORT_STAGE__?.("matrix-run-start");
   const video = document.createElement("video");
@@ -408,7 +447,9 @@ export async function runTizen4PlaybackMatrix({ onUpdate = () => {}, timeoutMs =
           ? await runAvPlayCase(testCase, timeoutMs)
           : testCase.engine === "hls.js"
             ? await runHlsJsCase(testCase, video, timeoutMs)
-          : await runHtmlCase(testCase, video, timeoutMs);
+            : testCase.engine === "dash.js"
+              ? await runDashJsCase(testCase, video, timeoutMs)
+              : await runHtmlCase(testCase, video, timeoutMs);
       results.push(result);
       globalThis.__NUVIO_TIZEN4_REPORT_STAGE__?.(`matrix-result-${testCase.id}`, { results: [...results] });
       onUpdate({ phase: "result", index, total: cases.length, testCase, result, results: [...results] });

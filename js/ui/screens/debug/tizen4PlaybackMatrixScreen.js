@@ -67,7 +67,7 @@ export const Tizen4PlaybackMatrixScreen = {
     if (!this.container) return;
     this.container.innerHTML = `
       <main style="min-height:100%;box-sizing:border-box;background:#080b12;color:#fff;padding:64px 80px;font:28px/1.4 sans-serif">
-        <h1 style="font-size:48px;margin:0 0 20px">Tizen 4 playback matrix · MATRIX19</h1>
+        <h1 style="font-size:48px;margin:0 0 20px">Tizen 4 playback matrix · MATRIX20</h1>
         <p>${escapeHtml(this.status)}</p>
         <pre style="white-space:pre-wrap;font:24px/1.5 monospace;margin-top:28px">${escapeHtml(
           this.results.length ? this.results.map(formatResult).join("\n") : "No result yet."

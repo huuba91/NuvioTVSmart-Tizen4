@@ -13,11 +13,11 @@ test("Tizen 4 playback matrix compares controlled HTTP with direct HTTPS native 
     [
       ["controlled-http-html", "html"],
       ["google-hls-hlsjs", "hls.js"],
-      ["xhr-proxied-google-hls-hlsjs", "hls.js"]
+      ["google-dash-dashjs", "dash.js"]
     ]
   );
   assert.equal(cases[0].source.url, "http://192.0.2.1/probe.mp4");
-  assert.equal(cases[2].proxyEachRequest, true);
+  assert.equal(cases[2].source.sourceType, "application/dash+xml");
   assert.ok(cases.every(({ source }) => source.addonId === "tizen4-playback-matrix"));
 });
 
