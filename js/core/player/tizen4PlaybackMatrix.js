@@ -30,11 +30,9 @@ export function createTizen4PlaybackMatrixCases(
   });
   return [
     { id: "controlled-http-html", engine: "html", source: source("Controlled HTTP MP4", controlledUrl, "video/mp4") },
-    { id: "controlled-http-avplay", engine: "avplay", source: source("Controlled HTTP MP4", controlledUrl, "video/mp4") },
-    { id: "google-http-mp4-html", engine: "html", crossOrigin: true, source: source("Google HTTP MP4", TIZEN4_MATRIX_GOOGLE_MP4_HTTP, "video/mp4") },
-    { id: "google-https-mp4-html", engine: "html", crossOrigin: true, source: source("Google HTTPS MP4", TIZEN4_MATRIX_GOOGLE_MP4_HTTPS, "video/mp4") },
-    { id: "google-https-hls-hlsjs", engine: "hls.js", source: source("Google HTTPS HLS via MSE", TIZEN4_MATRIX_GOOGLE_HLS, "application/vnd.apple.mpegurl") },
-    { id: "w3c-https-mp4-html", engine: "html", crossOrigin: true, source: source("W3C HTTPS MP4 control", TIZEN4_MATRIX_REMOTE_MP4, "video/mp4") }
+    { id: "google-hls-hlsjs", engine: "hls.js", source: source("Google HLS via MSE", TIZEN4_MATRIX_GOOGLE_HLS, "application/vnd.apple.mpegurl") },
+    { id: "google-hls-avplay", engine: "avplay", source: source("Google HLS via AVPlay", TIZEN4_MATRIX_GOOGLE_HLS, "application/vnd.apple.mpegurl") },
+    { id: "proxied-google-hls-hlsjs", engine: "hls.js", viaProxy: true, source: source("Header-proxied Google HLS via MSE", TIZEN4_MATRIX_GOOGLE_HLS, "application/vnd.apple.mpegurl") }
   ];
 }
 
@@ -42,9 +40,9 @@ async function resolveMatrixCase(testCase) {
   if (!testCase.viaProxy) return testCase;
   const proxyResult = await TizenPlaybackProxy.resolve(
     testCase.source.url,
-    { "X-Nuvio-Playback-Probe": "matrix15" },
+    { "X-Nuvio-Playback-Probe": "matrix16" },
     {
-      playbackEngine: testCase.engine.includes("html") ? "native-file" : "tizen-avplay",
+      playbackEngine: testCase.engine === "hls.js" ? "hls.js" : testCase.engine.includes("html") ? "native-file" : "tizen-avplay",
       preferDeviceAddress: testCase.preferDeviceAddress === true
     }
   );
