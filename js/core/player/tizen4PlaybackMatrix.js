@@ -54,7 +54,9 @@ export function createTizen4PlaybackMatrixCases(
 async function resolveMatrixCase(testCase) {
   if (testCase.viaP2p) {
     try {
-      const service = await TizenEngineFsService.ensureStarted({ purpose: "p2p" });
+      // Bypass only the unverified production policy gate. The diagnostic
+      // still requires the real packaged service to start and answer health.
+      const service = await TizenEngineFsService.ensureStarted({ purpose: "p2p-probe" });
       if (service?.status !== "success" || !service.baseUrl) {
         throw new Error(service?.detail || "EngineFS unavailable");
       }
