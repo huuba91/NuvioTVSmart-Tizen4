@@ -197,6 +197,7 @@ ${pluginServiceBridge}  <link rel="stylesheet" href="css/bundle.css" />
 
 function buildMainJs({
   packageId,
+  version,
   includeEngineFsService,
   includePluginService,
   appBundleFileName,
@@ -221,6 +222,17 @@ window.__NUVIO_TIZEN_ENGINEFS_SERVICE_ENABLED__ = ${includeEngineFsService};
 window.__NUVIO_TIZEN_ENGINEFS_SERVICE_ID__ = ${JSON.stringify(configuredServiceId)};
 window.__NUVIO_TIZEN_PLUGIN_SERVICE_ENABLED__ = ${includePluginService};
 window.__NUVIO_TIZEN_PLUGIN_SERVICE_ID__ = ${JSON.stringify(configuredPluginServiceId)};
+window.__NUVIO_TIZEN4_REPORT_STAGE__ = function reportTizen4Stage(stage) {
+  var reportUrl = String(window.__NUVIO_TIZEN4_MATRIX_REPORT_URL__ || "");
+  if (!reportUrl) return;
+  try {
+    var request = new XMLHttpRequest();
+    request.open("POST", reportUrl, true);
+    request.setRequestHeader("Content-Type", "text/plain;charset=UTF-8");
+    request.send(JSON.stringify({ phase: String(stage || "unknown"), appVersion: ${JSON.stringify(version)} }));
+  } catch (_) {}
+};
+window.__NUVIO_TIZEN4_REPORT_STAGE__("bootstrap");
 
 var tvInput = window.tizen && window.tizen.tvinputdevice;
 if (tvInput && typeof tvInput.registerKey === "function") {
@@ -384,6 +396,7 @@ async function stagePackage({
       path.join(stagingDir, mainEntryFileName),
       buildMainJs({
         packageId,
+        version,
         includeEngineFsService,
         includePluginService,
         appBundleFileName,
