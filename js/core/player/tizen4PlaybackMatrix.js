@@ -26,7 +26,7 @@ export function createTizen4PlaybackMatrixCases(
     { id: "controlled-http-avplay", engine: "avplay", source: source("Controlled HTTP MP4", controlledUrl, "video/mp4") },
     { id: "direct-https-mp4-avplay", engine: "avplay", source: source("Direct HTTPS MP4", TIZEN4_MATRIX_REMOTE_MP4, "video/mp4") },
     { id: "proxied-https-mp4-avplay", engine: "avplay", viaProxy: true, source: source("Proxied HTTPS MP4", TIZEN4_MATRIX_REMOTE_MP4, "video/mp4") },
-    { id: "proxied-https-hls-avplay", engine: "avplay", viaProxy: true, source: source("Proxied HTTPS HLS", TIZEN4_MATRIX_REMOTE_HLS, "application/vnd.apple.mpegurl") }
+    { id: "proxied-https-hls-avplay", engine: "avplay", viaProxy: true, skipCleanupOnPrepareTimeout: true, source: source("Proxied HTTPS HLS", TIZEN4_MATRIX_REMOTE_HLS, "application/vnd.apple.mpegurl") }
   ];
 }
 
@@ -265,12 +265,19 @@ async function runAvPlayCase(testCase, timeoutMs) {
   } catch (error) {
     result.error = `${phase}: ${describePlaybackError(error, "avplay-exception")}`;
   } finally {
-    try {
-      avplay.stop();
-    } catch (_) {}
-    try {
-      avplay.close();
-    } catch (_) {}
+    const skipBlockedPrepareCleanup =
+      testCase.skipCleanupOnPrepareTimeout && phase === "prepare" && result.error.includes("prepare-timeout");
+    if (skipBlockedPrepareCleanup) {
+      result.cleanupSkipped = true;
+    } else {
+      try {
+        const cleanupState = String(avplay.getState?.() || "").toUpperCase();
+        if (cleanupState === "PLAYING" || cleanupState === "PAUSED") avplay.stop();
+      } catch (_) {}
+      try {
+        avplay.close();
+      } catch (_) {}
+    }
   }
   return { ...result, phase, state: String(avplay.getState?.() || "NONE"), ...scoreTizen4PlaybackResult(result) };
 }
