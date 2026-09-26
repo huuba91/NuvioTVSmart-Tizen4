@@ -4,7 +4,7 @@ import { TizenPlaybackProxy } from "../../platform/tizen/tizenPlaybackProxy.js";
 export const TIZEN4_PLAYBACK_MATRIX_STORAGE_KEY = "nuvio_tizen4_playback_matrix_v1";
 export const TIZEN4_PLAYBACK_MATRIX_RESULT_FILE = "tizen4-playback-matrix.json";
 export const TIZEN4_MATRIX_REMOTE_MP4 =
-  "https://download.blender.org/durian/trailer/sintel_trailer-480p.mp4";
+  "https://media.w3.org/2010/05/bunny/trailer.mp4";
 export const TIZEN4_MATRIX_REMOTE_HLS =
   "https://devstreaming-cdn.apple.com/videos/streaming/examples/bipbop_4x3/bipbop_4x3_variant.m3u8";
 
