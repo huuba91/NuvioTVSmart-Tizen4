@@ -1,9 +1,11 @@
 import { mapAddonStream } from "../streams/playbackSource.js";
 import {
+  buildTizenAvPlayProxyBaseUrl,
   buildTizenPlaybackProxyUrl,
   TizenPlaybackProxy
 } from "../../platform/tizen/tizenPlaybackProxy.js";
 import { loadStreamingLibs } from "../../runtime/loadStreamingLibs.js";
+import { TizenEngineFsService } from "../../platform/tizen/tizenEngineFsService.js";
 
 export const TIZEN4_PLAYBACK_MATRIX_STORAGE_KEY = "nuvio_tizen4_playback_matrix_v1";
 export const TIZEN4_PLAYBACK_MATRIX_RESULT_FILE = "tizen4-playback-matrix.json";
@@ -19,10 +21,12 @@ export const TIZEN4_MATRIX_GOOGLE_HLS =
   "https://storage.googleapis.com/shaka-demo-assets/angel-one-hls/hls.m3u8";
 export const TIZEN4_MATRIX_GOOGLE_DASH =
   "https://storage.googleapis.com/shaka-demo-assets/angel-one/dash.mpd";
+export const TIZEN4_MATRIX_SINTEL_INFO_HASH = "08ada5a7a6183aae1e09d831df6748d566095a10";
 
 export function createTizen4PlaybackMatrixCases(
   baseUrl = globalThis.location?.href || "",
-  lanMediaUrl = globalThis.__NUVIO_TIZEN4_MATRIX_LAN_MEDIA_URL__ || ""
+  lanMediaUrl = globalThis.__NUVIO_TIZEN4_MATRIX_LAN_MEDIA_URL__ || "",
+  p2pEnabled = globalThis.__NUVIO_TIZEN4_MATRIX_P2P__ === true
 ) {
   const packagedUrl = new URL("assets/tizen4-probe.mp4", baseUrl).href;
   const controlledUrl = String(lanMediaUrl || packagedUrl).trim();
@@ -33,14 +37,75 @@ export function createTizen4PlaybackMatrixCases(
     addonId: "tizen4-playback-matrix",
     addonName: "Tizen 4 playback matrix"
   });
-  return [
+  const cases = [
     { id: "controlled-http-html", engine: "html", source: source("Controlled HTTP MP4", controlledUrl, "video/mp4") },
     { id: "google-hls-hlsjs", engine: "hls.js", source: source("Google HLS via MSE", TIZEN4_MATRIX_GOOGLE_HLS, "application/vnd.apple.mpegurl") },
     { id: "google-dash-dashjs", engine: "dash.js", source: source("Google DASH via MSE", TIZEN4_MATRIX_GOOGLE_DASH, "application/dash+xml") }
   ];
+  if (p2pEnabled) {
+    cases.push(
+      { id: "sintel-p2p-html", engine: "html", viaP2p: true, preferDeviceAddress: false, timeoutMs: 30000, source: source("Sintel torrent via HTML", "", "video/mp4") },
+      { id: "sintel-p2p-avplay", engine: "avplay", viaP2p: true, preferDeviceAddress: true, timeoutMs: 30000, source: source("Sintel torrent via AVPlay", "", "video/mp4") }
+    );
+  }
+  return cases;
 }
 
 async function resolveMatrixCase(testCase) {
+  if (testCase.viaP2p) {
+    try {
+      const service = await TizenEngineFsService.ensureStarted({ purpose: "p2p" });
+      if (service?.status !== "success" || !service.baseUrl) {
+        throw new Error(service?.detail || "EngineFS unavailable");
+      }
+      const hash = TIZEN4_MATRIX_SINTEL_INFO_HASH;
+      const response = await withWatchdog(
+        fetch(`${service.baseUrl}/${hash}/create`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            torrent: { infoHash: hash },
+            peerSearch: {
+              sources: [
+                `dht:${hash}`,
+                "tracker:udp://tracker.opentrackr.org:1337/announce"
+              ],
+              min: 1,
+              max: 80
+            },
+            guessFileIdx: {}
+          })
+        }),
+        60000,
+        "p2p-create"
+      );
+      if (!response.ok) throw new Error(`p2p-create-http-${response.status}`);
+      const metadata = await response.json();
+      const fileIdx = Number(metadata?.guessedFileIdx ?? metadata?.fileIdx);
+      if (!Number.isFinite(fileIdx) || fileIdx < 0) throw new Error("p2p-file-index-missing");
+      let playbackBaseUrl = service.baseUrl;
+      if (testCase.preferDeviceAddress) {
+        playbackBaseUrl = buildTizenAvPlayProxyBaseUrl(service.baseUrl);
+      }
+      return {
+        ...testCase,
+        source: {
+          ...testCase.source,
+          url: `${String(playbackBaseUrl).replace(/\/+$/, "")}/${hash}/${fileIdx}`
+        },
+        p2pMetadata: {
+          fileIdx,
+          filename: String(metadata?.files?.[fileIdx]?.name || metadata?.streamName || ""),
+          peers: Number(metadata?.peers || 0)
+        }
+      };
+    } catch (error) {
+      return {
+        ...testCase,
+        setupError: `p2p-setup: ${String(error?.message || error || "unknown error")}`
+      };
+    }
+  }
   if (!testCase.viaProxy) return testCase;
   const proxyResult = await TizenPlaybackProxy.resolve(
     testCase.source.url,
@@ -447,12 +512,12 @@ export async function runTizen4PlaybackMatrix({ onUpdate = () => {}, timeoutMs =
       const result = testCase.setupError
         ? { id: testCase.id, engine: testCase.engine, startupMs: 0, progressMs: 0, durationMs: 0, stalls: 0, error: testCase.setupError, verdict: "FAIL", score: 0 }
         : testCase.engine === "avplay"
-          ? await runAvPlayCase(testCase, timeoutMs)
+          ? await runAvPlayCase(testCase, testCase.timeoutMs || timeoutMs)
           : testCase.engine === "hls.js"
-            ? await runHlsJsCase(testCase, video, timeoutMs)
+            ? await runHlsJsCase(testCase, video, testCase.timeoutMs || timeoutMs)
             : testCase.engine === "dash.js"
-              ? await runDashJsCase(testCase, video, timeoutMs)
-              : await runHtmlCase(testCase, video, timeoutMs);
+              ? await runDashJsCase(testCase, video, testCase.timeoutMs || timeoutMs)
+              : await runHtmlCase(testCase, video, testCase.timeoutMs || timeoutMs);
       results.push(result);
       globalThis.__NUVIO_TIZEN4_REPORT_STAGE__?.(`matrix-result-${testCase.id}`, { results: [...results] });
       onUpdate({ phase: "result", index, total: cases.length, testCase, result, results: [...results] });

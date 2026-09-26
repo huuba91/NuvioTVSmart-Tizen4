@@ -49,6 +49,7 @@ function isTruthy(value) {
 const tizen4MatrixAutoRun = isTruthy(process.env.NUVIO_TIZEN4_MATRIX_AUTO_RUN);
 const tizen4MatrixReportUrl = String(process.env.NUVIO_TIZEN4_MATRIX_REPORT_URL || "").trim();
 const tizen4MatrixLanMediaUrl = String(process.env.NUVIO_TIZEN4_MATRIX_LAN_MEDIA_URL || "").trim();
+const tizen4MatrixP2p = isTruthy(process.env.NUVIO_TIZEN4_MATRIX_P2P);
 
 function normalizeVersion(version) {
   const parts = String(version || "0.0.0")
@@ -218,6 +219,7 @@ window.__NUVIO_FORK_BUILD__ = ${JSON.stringify(tizen4ForkBuildLabel)};
 window.__NUVIO_TIZEN4_MATRIX_AUTO_RUN__ = ${tizen4MatrixAutoRun};
 window.__NUVIO_TIZEN4_MATRIX_REPORT_URL__ = ${JSON.stringify(tizen4MatrixReportUrl)};
 window.__NUVIO_TIZEN4_MATRIX_LAN_MEDIA_URL__ = ${JSON.stringify(tizen4MatrixLanMediaUrl)};
+window.__NUVIO_TIZEN4_MATRIX_P2P__ = ${tizen4MatrixP2p};
 window.__NUVIO_TIZEN_ENGINEFS_SERVICE_ENABLED__ = ${includeEngineFsService};
 window.__NUVIO_TIZEN_ENGINEFS_SERVICE_ID__ = ${JSON.stringify(configuredServiceId)};
 window.__NUVIO_TIZEN_PLUGIN_SERVICE_ENABLED__ = ${includePluginService};

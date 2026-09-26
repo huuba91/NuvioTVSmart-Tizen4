@@ -26,3 +26,18 @@ test("Tizen 4 playback matrix scores time progression and stalls", () => {
   assert.equal(scoreTizen4PlaybackResult({ progressMs: 5000, startupMs: 1000, stalls: 0 }).verdict, "PASS");
   assert.equal(scoreTizen4PlaybackResult({ progressMs: 5000, startupMs: 1000, stalls: 4 }).verdict, "PARTIAL");
 });
+
+test("Tizen 4 playback matrix can add controlled on-device P2P cases", () => {
+  const cases = createTizen4PlaybackMatrixCases(
+    "https://app.test/index.html",
+    "http://192.0.2.1/probe.mp4",
+    true
+  );
+  assert.deepEqual(
+    cases.slice(-2).map(({ id, engine, viaP2p }) => [id, engine, viaP2p]),
+    [
+      ["sintel-p2p-html", "html", true],
+      ["sintel-p2p-avplay", "avplay", true]
+    ]
+  );
+});
