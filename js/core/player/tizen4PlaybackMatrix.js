@@ -294,7 +294,7 @@ export async function runTizen4PlaybackMatrix({ onUpdate = () => {}, timeoutMs =
     const cases = createTizen4PlaybackMatrixCases();
     for (let index = 0; index < cases.length; index += 1) {
       const testCase = await resolveMatrixCase(cases[index]);
-      globalThis.__NUVIO_TIZEN4_REPORT_STAGE__?.(`matrix-case-${testCase.id}`);
+      globalThis.__NUVIO_TIZEN4_REPORT_STAGE__?.(`matrix-case-${testCase.id}`, { results: [...results] });
       onUpdate({ phase: "running", index, total: cases.length, testCase, results: [...results] });
       const result = testCase.setupError
         ? { id: testCase.id, engine: testCase.engine, startupMs: 0, progressMs: 0, durationMs: 0, stalls: 0, error: testCase.setupError, verdict: "FAIL", score: 0 }
@@ -302,6 +302,7 @@ export async function runTizen4PlaybackMatrix({ onUpdate = () => {}, timeoutMs =
           ? await runAvPlayCase(testCase, timeoutMs)
           : await runHtmlCase(testCase, video, timeoutMs);
       results.push(result);
+      globalThis.__NUVIO_TIZEN4_REPORT_STAGE__?.(`matrix-result-${testCase.id}`, { results: [...results] });
       onUpdate({ phase: "result", index, total: cases.length, testCase, result, results: [...results] });
       await wait(500);
     }
