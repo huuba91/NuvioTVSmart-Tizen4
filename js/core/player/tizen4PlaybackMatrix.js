@@ -44,8 +44,8 @@ export function createTizen4PlaybackMatrixCases(
   ];
   if (p2pEnabled) {
     cases.push(
-      { id: "sintel-p2p-html", engine: "html", viaP2p: true, preferDeviceAddress: false, timeoutMs: 30000, source: source("Sintel torrent via HTML", "", "video/mp4") },
-      { id: "sintel-p2p-avplay", engine: "avplay", viaP2p: true, preferDeviceAddress: true, timeoutMs: 30000, source: source("Sintel torrent via AVPlay", "", "video/mp4") }
+      { id: "sintel-p2p-html", engine: "html", viaP2p: true, exerciseLifecycle: true, preferDeviceAddress: false, timeoutMs: 45000, source: source("Sintel torrent via HTML", "", "video/mp4") },
+      { id: "sintel-p2p-avplay", engine: "avplay", viaP2p: true, exerciseLifecycle: true, preferDeviceAddress: true, timeoutMs: 45000, source: source("Sintel torrent via AVPlay", "", "video/mp4") }
     );
   }
   return cases;
@@ -161,7 +161,7 @@ export function scoreTizen4PlaybackResult(result) {
   const progressMs = Math.max(0, Number(result?.progressMs) || 0);
   const startupMs = Math.max(0, Number(result?.startupMs) || 0);
   const stalls = Math.max(0, Number(result?.stalls) || 0);
-  if (progressMs < 1500) return { verdict: "FAIL", score: 0 };
+  if (result?.error || progressMs < 1500) return { verdict: "FAIL", score: 0 };
   const startupScore = Math.max(0, 45 - Math.round(startupMs / 250));
   const continuityScore = Math.max(0, 55 - stalls * 8);
   return { verdict: stalls > 2 ? "PARTIAL" : "PASS", score: startupScore + continuityScore };
@@ -300,7 +300,35 @@ async function runHtmlCase(testCase, video, timeoutMs) {
       await wait(250);
       onTimeUpdate();
     }
+    if (!result.error && testCase.exerciseLifecycle && result.progressMs >= 1500) {
+      const pausedAtMs = Math.round(Number(video.currentTime || 0) * 1000);
+      video.pause();
+      await wait(900);
+      const pausedAfterMs = Math.round(Number(video.currentTime || 0) * 1000);
+      const pauseDriftMs = Math.abs(pausedAfterMs - pausedAtMs);
+      if (pauseDriftMs > 500) throw new Error(`pause-drift-${pauseDriftMs}ms`);
+      const seekTargetMs = 120000;
+      video.currentTime = seekTargetMs / 1000;
+      await video.play();
+      const seekDeadline = Math.min(deadline, Date.now() + 20000);
+      while (!settled && Date.now() < seekDeadline && Number(video.currentTime || 0) < 122) {
+        await wait(250);
+        onTimeUpdate();
+      }
+      const seekReachedMs = Math.round(Number(video.currentTime || 0) * 1000);
+      result.lifecycle = {
+        pauseResume: true,
+        pauseDriftMs,
+        seekTargetMs,
+        seekReachedMs,
+        seekContinued: seekReachedMs >= 122000
+      };
+      if (!result.lifecycle.seekContinued) throw new Error(`seek-no-progress-${seekReachedMs}ms`);
+    }
     if (!result.error && result.progressMs < 1500) result.error = "no-time-progress";
+    finish();
+  } catch (error) {
+    result.error = `lifecycle: ${describePlaybackError(error)}`;
     finish();
   } finally {
     video.pause();
@@ -371,6 +399,40 @@ async function runAvPlayCase(testCase, timeoutMs) {
     avplay.play();
     const deadline = Date.now() + timeoutMs;
     while (!completed && Date.now() < deadline && result.progressMs < 5000) await wait(250);
+    if (!result.error && testCase.exerciseLifecycle && result.progressMs >= 1500) {
+      phase = "pause";
+      avplay.pause();
+      const pausedAtMs = Number(avplay.getCurrentTime?.() || 0);
+      await wait(900);
+      const pausedAfterMs = Number(avplay.getCurrentTime?.() || 0);
+      const pauseDriftMs = Math.abs(pausedAfterMs - pausedAtMs);
+      if (pauseDriftMs > 500) throw new Error(`pause-drift-${pauseDriftMs}ms`);
+      phase = "resume";
+      avplay.play();
+      const seekTargetMs = 120000;
+      phase = "seek";
+      await withWatchdog(
+        new Promise((resolve, reject) => avplay.seekTo(seekTargetMs, resolve, reject)),
+        15000,
+        "seek"
+      );
+      const seekDeadline = Math.min(deadline, Date.now() + 20000);
+      let seekReachedMs = Number(avplay.getCurrentTime?.() || 0);
+      while (!completed && Date.now() < seekDeadline && seekReachedMs < 122000) {
+        await wait(250);
+        seekReachedMs = Number(avplay.getCurrentTime?.() || 0);
+        result.progressMs = Math.max(result.progressMs, seekReachedMs);
+      }
+      result.lifecycle = {
+        pauseResume: true,
+        pauseDriftMs,
+        seekTargetMs,
+        seekReachedMs,
+        seekContinued: seekReachedMs >= 122000
+      };
+      if (!result.lifecycle.seekContinued) throw new Error(`seek-no-progress-${seekReachedMs}ms`);
+      phase = "play";
+    }
     if (!result.error && result.progressMs < 1500) result.error = "no-time-progress";
   } catch (error) {
     result.error = `${phase}: ${describePlaybackError(error, "avplay-exception")}`;

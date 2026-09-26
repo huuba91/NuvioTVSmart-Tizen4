@@ -1,4 +1,4 @@
-import { access, cp, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
@@ -76,6 +76,27 @@ async function assertDistExists() {
     await access(path.join(distDir, "app.bundle.js"), fsConstants.R_OK);
   } catch {
     throw new Error(`Build output not found at ${distDir}. Run "npm run build" first.`);
+  }
+
+  const bundleStat = await stat(path.join(distDir, "app.bundle.js"));
+  const sourceRoots = [path.join(rootDir, "js"), path.join(rootDir, "css")];
+  const sourceFiles = [path.join(rootDir, "index.html"), path.join(rootDir, "boot-guard.js")];
+  const collectFiles = async (directory) => {
+    const entries = await readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      const entryPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) await collectFiles(entryPath);
+      else if (entry.isFile()) sourceFiles.push(entryPath);
+    }
+  };
+  for (const sourceRoot of sourceRoots) await collectFiles(sourceRoot);
+  for (const sourceFile of sourceFiles) {
+    const sourceStat = await stat(sourceFile);
+    if (sourceStat.mtimeMs > bundleStat.mtimeMs + 100) {
+      throw new Error(
+        `Build output is stale: ${path.relative(rootDir, sourceFile)} is newer than dist/app.bundle.js. Run "npm run build" first.`
+      );
+    }
   }
 }
 
