@@ -263,6 +263,48 @@ export function createPlayerScreenMethods35() {
         (this.failedPlaybackStreamIds || (this.failedPlaybackStreamIds = new Set())).add(currentId);
       }
     },
+    getNextStartupStreamCandidate() {
+      const failedIds = this.failedPlaybackStreamIds || new Set();
+      const failedUrls = this.failedPlaybackUrls || new Set();
+      const current = this.getCurrentStreamCandidate?.();
+      const currentId = String(current?.id || "").trim();
+      const available = (this.streamCandidates || []).filter((candidate) => {
+        const candidateId = String(candidate?.id || "").trim();
+        const candidateUrl = String(streamDirectPlaybackUrl(candidate) || "").trim();
+        return (
+          candidate &&
+          (!candidateId || candidateId !== currentId) &&
+          (!candidateId || !failedIds.has(candidateId)) &&
+          (!candidateUrl || !failedUrls.has(candidateUrl))
+        );
+      });
+      return this.selectBestStreamCandidate(available);
+    },
+    tryNextStartupStreamCandidate() {
+      const attempts = Number(this.startupSourceFallbackAttempts || 0);
+      const maxAttempts = Math.min(4, Math.max(0, Number(this.streamCandidates?.length || 0) - 1));
+      if (attempts >= maxAttempts) return false;
+      const candidate = this.getNextStartupStreamCandidate();
+      if (!candidate) return false;
+      this.startupSourceFallbackAttempts = attempts + 1;
+      this.lastPlaybackErrorAt = 0;
+      this.loadingVisible = true;
+      this.paused = false;
+      this.sourcesError = null;
+      this.clearStartupError();
+      this.updateLoadingVisibility();
+      console.warn("Playback failed during startup; switching source", {
+        attempt: this.startupSourceFallbackAttempts,
+        from: this.activePlaybackUrl,
+        to: candidate.url || candidate.externalUrl || candidate.id
+      });
+      void this.playStreamCandidate(candidate, {
+        preservePanel: true,
+        resetSilentAudioState: false,
+        preservePendingRestore: Boolean(this.pendingPlaybackRestore)
+      });
+      return true;
+    },
     mediaErrorMessage(errorCode = 0, detail = "", streamCandidate = this.getCurrentStreamCandidate()) {
       const code = Number(errorCode || 0);
       const text = String(detail || "").toLowerCase();

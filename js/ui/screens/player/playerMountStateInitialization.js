@@ -293,6 +293,7 @@ export function initializePlayerMountState(params, initialStreamUrl) {
   this.lastPlaybackErrorAt = 0;
   this.failedPlaybackUrls = new Set();
   this.failedPlaybackStreamIds = new Set();
+  this.startupSourceFallbackAttempts = 0;
   this.playbackStallTimer = null;
   this.playbackEngineValidationEngine = "";
   this.playbackEngineValidationStartedAt = 0;

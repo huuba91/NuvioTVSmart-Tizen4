@@ -57,6 +57,9 @@ export function createPlayerScreenMethods18() {
         const candidate = sourceCandidate || this.getStreamCandidateByUrl(playbackUrl) || this.getCurrentStreamCandidate();
         this.markPlaybackSourceFailed(playbackUrl);
         if (!this.hasPresentedPlaybackFrame) {
+          if (this.tryNextStartupStreamCandidate?.()) {
+            return;
+          }
           this.showStartupError(this.getStartupErrorMessage(mediaErrorCode, detail, candidate), {
             mediaErrorCode,
             detail,
