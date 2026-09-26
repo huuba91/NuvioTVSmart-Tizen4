@@ -343,7 +343,8 @@ async function runHlsJsCase(testCase, video, timeoutMs) {
         const proxyUrl = buildTizenPlaybackProxyUrl(
           testCase.proxyBaseUrl,
           url,
-          testCase.proxyHeaders || {}
+          testCase.proxyHeaders || {},
+          { browserTransport: true }
         );
         if (!proxyUrl) throw new Error("hls-proxy-url-unavailable");
         xhr.open("GET", proxyUrl, true);

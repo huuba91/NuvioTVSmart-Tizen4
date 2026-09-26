@@ -58,7 +58,7 @@ export function hasTizenUnsupportedPlaybackHeaders(headers = {}) {
   return normalizeHeaderEntries(headers).some(([key]) => !NATIVE_AVPLAY_REQUEST_HEADERS.has(key.toLowerCase()));
 }
 
-export function buildTizenPlaybackProxyUrl(baseUrl, sourceUrl, headers = {}) {
+export function buildTizenPlaybackProxyUrl(baseUrl, sourceUrl, headers = {}, { browserTransport = false } = {}) {
   const base = parseHttpUrl(baseUrl);
   const source = parseHttpUrl(sourceUrl);
   const entries = normalizeHeaderEntries(headers);
@@ -71,6 +71,7 @@ export function buildTizenPlaybackProxyUrl(baseUrl, sourceUrl, headers = {}) {
   entries.forEach(([key, value]) => {
     options.append("h", `${key}:${value}`);
   });
+  if (browserTransport) options.set("transport", "browser");
 
   // The bridge shares EngineFS's existing listener because Tizen 4 web
   // services reject a second listening port in the same service sandbox.

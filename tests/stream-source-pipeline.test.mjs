@@ -73,6 +73,16 @@ test("Tizen playback bridge preserves the complete source URL and declared heade
   assert.match(proxyUrl, /h=Referer%3Ahttps%3A%2F%2Fcatalog\.example\.test%2F/);
 });
 
+test("Tizen playback bridge can request browser-compatible HTTP responses", () => {
+  const proxyUrl = buildTizenPlaybackProxyUrl(
+    "http://127.0.0.1:2710",
+    "https://example.com/master.m3u8",
+    { Referer: "https://example.com/" },
+    { browserTransport: true }
+  );
+  assert.equal(new URL(proxyUrl).searchParams.get("transport"), "browser");
+});
+
 test("Tizen playback proxy can bridge HTTPS media without synthetic headers", () => {
   assert.equal(
     buildTizenPlaybackProxyUrl(

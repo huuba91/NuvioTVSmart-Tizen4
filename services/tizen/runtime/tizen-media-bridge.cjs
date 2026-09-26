@@ -46,6 +46,12 @@ function writeHttp10Response(response, status, headers, upstreamResponse) {
   upstreamResponse.pipe(socket);
 }
 
+function writeBrowserResponse(response, status, headers, upstreamResponse) {
+  response.shouldKeepAlive = false;
+  response.writeHead(status, headers);
+  upstreamResponse.pipe(response);
+}
+
 function sendError(response, status, message) {
   var body = String(message || "Media bridge error");
   response.writeHead(status, {
@@ -83,7 +89,7 @@ function decodeForwardHeaders(query) {
   return headers;
 }
 
-function forward(target, request, response, declaredHeaders, redirectsLeft) {
+function forward(target, request, response, declaredHeaders, redirectsLeft, browserTransport) {
   var parsed = validMediaUrl(target);
   if (!parsed) {
     sendError(response, 400, "Invalid media URL");
@@ -115,7 +121,7 @@ function forward(target, request, response, declaredHeaders, redirectsLeft) {
       var location = upstreamResponse.headers.location;
       if (location && status >= 300 && status < 400 && redirectsLeft > 0) {
         upstreamResponse.resume();
-        forward(url.resolve(target, location), request, response, declaredHeaders, redirectsLeft - 1);
+        forward(url.resolve(target, location), request, response, declaredHeaders, redirectsLeft - 1, browserTransport);
         return;
       }
 
@@ -136,7 +142,8 @@ function forward(target, request, response, declaredHeaders, redirectsLeft) {
       upstreamResponse.on("error", function () {
         if (!response.finished) response.destroy();
       });
-      writeHttp10Response(response, status, responseHeaders, upstreamResponse);
+      if (browserTransport) writeBrowserResponse(response, status, responseHeaders, upstreamResponse);
+      else writeHttp10Response(response, status, responseHeaders, upstreamResponse);
     }
   );
   upstream.setTimeout(30000, function () {
@@ -174,7 +181,14 @@ function handleRequest(request, response) {
     sendError(response, 404, "Not found");
     return;
   }
-  forward(parsedRequest.query.url, request, response, decodeForwardHeaders(parsedRequest.query), MAX_REDIRECTS);
+  forward(
+    parsedRequest.query.url,
+    request,
+    response,
+    decodeForwardHeaders(parsedRequest.query),
+    MAX_REDIRECTS,
+    parsedRequest.query.transport === "browser"
+  );
 }
 
 function start(options) {
