@@ -8,6 +8,7 @@ import {
 } from "../js/core/streams/playbackSource.js";
 import {
   buildTizenPlaybackProxyUrl,
+  buildTizenAvPlayProxyBaseUrl,
   hasTizenUnsupportedPlaybackHeaders
 } from "../js/platform/tizen/tizenPlaybackProxy.js";
 import {
@@ -70,6 +71,17 @@ test("Tizen playback proxy preserves path/query while encoding source headers", 
   assert.match(proxyUrl, /\/video\/master\.m3u8\?token=legal-test$/);
   assert.match(proxyUrl, /d=https%3A%2F%2Fmedia\.example\.test/);
   assert.match(proxyUrl, /h=Referer%3Ahttps%3A%2F%2Fcatalog\.example\.test%2F/);
+});
+
+test("Tizen AVPlay proxy advertises the TV LAN address instead of renderer loopback", () => {
+  assert.equal(
+    buildTizenAvPlayProxyBaseUrl("http://127.0.0.1:2710", { getIp: () => "192.168.129.0" }),
+    "http://192.168.129.0:2710"
+  );
+  assert.equal(
+    buildTizenAvPlayProxyBaseUrl("http://127.0.0.1:2710", { getIp: () => "not-an-ip" }),
+    "http://127.0.0.1:2710"
+  );
 });
 
 test("P2P bridge protocol emits only loopback playback URLs and deduplicated peer sources", () => {

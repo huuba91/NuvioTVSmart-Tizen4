@@ -36,6 +36,23 @@ function isLocalProxyUrl(value = "") {
   return parsed.pathname.startsWith("/proxy/");
 }
 
+export function buildTizenAvPlayProxyBaseUrl(baseUrl, networkApi = globalThis.webapis?.network) {
+  const base = parseHttpUrl(baseUrl);
+  if (!base) return "";
+  let deviceIp = "";
+  try {
+    deviceIp = String(networkApi?.getIp?.() || "").trim();
+  } catch (_) {
+    deviceIp = "";
+  }
+  // AVPlay runs outside the web application's renderer on older Samsung
+  // firmware. Its loopback namespace cannot reliably reach a web service
+  // that the renderer can probe at 127.0.0.1, so advertise the service on
+  // the TV's LAN address when Samsung's network API exposes one.
+  if (!/^\d{1,3}(?:\.\d{1,3}){3}$/.test(deviceIp)) return baseUrl;
+  return `${base.protocol}//${deviceIp}${base.port ? `:${base.port}` : ""}`;
+}
+
 export function hasTizenUnsupportedPlaybackHeaders(headers = {}) {
   return normalizeHeaderEntries(headers).some(([key]) => !NATIVE_AVPLAY_REQUEST_HEADERS.has(key.toLowerCase()));
 }
@@ -102,7 +119,10 @@ export const TizenPlaybackProxy = {
       };
     }
 
-    const proxyUrl = buildTizenPlaybackProxyUrl(baseUrl, originalUrl, headers);
+    const playbackBaseUrl = String(playbackEngine || "").toLowerCase().includes("avplay")
+      ? buildTizenAvPlayProxyBaseUrl(baseUrl)
+      : baseUrl;
+    const proxyUrl = buildTizenPlaybackProxyUrl(playbackBaseUrl, originalUrl, headers);
     if (!proxyUrl) {
       return {
         status: "unavailable",
@@ -117,6 +137,7 @@ export const TizenPlaybackProxy = {
       url: proxyUrl,
       proxied: true,
       baseUrl,
+      playbackBaseUrl,
       headerNames: normalizeHeaderEntries(headers).map(([key]) => key)
     };
   }
