@@ -37,7 +37,7 @@ async function resolveMatrixCase(testCase) {
   if (!testCase.viaProxy) return testCase;
   const proxyResult = await TizenPlaybackProxy.resolve(
     testCase.source.url,
-    { "X-Nuvio-Playback-Probe": "matrix12" },
+    { "X-Nuvio-Playback-Probe": "matrix13" },
     {
       playbackEngine: testCase.engine.includes("html") ? "native-file" : "tizen-avplay",
       preferDeviceAddress: testCase.preferDeviceAddress === true

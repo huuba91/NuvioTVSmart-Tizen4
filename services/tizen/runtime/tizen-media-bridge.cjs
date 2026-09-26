@@ -24,6 +24,28 @@ var RESPONSE_HEADER_ALLOWLIST = {
   "cache-control": true
 };
 
+function writeHttp10Response(response, status, headers, upstreamResponse) {
+  var socket = response.socket;
+  if (!socket || typeof socket.write !== "function") {
+    response.shouldKeepAlive = false;
+    response.writeHead(status, headers);
+    upstreamResponse.pipe(response);
+    return;
+  }
+  var reason = http.STATUS_CODES[status] || "OK";
+  var lines = ["HTTP/1.0 " + status + " " + reason];
+  Object.keys(headers).forEach(function (name) {
+    var value = headers[name];
+    if (Array.isArray(value)) value = value.join(", ");
+    lines.push(name + ": " + String(value));
+  });
+  lines.push("", "");
+  response._headerSent = true;
+  response.finished = true;
+  socket.write(lines.join("\r\n"));
+  upstreamResponse.pipe(socket);
+}
+
 function sendError(response, status, message) {
   var body = String(message || "Media bridge error");
   response.writeHead(status, {
@@ -111,11 +133,10 @@ function forward(target, request, response, declaredHeaders, redirectsLeft) {
       // keep-alive responses. Match the controlled HTTP/1.0 probe by closing
       // every media response after its declared payload.
       response.shouldKeepAlive = false;
-      response.writeHead(status, responseHeaders);
       upstreamResponse.on("error", function () {
         if (!response.finished) response.destroy();
       });
-      upstreamResponse.pipe(response);
+      writeHttp10Response(response, status, responseHeaders, upstreamResponse);
     }
   );
   upstream.setTimeout(30000, function () {

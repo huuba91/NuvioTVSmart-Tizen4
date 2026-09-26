@@ -23,7 +23,7 @@ function request(port, path, headers) {
       var chunks = [];
       response.on("data", function (chunk) { chunks.push(chunk); });
       response.on("end", function () {
-        resolve({ status: response.statusCode, headers: response.headers, body: Buffer.concat(chunks) });
+        resolve({ status: response.statusCode, headers: response.headers, body: Buffer.concat(chunks), httpVersion: response.httpVersion });
       });
     }).on("error", reject);
   });
@@ -57,6 +57,7 @@ test("Tizen media bridge preserves byte ranges and required media headers", asyn
     assert.equal(result.headers["accept-ranges"], "bytes");
     assert.equal(result.headers["access-control-allow-origin"], "*");
     assert.equal(result.headers.connection, "close");
+    assert.equal(result.httpVersion, "1.0");
   } finally {
     await close(proxy);
     await close(upstream);
