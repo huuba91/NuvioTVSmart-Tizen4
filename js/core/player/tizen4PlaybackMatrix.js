@@ -25,7 +25,8 @@ export function createTizen4PlaybackMatrixCases(
     { id: "controlled-http-html", engine: "html", source: source("Controlled HTTP MP4", controlledUrl, "video/mp4") },
     { id: "controlled-http-avplay", engine: "avplay", source: source("Controlled HTTP MP4", controlledUrl, "video/mp4") },
     { id: "direct-https-mp4-avplay", engine: "avplay", source: source("Direct HTTPS MP4", TIZEN4_MATRIX_REMOTE_MP4, "video/mp4") },
-    { id: "proxied-https-mp4-html", engine: "html", viaProxy: true, source: source("Proxied HTTPS MP4", TIZEN4_MATRIX_REMOTE_MP4, "video/mp4") },
+    { id: "proxied-https-mp4-html", engine: "html", viaProxy: true, crossOrigin: true, source: source("Proxied HTTPS MP4", TIZEN4_MATRIX_REMOTE_MP4, "video/mp4") },
+    { id: "proxied-https-mp4-blob-html", engine: "blob-html", viaProxy: true, viaBlob: true, source: source("Proxied HTTPS MP4 blob", TIZEN4_MATRIX_REMOTE_MP4, "video/mp4") },
     { id: "proxied-https-mp4-avplay", engine: "avplay", viaProxy: true, source: source("Proxied HTTPS MP4", TIZEN4_MATRIX_REMOTE_MP4, "video/mp4") },
     { id: "proxied-https-hls-avplay", engine: "avplay", viaProxy: true, skipCleanupOnPrepareTimeout: true, source: source("Proxied HTTPS HLS", TIZEN4_MATRIX_REMOTE_HLS, "application/vnd.apple.mpegurl") }
   ];
@@ -35,14 +36,33 @@ async function resolveMatrixCase(testCase) {
   if (!testCase.viaProxy) return testCase;
   const proxyResult = await TizenPlaybackProxy.resolve(
     testCase.source.url,
-    { "X-Nuvio-Playback-Probe": "matrix7" },
-    { playbackEngine: testCase.engine === "html" ? "native-file" : "tizen-avplay" }
+    { "X-Nuvio-Playback-Probe": "matrix8" },
+    { playbackEngine: testCase.engine.includes("html") ? "native-file" : "tizen-avplay" }
   );
   if (proxyResult?.status !== "success" || !proxyResult.url) {
     return {
       ...testCase,
       setupError: `proxy-${String(proxyResult?.status || "unknown")}: ${String(proxyResult?.detail || "no proxy URL")}`
     };
+  }
+  if (testCase.viaBlob) {
+    try {
+      const response = await withWatchdog(fetch(proxyResult.url, { cache: "no-cache" }), 20000, "blob-fetch");
+      if (!response.ok) throw new Error(`blob-fetch-http-${response.status}`);
+      const blob = await withWatchdog(response.blob(), 20000, "blob-body");
+      const objectUrl = URL.createObjectURL(blob);
+      return {
+        ...testCase,
+        source: { ...testCase.source, url: objectUrl },
+        objectUrl,
+        proxyStatus: proxyResult.status
+      };
+    } catch (error) {
+      return {
+        ...testCase,
+        setupError: `blob-proxy: ${String(error?.message || error || "unknown error")}`
+      };
+    }
   }
   return {
     ...testCase,
@@ -175,6 +195,8 @@ async function runHtmlCase(testCase, video, timeoutMs) {
   try {
     video.pause();
     video.removeAttribute("src");
+    if (testCase.crossOrigin) video.crossOrigin = "anonymous";
+    else video.removeAttribute("crossorigin");
     video.load();
     video.src = testCase.source.url;
     video.load();
@@ -197,6 +219,7 @@ async function runHtmlCase(testCase, video, timeoutMs) {
   } finally {
     video.pause();
     video.removeAttribute("src");
+    video.removeAttribute("crossorigin");
     video.load();
     video.removeEventListener("playing", onPlaying);
     video.removeEventListener("timeupdate", onTimeUpdate);
@@ -305,6 +328,7 @@ export async function runTizen4PlaybackMatrix({ onUpdate = () => {}, timeoutMs =
       results.push(result);
       globalThis.__NUVIO_TIZEN4_REPORT_STAGE__?.(`matrix-result-${testCase.id}`, { results: [...results] });
       onUpdate({ phase: "result", index, total: cases.length, testCase, result, results: [...results] });
+      if (testCase.objectUrl) URL.revokeObjectURL(testCase.objectUrl);
       await wait(500);
     }
   } finally {
@@ -319,7 +343,11 @@ export async function runTizen4PlaybackMatrix({ onUpdate = () => {}, timeoutMs =
       // evidence into a matrix-level error on older Samsung firmware.
     }
   } catch (_) {}
-  summary.privateResultFileWritten = await persistTizen4PlaybackMatrixResult(summary);
+  try {
+    summary.privateResultFileWritten = await persistTizen4PlaybackMatrixResult(summary);
+  } catch (_) {
+    summary.privateResultFileWritten = false;
+  }
   onUpdate({ phase: "complete", results: [...results], summary });
   return summary;
 }
@@ -346,7 +374,7 @@ export function openTizen4PlaybackMatrixOverlay() {
   title.textContent = "Tizen 4 playback matrix · MATRIX1";
   title.style.cssText = "font-size:48px;margin:0 0 22px";
   const status = document.createElement("p");
-  status.textContent = "Starting six controlled playback paths…";
+  status.textContent = "Starting seven controlled playback paths…";
   const output = document.createElement("pre");
   output.style.cssText = "white-space:pre-wrap;font:24px/1.5 monospace;margin-top:24px";
   const hint = document.createElement("p");
