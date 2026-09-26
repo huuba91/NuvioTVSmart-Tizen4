@@ -25,6 +25,7 @@ export function createTizen4PlaybackMatrixCases(
     { id: "controlled-http-html", engine: "html", source: source("Controlled HTTP MP4", controlledUrl, "video/mp4") },
     { id: "controlled-http-avplay", engine: "avplay", source: source("Controlled HTTP MP4", controlledUrl, "video/mp4") },
     { id: "direct-https-mp4-avplay", engine: "avplay", source: source("Direct HTTPS MP4", TIZEN4_MATRIX_REMOTE_MP4, "video/mp4") },
+    { id: "proxied-https-mp4-html", engine: "html", viaProxy: true, source: source("Proxied HTTPS MP4", TIZEN4_MATRIX_REMOTE_MP4, "video/mp4") },
     { id: "proxied-https-mp4-avplay", engine: "avplay", viaProxy: true, source: source("Proxied HTTPS MP4", TIZEN4_MATRIX_REMOTE_MP4, "video/mp4") },
     { id: "proxied-https-hls-avplay", engine: "avplay", viaProxy: true, skipCleanupOnPrepareTimeout: true, source: source("Proxied HTTPS HLS", TIZEN4_MATRIX_REMOTE_HLS, "application/vnd.apple.mpegurl") }
   ];
@@ -34,8 +35,8 @@ async function resolveMatrixCase(testCase) {
   if (!testCase.viaProxy) return testCase;
   const proxyResult = await TizenPlaybackProxy.resolve(
     testCase.source.url,
-    { "X-Nuvio-Playback-Probe": "matrix5" },
-    { playbackEngine: "tizen-avplay" }
+    { "X-Nuvio-Playback-Probe": "matrix6" },
+    { playbackEngine: testCase.engine === "html" ? "native-file" : "tizen-avplay" }
   );
   if (proxyResult?.status !== "success" || !proxyResult.url) {
     return {
@@ -311,7 +312,12 @@ export async function runTizen4PlaybackMatrix({ onUpdate = () => {}, timeoutMs =
   }
   const summary = { completedAt: new Date().toISOString(), userAgent: navigator.userAgent, results };
   try {
-    localStorage.setItem(TIZEN4_PLAYBACK_MATRIX_STORAGE_KEY, JSON.stringify(summary));
+    try {
+      localStorage.setItem(TIZEN4_PLAYBACK_MATRIX_STORAGE_KEY, JSON.stringify(summary));
+    } catch (_) {
+      // Private-mode/storage policy failures must not turn completed media
+      // evidence into a matrix-level error on older Samsung firmware.
+    }
   } catch (_) {}
   summary.privateResultFileWritten = await persistTizen4PlaybackMatrixResult(summary);
   onUpdate({ phase: "complete", results: [...results], summary });
@@ -340,7 +346,7 @@ export function openTizen4PlaybackMatrixOverlay() {
   title.textContent = "Tizen 4 playback matrix · MATRIX1";
   title.style.cssText = "font-size:48px;margin:0 0 22px";
   const status = document.createElement("p");
-  status.textContent = "Starting five controlled playback paths…";
+  status.textContent = "Starting six controlled playback paths…";
   const output = document.createElement("pre");
   output.style.cssText = "white-space:pre-wrap;font:24px/1.5 monospace;margin-top:24px";
   const hint = document.createElement("p");
