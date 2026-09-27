@@ -6,6 +6,8 @@ param(
   [string]$TizenStudio = "C:\tizen-studio",
   [ValidateRange(0, 300)]
   [int]$ConnectTimeoutSeconds = 45,
+  [ValidateRange(0, 3)]
+  [int]$InstallRetryCount = 1,
   [switch]$SkipBuild,
   [switch]$SkipInstall,
   [switch]$Launch,
@@ -155,15 +157,35 @@ try {
     }
     # The NU7100 accepts this package through the Tizen CLI installer. Direct
     # `sdb install` can upload the WGT and then close without invoking WAS.
-    $InstallOutput = @(& $TizenCli install -n (Split-Path -Leaf $DeployWgt) -s $Device -- $DeployDirectory 2>&1)
-    $InstallExitCode = $LASTEXITCODE
-    $InstallOutput | ForEach-Object { Write-Host $_ }
-    if ($InstallExitCode -ne 0) {
+    # Immediately after install-permit, WAS occasionally rejects the first
+    # request with 116 and accepts the identical second request. Retry only
+    # that pre-validation condition; all other installer failures remain
+    # immediate and visible.
+    $InstallAttempt = 0
+    while ($true) {
+      $InstallAttempt += 1
+      $InstallOutput = @(& $TizenCli install -n (Split-Path -Leaf $DeployWgt) -s $Device -- $DeployDirectory 2>&1)
+      $InstallExitCode = $LASTEXITCODE
+      $InstallOutput | ForEach-Object { Write-Host $_ }
+      if ($InstallExitCode -eq 0) {
+        break
+      }
+
       $InstallText = $InstallOutput -join "`n"
-      if ($InstallText -match "download failed\[116\]") {
+      $IsDownload116 = $InstallText -match "download failed\[116\]"
+      if ($IsDownload116 -and $InstallAttempt -le $InstallRetryCount) {
+        Write-Host "Samsung WAS returned download error 116; refreshing install permission and retrying without rebuilding ($InstallAttempt/$InstallRetryCount)..."
+        & $TizenCli install-permit -s $Device
+        if ($LASTEXITCODE -ne 0) {
+          throw "Tizen developer installation permission refresh failed with exit code $LASTEXITCODE"
+        }
+        Start-Sleep -Seconds 2
+        continue
+      }
+      if ($IsDownload116) {
         throw @"
 Tizen CLI installation failed with Samsung WAS download error 116.
-The package transferred, SDB is connected, and developer install permission was refreshed, but the TV rejected it before validation.
+The package transferred, SDB is connected, and developer install permission was refreshed, but the TV rejected all $InstallAttempt attempt(s) before validation.
 Cold-boot the TV, confirm Developer Mode is still enabled for this PC, and retry. The installed Nuvio app and its data were not changed.
 "@
       }
