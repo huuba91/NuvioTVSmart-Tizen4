@@ -70,6 +70,7 @@ Samsung author/distributor certificates, private keys, profile exports, `local.p
 
 - [Streaming and P2P architecture](docs/tizen4-streaming-architecture.md)
 - [Hardware engineering log](docs/tizen4-engineering-log.md)
+- [Release validation matrix](docs/tizen4-validation-matrix.md)
 
 The app remains a locally packaged frontend. User-configured Stremio-compatible HTTP add-ons flow through manifest/resource validation, normalized stream objects, resolver selection, and the shared player. Progressive MP4 uses AVPlay first; HLS and DASH use the hardware-tested MSE paths on this TV. Torrent sources use the packaged on-TV EngineFS service and expose a local byte-range stream to AVPlay—no PC, phone, cloud transcoder, or external streaming server is required after installation.
 
