@@ -54,7 +54,7 @@ npm run package:webos
 
 ## UE49NU7100 development deployment
 
-This fork keeps the upstream project as the `upstream` remote and develops the Tizen 4 compatibility work on `tizen4/nu7100`. On Windows, the complete build/sign/connect/install/launch loop is:
+This fork is hosted at [huuba91/NuvioTVSmart-Tizen4](https://github.com/huuba91/NuvioTVSmart-Tizen4). It keeps the original Nuvio project as the `upstream` remote, the hardware-validated compatibility baseline on `tizen4/nu7100`, and independently reviewable feature work on short-lived branches such as `feature/live-hub`. On Windows, the complete build/sign/connect/install/launch loop is:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\deploy-tizen4.ps1 -Launch
@@ -70,6 +70,7 @@ Samsung author/distributor certificates, private keys, profile exports, `local.p
 
 - [Streaming and P2P architecture](docs/tizen4-streaming-architecture.md)
 - [Hardware engineering log](docs/tizen4-engineering-log.md)
+- [Release validation matrix](docs/tizen4-validation-matrix.md)
 
 The app remains a locally packaged frontend. User-configured Stremio-compatible HTTP add-ons flow through manifest/resource validation, normalized stream objects, resolver selection, and the shared player. Progressive MP4 uses AVPlay first; HLS and DASH use the hardware-tested MSE paths on this TV. Torrent sources use the packaged on-TV EngineFS service and expose a local byte-range stream to AVPlay—no PC, phone, cloud transcoder, or external streaming server is required after installation.
 
@@ -90,7 +91,7 @@ npm run package:tizen
 
 Resolve upstream player/service changes in the centralized Tizen capability, EngineFS, playback-proxy, and player-engine layers instead of adding scattered model checks. After every rebase, repeat the signed deployment and the relevant hardware checks; desktop tests do not establish Tizen 4 media compatibility.
 
-There is currently no writable `origin` remote because GitHub CLI/authentication is not installed in this development environment. Creating `NuvioTVSmart-Tizen4` under the owner's GitHub account and adding it as `origin` is the remaining remote-hosting step; the upstream remote and local logical history are already preserved.
+Push maintained compatibility work to the public fork rather than to the upstream repository. Merge feature branches into `tizen4/nu7100` only after their automated checks pass and their navigation/playback path has been exercised on the UE49NU7100. Keep `upstream` reserved for fetching and rebasing original Nuvio changes.
 
 ## License
 

@@ -1,0 +1,33 @@
+.live-shell { background: var(--bg-color); }
+.live-main { height: 100vh; padding: 56px 72px 80px; overflow-y: auto; scrollbar-width: none; }
+.live-main::-webkit-scrollbar, .live-row-track::-webkit-scrollbar { display: none; }
+.live-header { margin-bottom: 38px; }
+.live-heading-row { display: flex; align-items: center; gap: 18px; }
+.live-heading-row h1 { margin: 0; font-size: 60px; line-height: 1; }
+.live-header p { margin: 14px 0 0; color: var(--text-secondary); font-size: 24px; }
+.live-pulse { width: 18px; height: 18px; border-radius: 50%; background: #f04444; box-shadow: 0 0 0 7px rgba(240, 68, 68, 0.16); }
+.live-content { display: flex; flex-direction: column; gap: 42px; }
+.live-row-heading { display: flex; align-items: baseline; gap: 18px; margin-bottom: 18px; }
+.live-row-heading h2 { margin: 0; font-size: 34px; }
+.live-row-heading span { color: var(--text-secondary); font-size: 19px; }
+.live-row-track { display: flex; gap: 22px; padding: 4px 6px 16px; overflow-x: auto; overflow-y: hidden; }
+.live-event-card { flex: 0 0 386px; width: 386px; border: 3px solid transparent; border-radius: 20px; background: var(--card-bg); overflow: hidden; }
+.live-event-card.focused { border-color: var(--focus-color); box-shadow: 0 0 0 3px var(--focus-color); }
+.live-event-art { position: relative; height: 214px; background: var(--bg-elevated); overflow: hidden; }
+.live-event-art img { width: 100%; height: 100%; object-fit: cover; }
+.live-event-placeholder { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--text-tertiary); font-size: 72px; }
+.live-event-badge { position: absolute; left: 16px; top: 16px; padding: 8px 13px; border-radius: 8px; background: #d92727; color: #fff; font-size: 17px; font-weight: 800; letter-spacing: 0.08em; }
+.live-event-badge.upcoming { background: rgba(12, 12, 12, 0.86); }
+.live-event-copy { padding: 18px 20px 20px; }
+.live-event-copy h3 { margin: 0; overflow: hidden; color: #fff; font-size: 25px; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+.live-event-copy p { margin: 8px 0 0; overflow: hidden; color: var(--text-secondary); font-size: 19px; text-overflow: ellipsis; white-space: nowrap; }
+.live-state { min-height: 520px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; color: var(--text-secondary); font-size: 24px; text-align: center; }
+.live-focus-anchor { outline: none; }
+.live-empty .material-icons { font-size: 82px; }
+.live-empty h2, .live-empty p { margin: 0; }
+.performance-constrained .live-event-card { contain: layout; transition: none !important; }
+
+.tizen-tv.legacy-tizen .live-main { padding: 58px 72px 90px; }
+.tizen-tv.legacy-tizen .live-event-card { flex-basis: 402px; width: 402px; }
+.tizen-tv.legacy-tizen .live-event-copy h3 { font-size: 27px; }
+.tizen-tv.legacy-tizen .live-event-copy p, .tizen-tv.legacy-tizen .live-row-heading span { font-size: 20px; }

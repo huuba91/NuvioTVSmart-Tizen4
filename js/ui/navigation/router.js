@@ -10,6 +10,7 @@ import { MetaDetailsScreen } from "../screens/detail/metaDetailsScreen.js";
 import { LibraryScreen } from "../screens/library/libraryScreen.js";
 import { SearchScreen } from "../screens/search/searchScreen.js";
 import { DiscoverScreen } from "../screens/search/discoverScreen.js";
+import { LiveScreen } from "../screens/live/liveScreen.js";
 import { SettingsScreen } from "../screens/settings/settingsScreen.js";
 import { ConsoleDebugScreen } from "../screens/debug/consoleDebugScreen.js";
 import { Tizen4PlaybackMatrixScreen } from "../screens/debug/tizen4PlaybackMatrixScreen.js";
@@ -50,6 +51,7 @@ export {
   LibraryScreen,
   SearchScreen,
   DiscoverScreen,
+  LiveScreen,
   SettingsScreen,
   ConsoleDebugScreen,
   TraktScreen,
@@ -177,6 +179,7 @@ Object.assign(Router, {
     library: LibraryScreen,
     search: SearchScreen,
     discover: DiscoverScreen,
+    live: LiveScreen,
     settings: SettingsScreen,
     debugConsole: ConsoleDebugScreen,
     tizen4PlaybackMatrix: Tizen4PlaybackMatrixScreen,

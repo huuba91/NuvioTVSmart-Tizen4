@@ -92,6 +92,8 @@ export {
   catalogSupportsExtra
 } from "../../../core/addons/homeCatalogs.js";
 
+export { promoteLiveCatalogRows } from "../../../core/addons/liveCatalogs.js";
+
 export {
   activateLegacySidebarAction,
   bindRootSidebarEvents,

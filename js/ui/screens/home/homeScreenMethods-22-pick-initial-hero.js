@@ -16,7 +16,8 @@ export function createHomeScreenMethods22() {
     withTimeout,
     buildCatalogLoadingItems,
     normalizeContinueWatchingItem,
-    isPresentableContinueWatchingItem
+    isPresentableContinueWatchingItem,
+    promoteLiveCatalogRows
   } = internals;
 
   return {
@@ -139,7 +140,7 @@ export function createHomeScreenMethods22() {
         .filter(Boolean)
         .filter((row) => !isRowDisabled(row))
         .map(applyCustomTitle);
-      return [...pinnedTopRows, ...orderedRows];
+      return [...pinnedTopRows, ...promoteLiveCatalogRows(orderedRows)];
     },
     retryPendingCatalogRows() {
       if (this.catalogRetryInFlight) {
