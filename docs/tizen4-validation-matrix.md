@@ -16,8 +16,8 @@ This matrix is the release gate for the `tizen4/nu7100` branch. A passing deskto
 | 4. Local P2P investigation | Verified | EngineFS and PluginService contracts, Tizen service constraints, NaCl, WebAssembly, local HTTP paths, AVPlay, and MSE alternatives are documented in the engineering log and architecture document. Tizen 4 can run packaged EngineFS; executable scraper plugins remain disabled. | None for the investigation decision. |
 | 5. P2P proof of concept | Verified | Creative Commons Sintel resolved on-device, selected `Sintel.mp4`, connected to peers, served byte ranges, and played through both HTML video and AVPlay on the TV. | None for the controlled proof. |
 | 6. P2P integration | Verified with limitation | Normal torrent sources use packaged EngineFS, automatic media-file selection, local range playback, AVPlay preference, cancellation, and cleanup identity. Hardware validated pause/resume, a seek to two minutes, continued playback, and torrent removal. | HTML fallback seeking remains unreliable; AVPlay is the maintained seeking backend. Recheck episode-file selection when a legal multi-file episodic fixture is available. |
-| 7. TV UX/reliability | Partially verified | NU7100-responsive sizing, lazy artwork, bounded catalog work, remote navigation, player controls, loading states, P2P cancellation, and source failover are implemented. The Live hub focus/cleanup regression has automated coverage. | Run the final hardware checklist below, including the newly installed Live hub fix. |
-| 8. Release/maintainability | Verified except final acceptance | Public fork and upstream remote exist; commits are logically separated; build, packaging, deployment, architecture, engineering history, limitations, security boundaries, and rebase workflow are documented. Deployment signs with the existing `NU7100-Nuvio` profile and verifies signatures without modifying the identity. | Merge `feature/live-hub` only after its hardware checklist passes, then produce and retain the final signed development WGT from that merged revision. |
+| 7. TV UX/reliability | Partially verified | NU7100-responsive sizing, lazy artwork, bounded catalog work, remote navigation, player controls, loading states, P2P cancellation, and source failover are implemented. The Live hub focus regression has automated coverage and the corrected route entry passed on the physical TV. | Run the remaining final hardware checklist below. |
+| 8. Release/maintainability | Verified except final acceptance | Public fork and upstream remote exist; commits are logically separated; build, packaging, deployment, architecture, engineering history, limitations, security boundaries, and rebase workflow are documented. Deployment signs with the existing `NU7100-Nuvio` profile and verifies signatures without modifying the identity. | Merge the hardware-validated Live feature into `tizen4/nu7100`, then complete the remaining reliability gates before final release acceptance. |
 
 ## Final hardware checklist
 
@@ -33,7 +33,8 @@ Record the app version, commit, and result in the engineering log for every run.
 ### Remote and navigation
 
 - [ ] Navigate Home, Search, Library, Live, Settings, profile selection, and back using only the Samsung remote.
-- [ ] Open **Live**, open an event, press Back to return to Live, then return Home. Profile selection must not open accidentally and no Live UI may overlap Home.
+- [x] Open **Live**. The Live hub opens directly and profile selection does not appear accidentally (validated on v1.2.51).
+- [ ] Open an event, press Back to return to Live, then return Home. No Live UI may overlap Home.
 - [ ] Traverse a long catalog row and a long vertical page; focus must remain visible and restore sensibly after returning from details.
 - [ ] Open and dismiss source selection and error dialogs; Back must dismiss the current layer before changing routes.
 
