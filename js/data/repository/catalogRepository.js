@@ -6,6 +6,7 @@ import { addonRepository } from "./addonRepository.js";
 class CatalogRepository {
   constructor() {
     this.catalogCache = new Map();
+    this.inFlightCatalogs = new Map();
     this.cacheGeneration = 0;
   }
 
@@ -50,8 +51,17 @@ class CatalogRepository {
       extraArgs
     });
 
+    // Multiple surfaces can ask for the same first catalog page while the
+    // home/discover UI is mounting. The response cache cannot help until the
+    // first request has completed, so share that request as well. Requests
+    // carrying an AbortSignal stay independent: one screen leaving must not
+    // cancel another screen's work.
+    if (!signal && this.inFlightCatalogs.has(cacheKey)) {
+      return this.inFlightCatalogs.get(cacheKey);
+    }
+
     const cacheGeneration = this.cacheGeneration;
-    return safeApiCall(() =>
+    const request = safeApiCall(() =>
       CatalogApi.getCatalog(url, signal ? { signal } : {}).then((dto) => {
         const { metas, rawItemCount } = selectCatalogEntries(dto?.metas);
         const items = metas.map((meta) => ({
@@ -83,11 +93,25 @@ class CatalogRepository {
         return row;
       })
     );
+
+    if (signal) {
+      return request;
+    }
+
+    this.inFlightCatalogs.set(cacheKey, request);
+    try {
+      return await request;
+    } finally {
+      if (this.inFlightCatalogs.get(cacheKey) === request) {
+        this.inFlightCatalogs.delete(cacheKey);
+      }
+    }
   }
 
   clearCache() {
     this.cacheGeneration += 1;
     this.catalogCache.clear();
+    this.inFlightCatalogs.clear();
   }
 
   buildCatalogUrl({ baseUrl, type, catalogId, skip = 0, extraArgs = {} }) {

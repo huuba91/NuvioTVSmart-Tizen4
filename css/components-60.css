@@ -1,0 +1,97 @@
+/* 10-foot UI calibration for fixed 1920x1080 legacy TV runtimes.
+   This layer preserves every surface and asset; it only normalizes safe-area,
+   legibility and focus affordances where the desktop-scale values were too
+   small for a Samsung NU7100 viewing distance. */
+
+.tizen-tv.legacy-tizen {
+  --tv-safe-gutter: 56px;
+  --tv-safe-gutter-wide: 68px;
+  --tv-card-gap: 18px;
+  --tv-caption-text: 18px;
+  --tv-secondary-text: 21px;
+  --tv-body-text: 22px;
+  --tv-button-height: 66px;
+  --tv-control-size: 70px;
+}
+
+.tizen-tv.legacy-tizen .discover-kicker,
+.tizen-tv.legacy-tizen .discover-meta-line {
+  font-size: 18px;
+  line-height: 24px;
+}
+
+.tizen-tv.legacy-tizen .discover-context-line,
+.tizen-tv.legacy-tizen .discover-results-subtitle,
+.tizen-tv.legacy-tizen .discover-card-meta,
+.tizen-tv.legacy-tizen .discover-loading-label {
+  font-size: 20px;
+  line-height: 1.35;
+}
+
+.tizen-tv.legacy-tizen .discover-summary-pill {
+  min-height: 60px;
+  padding-left: 24px;
+  padding-right: 24px;
+  font-size: 20px;
+}
+
+.tizen-tv.legacy-tizen .home-screen-shell .home-poster-subtitle,
+.tizen-tv.legacy-tizen .search-results-subtitle {
+  font-size: 20px;
+  line-height: 1.3;
+}
+
+.tizen-tv.legacy-tizen .home-nav-label {
+  font-size: 26px;
+  line-height: 1.2;
+}
+
+.tizen-tv.legacy-tizen .settings-nav-item {
+  min-height: 104px;
+}
+
+.tizen-tv.legacy-tizen .settings-action-row,
+.tizen-tv.legacy-tizen .settings-toggle-row {
+  min-height: 116px;
+}
+
+.tizen-tv.legacy-tizen .settings-row-subtitle,
+.tizen-tv.legacy-tizen .settings-group-subtitle {
+  line-height: 1.28;
+}
+
+/* A stable high-contrast wireframe reads more clearly than scale/blur on the
+   NU7100 and costs substantially less paint work than animated shadows. */
+.tizen-tv.legacy-tizen.performance-constrained .home-content-card.focused,
+.tizen-tv.legacy-tizen.performance-constrained .home-continue-card.focused,
+.tizen-tv.legacy-tizen.performance-constrained .home-hero-card.focused,
+.tizen-tv.legacy-tizen.performance-constrained .home-poster-card.focused .home-poster-frame,
+.tizen-tv.legacy-tizen.performance-constrained .discover-card.focused .discover-card-poster,
+.tizen-tv.legacy-tizen.performance-constrained .search-result-card.focused .search-result-poster,
+.tizen-tv.legacy-tizen.performance-constrained .series-episode-card.focused {
+  border-color: var(--focus-color) !important;
+  box-shadow: 0 0 0 3px var(--focus-color) !important;
+  transform: none !important;
+}
+
+.tizen-tv.legacy-tizen.performance-constrained .settings-nav-item.focused,
+.tizen-tv.legacy-tizen.performance-constrained .settings-action-row.focused,
+.tizen-tv.legacy-tizen.performance-constrained .settings-theme-card.focused,
+.tizen-tv.legacy-tizen.performance-constrained .settings-layout-card.focused,
+.tizen-tv.legacy-tizen.performance-constrained .settings-plugin-input.focused,
+.tizen-tv.legacy-tizen.performance-constrained .settings-plugin-add.focused {
+  border-width: 3px !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+/* Isolate repeated card layout calculations without clipping their focus
+   ring. Layout/style containment is supported by the NU7100 Chromium engine. */
+.tizen-tv.legacy-tizen.performance-constrained .home-content-card,
+.tizen-tv.legacy-tizen.performance-constrained .home-continue-card,
+.tizen-tv.legacy-tizen.performance-constrained .home-poster-card,
+.tizen-tv.legacy-tizen.performance-constrained .discover-card,
+.tizen-tv.legacy-tizen.performance-constrained .search-result-card,
+.tizen-tv.legacy-tizen.performance-constrained .series-episode-card {
+  contain: layout;
+}

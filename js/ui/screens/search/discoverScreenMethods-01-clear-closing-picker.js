@@ -206,15 +206,17 @@ export function createDiscoverScreenMethods01() {
 
       void (async () => {
         try {
-          // Watched badges are cosmetic and loadNextPage refreshes them again
-          // for the returned items. Do not keep the first catalog request
-          // behind account/history IO on an older TV.
-          void this.refreshWatchedTitleIds().catch((error) => {
-            console.warn("Discover watched-state preload failed", error);
-          });
+          // Watched badges are cosmetic. loadNextPage refreshes them once it
+          // has actual items, so avoid a duplicate empty-state history query
+          // during the most expensive part of initial Discover startup.
           if (hasRestoredRouteState) {
             this.suppressInitialLoadingRenders = false;
             this.requestRender();
+            void this.refreshWatchedTitleIds(this.items).then(() => {
+              if (routeLoadToken === this.loadToken && Router.getCurrent() === "discover") {
+                this.requestRender();
+              }
+            });
             return;
           }
           await this.loadCatalogsAndContent();
