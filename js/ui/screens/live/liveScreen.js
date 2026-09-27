@@ -9,6 +9,7 @@ import { activateLegacySidebarAction, bindRootSidebarEvents, getSidebarProfileSt
 
 const LIVE_CATALOG_LIMIT = 16;
 const LIVE_ITEMS_PER_ROW = 12;
+export const LIVE_INITIAL_FOCUS_SELECTOR = ".live-event-card.focusable, .live-focus-anchor.focusable";
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
@@ -26,7 +27,7 @@ export function renderLiveContent({ loading = false, rows = [] } = {}, renderRow
   if (rows.length) {
     return rows.map((row, rowIndex) => renderRow(row, rowIndex)).join("");
   }
-  return `<div class="live-state live-empty"><span class="material-icons">live_tv</span><h2>No live catalogs found</h2><p>Install or enable a live TV or sports addon, then return here.</p></div>`;
+  return `<div class="live-state live-empty live-focus-anchor focusable" data-action="waitForLiveCatalogs" tabindex="0"><span class="material-icons">live_tv</span><h2>No live catalogs found</h2><p>Install or enable a live TV or sports addon, then return here.</p></div>`;
 }
 
 export class LiveScreenController {
@@ -84,7 +85,11 @@ export class LiveScreenController {
       node.onclick = () => this.openItem(node);
       node.onfocus = () => node.scrollIntoView?.({ block: "nearest", inline: "nearest" });
     });
-    ScreenUtils.setInitialFocus(this.container, ".live-event-card.focusable, .live-focus-anchor.focusable, .focusable");
+    // Do not append a generic `.focusable` fallback here. querySelector() uses
+    // document order, not selector-list order, so the earlier profile button
+    // would win over Live content and receive the Enter event that opened this
+    // route on older Tizen remotes.
+    ScreenUtils.setInitialFocus(this.container, LIVE_INITIAL_FOCUS_SELECTOR);
   }
 
   renderRow(row, rowIndex) {

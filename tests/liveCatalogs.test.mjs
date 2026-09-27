@@ -8,7 +8,7 @@ globalThis.localStorage = {
   setItem() {},
   removeItem() {}
 };
-const { LiveScreenController, renderLiveContent } = await import("../js/ui/screens/live/liveScreen.js");
+const { LIVE_INITIAL_FOCUS_SELECTOR, LiveScreenController, renderLiveContent } = await import("../js/ui/screens/live/liveScreen.js");
 if (previousLocalStorage === undefined) delete globalThis.localStorage;
 else globalThis.localStorage = previousLocalStorage;
 
@@ -45,6 +45,15 @@ test("live loading content owns a harmless focus target", () => {
   assert.match(markup, /live-focus-anchor focusable/);
   assert.match(markup, /data-action="waitForLiveCatalogs"/);
   assert.match(markup, /tabindex="0"/);
+});
+
+test("live initial focus cannot fall through to the earlier profile control", () => {
+  assert.equal(LIVE_INITIAL_FOCUS_SELECTOR, ".live-event-card.focusable, .live-focus-anchor.focusable");
+  assert.doesNotMatch(LIVE_INITIAL_FOCUS_SELECTOR, /(^|,\s*)\.focusable(?:,|$)/);
+
+  const emptyMarkup = renderLiveContent({ loading: false, rows: [] });
+  assert.match(emptyMarkup, /live-empty live-focus-anchor focusable/);
+  assert.match(emptyMarkup, /data-action="waitForLiveCatalogs"/);
 });
 
 test("live screen cleanup invalidates pending loads and removes its UI and key listener", () => {
