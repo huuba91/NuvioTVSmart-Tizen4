@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { collectLiveCatalogDescriptors, isLiveCatalog, promoteLiveCatalogRows } from "../js/core/addons/liveCatalogs.js";
 
 const previousLocalStorage = globalThis.localStorage;
@@ -56,36 +57,29 @@ test("live initial focus cannot fall through to the earlier profile control", ()
   assert.match(emptyMarkup, /data-action="waitForLiveCatalogs"/);
 });
 
-test("live screen cleanup invalidates pending loads and removes its UI and key listener", () => {
-  const previousDocument = globalThis.document;
-  let removedListener = null;
-  globalThis.document = {
-    removeEventListener(type, listener) {
-      removedListener = { type, listener };
+test("live screen cleanup invalidates pending loads and removes its UI", () => {
+  const screen = new LiveScreenController();
+  let childrenCleared = false;
+  screen.container = {
+    style: { display: "block" },
+    childNodes: [{}],
+    replaceChildren() {
+      childrenCleared = true;
     }
   };
-  try {
-    const screen = new LiveScreenController();
-    let childrenCleared = false;
-    screen.container = {
-      style: { display: "block" },
-      childNodes: [{}],
-      replaceChildren() {
-        childrenCleared = true;
-      }
-    };
-    const listener = screen.boundKeyDown;
-    screen.loadToken = 4;
+  screen.loadToken = 4;
 
-    screen.cleanup();
+  screen.cleanup();
 
-    assert.equal(screen.loadToken, 5);
-    assert.deepEqual(removedListener, { type: "keydown", listener });
-    assert.equal(childrenCleared, true);
-    assert.equal(screen.container, null);
-  } finally {
-    globalThis.document = previousDocument;
-  }
+  assert.equal(screen.loadToken, 5);
+  assert.equal(childrenCleared, true);
+  assert.equal(screen.container, null);
+});
+
+test("live receives remote keys only through the app-wide focus engine", async () => {
+  const source = await readFile(new URL("../js/ui/screens/live/liveScreen.js", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /document\.addEventListener\(["']keydown["']/);
+  assert.doesNotMatch(source, /document\.removeEventListener\(["']keydown["']/);
 });
 
 test("live horizontal navigation visits every adjacent stream without skipping", () => {

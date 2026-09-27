@@ -59,7 +59,6 @@ export class LiveScreenController {
     this.profile = null;
     this.loadToken = 0;
     this.lastContentFocus = { row: 0, col: 0 };
-    this.boundKeyDown = (event) => this.onKeyDown(event);
   }
 
   async mount() {
@@ -72,7 +71,6 @@ export class LiveScreenController {
     this.layout = LayoutPreferences.get();
     this.profile = await getSidebarProfileState({ cacheOnly: true }).catch(() => null);
     this.render();
-    document.addEventListener("keydown", this.boundKeyDown);
 
     const addons = await addonRepository.getInstalledAddons({ staleWhileRevalidate: true }).catch(() => []);
     const descriptors = collectLiveCatalogDescriptors(addons).slice(0, LIVE_CATALOG_LIMIT);
@@ -228,7 +226,6 @@ export class LiveScreenController {
 
   cleanup() {
     this.loadToken += 1;
-    document.removeEventListener("keydown", this.boundKeyDown);
     ScreenUtils.hide(this.container);
     this.container = null;
   }
