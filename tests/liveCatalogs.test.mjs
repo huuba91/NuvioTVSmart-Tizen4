@@ -2,6 +2,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { collectLiveCatalogDescriptors, isLiveCatalog, promoteLiveCatalogRows } from "../js/core/addons/liveCatalogs.js";
 
+const previousLocalStorage = globalThis.localStorage;
+globalThis.localStorage = {
+  getItem() { return null; },
+  setItem() {},
+  removeItem() {}
+};
+const { LiveScreenController, renderLiveContent } = await import("../js/ui/screens/live/liveScreen.js");
+if (previousLocalStorage === undefined) delete globalThis.localStorage;
+else globalThis.localStorage = previousLocalStorage;
+
 test("live catalogs include channels and sports addons without matching ordinary movies", () => {
   assert.equal(isLiveCatalog({}, { apiType: "channel", id: "news" }), true);
   assert.equal(isLiveCatalog({ displayName: "Nuvio Sports" }, { apiType: "movie", id: "events" }), true);
@@ -28,4 +38,43 @@ test("live rows are promoted while preserving order within both partitions", () 
   ];
   assert.deepEqual(promoteLiveCatalogRows(rows).map((row) => row.catalogName),
     ["Live football", "Live basketball", "Movies", "Series"]);
+});
+
+test("live loading content owns a harmless focus target", () => {
+  const markup = renderLiveContent({ loading: true });
+  assert.match(markup, /live-focus-anchor focusable/);
+  assert.match(markup, /data-action="waitForLiveCatalogs"/);
+  assert.match(markup, /tabindex="0"/);
+});
+
+test("live screen cleanup invalidates pending loads and removes its UI and key listener", () => {
+  const previousDocument = globalThis.document;
+  let removedListener = null;
+  globalThis.document = {
+    removeEventListener(type, listener) {
+      removedListener = { type, listener };
+    }
+  };
+  try {
+    const screen = new LiveScreenController();
+    let childrenCleared = false;
+    screen.container = {
+      style: { display: "block" },
+      childNodes: [{}],
+      replaceChildren() {
+        childrenCleared = true;
+      }
+    };
+    const listener = screen.boundKeyDown;
+    screen.loadToken = 4;
+
+    screen.cleanup();
+
+    assert.equal(screen.loadToken, 5);
+    assert.deepEqual(removedListener, { type: "keydown", listener });
+    assert.equal(childrenCleared, true);
+    assert.equal(screen.container, null);
+  } finally {
+    globalThis.document = previousDocument;
+  }
 });
