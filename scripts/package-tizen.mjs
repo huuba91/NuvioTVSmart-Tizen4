@@ -358,6 +358,19 @@ async function copyDistFolder(folderName) {
   await cp(source, path.join(stagingDir, folderName), { recursive: true });
 }
 
+async function pruneDisabledPluginRuntimeAssets() {
+  // Tizen 4/5 packages deliberately omit PluginService because their service
+  // runtime cannot execute the current plugin stack. Keep the UI bundle and
+  // ordinary HTTP add-ons intact, but do not spend scarce Smart Hub update
+  // workspace on the unreachable QuickJS worker payload. Builds that include
+  // PluginService (modern Tizen and Store packages) retain every asset.
+  await Promise.all([
+    rm(path.join(stagingDir, "assets", "runtime", "plugin-worker.js"), { force: true }),
+    rm(path.join(stagingDir, "assets", "libs", "quickjs-emscripten.global.js"), { force: true }),
+    rm(path.join(stagingDir, "assets", "libs", "quickjs-emscripten.LICENSE"), { force: true })
+  ]);
+}
+
 async function stagePackage({
   appId,
   packageId,
@@ -436,6 +449,8 @@ async function stagePackage({
   }
   if (includePluginService) {
     await stageTizenPluginService();
+  } else {
+    await pruneDisabledPluginRuntimeAssets();
   }
 
   if (await pathExists(path.join(distDir, "app.bundle.js.map"))) {
@@ -726,6 +741,19 @@ async function assertTizenServicePackage(
   }).find((fileName) => !zip.file(fileName));
   if (missingServiceEntry) {
     throw new Error(`Tizen WGT is missing the packaged service file ${missingServiceEntry}.`);
+  }
+
+  if (!requirePluginService) {
+    const unreachablePluginAsset = [
+      "assets/runtime/plugin-worker.js",
+      "assets/libs/quickjs-emscripten.global.js",
+      "assets/libs/quickjs-emscripten.LICENSE"
+    ].find((fileName) => zip.file(fileName));
+    if (unreachablePluginAsset) {
+      throw new Error(
+        `Tizen WGT without PluginService must omit unreachable plugin runtime asset ${unreachablePluginAsset}.`
+      );
+    }
   }
 
   if (requireEngineFsService || requirePluginService) {

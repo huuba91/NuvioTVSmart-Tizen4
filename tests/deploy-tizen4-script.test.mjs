@@ -13,3 +13,11 @@ test("Tizen deployment retries only Samsung pre-validation error 116", async () 
   assert.match(script, /install-permit -s \$Device/);
   assert.match(script, /if \(\$InstallExitCode -eq 0\)/);
 });
+
+test("Tizen packaging omits unreachable plugin execution assets when PluginService is disabled", async () => {
+  const packageScript = await readFile(new URL("../scripts/package-tizen.mjs", import.meta.url), "utf8");
+
+  assert.match(packageScript, /async function pruneDisabledPluginRuntimeAssets\(\)/);
+  assert.match(packageScript, /if \(includePluginService\)[\s\S]*else \{\s*await pruneDisabledPluginRuntimeAssets\(\)/);
+  assert.match(packageScript, /if \(!requirePluginService\)[\s\S]*assets\/runtime\/plugin-worker\.js/);
+});
