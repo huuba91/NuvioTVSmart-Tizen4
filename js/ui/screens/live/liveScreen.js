@@ -59,7 +59,7 @@ class LiveScreenController {
   render() {
     if (!this.container) return;
     const content = this.loading
-      ? `<div class="live-state">${renderLoadingIndicator()}<span>Finding live events…</span></div>`
+      ? `<div class="live-state live-focus-anchor focusable" data-action="waitForLiveCatalogs" tabindex="0">${renderLoadingIndicator()}<span>Finding live events…</span></div>`
       : this.rows.length
         ? this.rows.map((row, rowIndex) => this.renderRow(row, rowIndex)).join("")
         : `<div class="live-state live-empty"><span class="material-icons">live_tv</span><h2>No live catalogs found</h2><p>Install or enable a live TV or sports addon, then return here.</p></div>`;
@@ -75,7 +75,7 @@ class LiveScreenController {
       node.onclick = () => this.openItem(node);
       node.onfocus = () => node.scrollIntoView?.({ block: "nearest", inline: "nearest" });
     });
-    ScreenUtils.setInitialFocus(this.container, ".live-event-card.focusable, .focusable");
+    ScreenUtils.setInitialFocus(this.container, ".live-event-card.focusable, .live-focus-anchor.focusable, .focusable");
   }
 
   renderRow(row, rowIndex) {
@@ -120,7 +120,7 @@ class LiveScreenController {
     else activateLegacySidebarAction(action, "live");
   }
 
-  unmount() {
+  cleanup() {
     this.loadToken += 1;
     document.removeEventListener("keydown", this.boundKeyDown);
     ScreenUtils.hide(this.container);
