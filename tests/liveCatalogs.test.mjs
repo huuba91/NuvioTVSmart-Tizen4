@@ -8,7 +8,7 @@ globalThis.localStorage = {
   setItem() {},
   removeItem() {}
 };
-const { LIVE_INITIAL_FOCUS_SELECTOR, LiveScreenController, renderLiveContent } = await import("../js/ui/screens/live/liveScreen.js");
+const { LIVE_INITIAL_FOCUS_SELECTOR, LiveScreenController, renderLiveContent, resolveLiveGridMove } = await import("../js/ui/screens/live/liveScreen.js");
 if (previousLocalStorage === undefined) delete globalThis.localStorage;
 else globalThis.localStorage = previousLocalStorage;
 
@@ -86,4 +86,29 @@ test("live screen cleanup invalidates pending loads and removes its UI and key l
   } finally {
     globalThis.document = previousDocument;
   }
+});
+
+test("live horizontal navigation visits every adjacent stream without skipping", () => {
+  const rowLengths = [5];
+  assert.deepEqual(resolveLiveGridMove({ row: 0, col: 1, direction: "right", rowLengths }),
+    { zone: "content", row: 0, col: 2 });
+  assert.deepEqual(resolveLiveGridMove({ row: 0, col: 2, direction: "left", rowLengths }),
+    { zone: "content", row: 0, col: 1 });
+  assert.equal(resolveLiveGridMove({ row: 0, col: 4, direction: "right", rowLengths }), null);
+});
+
+test("live navigation enters the sidebar only from the first card", () => {
+  const rowLengths = [4, 2];
+  assert.deepEqual(resolveLiveGridMove({ row: 0, col: 0, direction: "left", rowLengths }), { zone: "sidebar" });
+  assert.deepEqual(resolveLiveGridMove({ row: 0, col: 1, direction: "left", rowLengths }),
+    { zone: "content", row: 0, col: 0 });
+});
+
+test("live vertical navigation preserves the column and clamps shorter rows", () => {
+  const rowLengths = [5, 2, 4];
+  assert.deepEqual(resolveLiveGridMove({ row: 0, col: 4, direction: "down", rowLengths }),
+    { zone: "content", row: 1, col: 1 });
+  assert.deepEqual(resolveLiveGridMove({ row: 1, col: 1, direction: "down", rowLengths }),
+    { zone: "content", row: 2, col: 1 });
+  assert.equal(resolveLiveGridMove({ row: 0, col: 0, direction: "up", rowLengths }), null);
 });

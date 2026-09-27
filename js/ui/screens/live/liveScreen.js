@@ -11,6 +11,26 @@ const LIVE_CATALOG_LIMIT = 16;
 const LIVE_ITEMS_PER_ROW = 12;
 export const LIVE_INITIAL_FOCUS_SELECTOR = ".live-event-card.focusable, .live-focus-anchor.focusable";
 
+export function resolveLiveGridMove({ row = 0, col = 0, direction = "", rowLengths = [] } = {}) {
+  const currentRow = Math.max(0, Number(row) || 0);
+  const currentCol = Math.max(0, Number(col) || 0);
+  const lengths = Array.isArray(rowLengths) ? rowLengths.map((value) => Math.max(0, Number(value) || 0)) : [];
+  if (direction === "left") {
+    return currentCol > 0 ? { zone: "content", row: currentRow, col: currentCol - 1 } : { zone: "sidebar" };
+  }
+  if (direction === "right") {
+    return currentCol + 1 < (lengths[currentRow] || 0)
+      ? { zone: "content", row: currentRow, col: currentCol + 1 }
+      : null;
+  }
+  const rowDelta = direction === "up" ? -1 : direction === "down" ? 1 : 0;
+  if (!rowDelta) return null;
+  const targetRow = currentRow + rowDelta;
+  const targetLength = lengths[targetRow] || 0;
+  if (targetRow < 0 || targetRow >= lengths.length || !targetLength) return null;
+  return { zone: "content", row: targetRow, col: Math.min(currentCol, targetLength - 1) };
+}
+
 function escapeHtml(value) {
   return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
@@ -38,6 +58,7 @@ export class LiveScreenController {
     this.layout = {};
     this.profile = null;
     this.loadToken = 0;
+    this.lastContentFocus = { row: 0, col: 0 };
     this.boundKeyDown = (event) => this.onKeyDown(event);
   }
 
@@ -83,7 +104,13 @@ export class LiveScreenController {
     bindRootSidebarEvents(this.container, { currentRoute: "live" });
     this.container.querySelectorAll(".live-event-card").forEach((node) => {
       node.onclick = () => this.openItem(node);
-      node.onfocus = () => node.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+      node.onfocus = () => {
+        this.lastContentFocus = {
+          row: Math.max(0, Number(node.dataset.liveRow || 0)),
+          col: Math.max(0, Number(node.dataset.liveCol || 0))
+        };
+        node.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+      };
     });
     // Do not append a generic `.focusable` fallback here. querySelector() uses
     // document order, not selector-list order, so the earlier profile button
@@ -100,7 +127,8 @@ export class LiveScreenController {
         data-item-title="${escapeHtml(item.name || "Live event")}" data-poster-src="${escapeHtml(item.poster || "")}"
         data-backdrop-src="${escapeHtml(item.background || "")}" data-addon-base-url="${escapeHtml(row.addonBaseUrl)}"
         data-addon-id="${escapeHtml(row.addonId)}" data-addon-name="${escapeHtml(row.addonName)}"
-        data-catalog-type="${escapeHtml(row.type)}" data-index-key="${rowIndex}:${itemIndex}">
+        data-catalog-type="${escapeHtml(row.type)}" data-index-key="${rowIndex}:${itemIndex}"
+        data-live-row="${rowIndex}" data-live-col="${itemIndex}">
         <div class="live-event-art">${item.background || item.poster
           ? `<img src="${escapeHtml(item.background || item.poster)}" alt="" loading="lazy" decoding="async" />`
           : `<span class="material-icons live-event-placeholder">sports</span>`}
@@ -122,9 +150,73 @@ export class LiveScreenController {
     });
   }
 
+  focusNode(node, { scroll = true } = {}) {
+    if (!node) return false;
+    this.container?.querySelectorAll(".focusable.focused").forEach((item) => item.classList.remove("focused"));
+    node.classList.add("focused");
+    try {
+      node.focus({ preventScroll: true });
+    } catch (_) {
+      node.focus?.();
+    }
+    if (scroll) node.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+    return true;
+  }
+
+  getContentTarget(row, col) {
+    return this.container?.querySelector(
+      `.live-event-card[data-live-row="${Math.max(0, Number(row) || 0)}"][data-live-col="${Math.max(0, Number(col) || 0)}"]`
+    ) || null;
+  }
+
+  focusLiveSidebar() {
+    const target =
+      this.container?.querySelector(".home-sidebar .home-nav-item.selected") ||
+      this.container?.querySelector(".modern-sidebar-panel .modern-sidebar-nav-item.selected") ||
+      this.container?.querySelector(".home-sidebar .focusable, .modern-sidebar-panel .focusable");
+    return this.focusNode(target, { scroll: false });
+  }
+
+  handleLiveDpad(event) {
+    const code = Number(event?.keyCode || 0);
+    const direction = code === 37 ? "left" : code === 39 ? "right" : code === 38 ? "up" : code === 40 ? "down" : "";
+    if (!direction) return false;
+
+    const focused = this.container?.querySelector(".focusable.focused") || document.activeElement;
+    const card = focused?.matches?.(".live-event-card") ? focused : null;
+    const inSidebar = Boolean(focused?.closest?.(".home-sidebar, .modern-sidebar-panel"));
+    event.preventDefault?.();
+
+    if (inSidebar) {
+      if (direction === "right") {
+        const target = this.getContentTarget(this.lastContentFocus.row, this.lastContentFocus.col) ||
+          this.container?.querySelector(LIVE_INITIAL_FOCUS_SELECTOR);
+        this.focusNode(target);
+      }
+      return true;
+    }
+    if (!card) {
+      if (direction === "left") this.focusLiveSidebar();
+      return true;
+    }
+
+    const rowLengths = Array.from(this.container?.querySelectorAll(".live-row") || []).map(
+      (rowNode) => rowNode.querySelectorAll(".live-event-card").length
+    );
+    const result = resolveLiveGridMove({
+      row: card.dataset.liveRow,
+      col: card.dataset.liveCol,
+      direction,
+      rowLengths
+    });
+    if (result?.zone === "sidebar") return this.focusLiveSidebar();
+    if (result?.zone === "content") return this.focusNode(this.getContentTarget(result.row, result.col));
+    return true;
+  }
+
   onKeyDown(event) {
     if (Router.getCurrent() !== "live") return;
-    if (ScreenUtils.handleDpadNavigation(event, this.container)) return;
+    if (this.handleLiveDpad(event)) return;
     const code = Number(event?.keyCode || 0);
     if (code !== 13 && code !== 32) return;
     event.preventDefault?.();
