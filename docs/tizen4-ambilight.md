@@ -16,8 +16,13 @@ left edge, the right edge or the whole picture (center), or stays off.
     bright parts win (Philips' dominant colour; a plain average turns most scenes brown-grey);
   - colours mixed in linear light (gamma 2.2), as HyperHDR does;
   - left/right follow the outer 20% of the moving picture, center the whole picture;
-  - pixels unchanged for 10 s (black bars, logos, a paused player bar) drop to 5% weight, like
-    Hyperion's black-border detection;
+  - one colour, not a blend: vivid pixels are binned by hue, the strongest hue family wins (it
+    keeps the previous one while that has 80% of the winner's weight, so near-ties don't flip)
+    and other hues stop counting; red next to blue gives red or blue, never purple (Philips'
+    dominant colour, HyperHDR's dominant-colour mode);
+  - black bars are dropped as soon as their size is stable for 3 pictures (Hyperion's
+    black-border detector), and anything unchanged for 10 s (logos, a paused player bar) drops to
+    5% weight;
   - saturation × 1.5, faded out on black-and-white video; never darker than 15%;
   - an almost entirely white screen switches to the bulb's own warm white, with hysteresis.
 - **Smooth fades without extra captures.** A new picture only moves the target. A 20 Hz tick

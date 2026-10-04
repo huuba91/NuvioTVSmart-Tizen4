@@ -82,3 +82,39 @@ test("an almost white screen switches to warm white and stays there through smal
   for (var i = 0; i < 20; i++) region.step(0.05);
   assert.equal(region.step(0.05).mode, "colour");
 });
+
+test("two different vivid colours give one of them, not a blend that is not on screen", function () {
+  var analyser = new colour.Analyser(), summary;
+  for (var k = 0; k < 4; k++) {
+    summary = analyser.analyse(image(20, 10, function (x, y) {
+      return y < 6 ? [220, 40, 20] : [20, 60, 220]; // orange-red above, blue below
+    }), 0.1);
+  }
+  var hsv = internals.rgbToHsv(summary.center.colour);
+  assert.ok(hsv[0] < 0.05 || hsv[0] > 0.95, "red family wins: " + hsv[0]);
+  assert.ok(hsv[1] > 0.8, "and stays saturated: " + hsv[1]);
+});
+
+test("a near-tie keeps the previous colour instead of flipping", function () {
+  var analyser = new colour.Analyser(), summary, redRows = 6;
+  function frame() {
+    return analyser.analyse(image(20, 10, function (x, y) {
+      return y < redRows ? [220, 30, 30] : [30, 30, 220];
+    }), 0.1);
+  }
+  frame();
+  redRows = 5; // now an even split: red stays
+  summary = frame();
+  var h = internals.rgbToHsv(summary.center.colour)[0];
+  assert.ok(h < 0.05 || h > 0.95, "still red: " + h);
+});
+
+test("letterbox bars stop counting within a few pictures", function () {
+  var analyser = new colour.Analyser(), summary;
+  for (var k = 0; k < 3; k++) {
+    summary = analyser.analyse(image(20, 10, function (x, y) {
+      return y < 2 || y >= 8 ? [0, 0, 0] : [200, 200, 200];
+    }), 0.1);
+  }
+  assert.ok(summary.center.overall > 0.75, "bars no longer darken the picture: " + summary.center.overall);
+});

@@ -7,13 +7,19 @@
 // - Dominant colour, not the plain average: vivid and bright pixels count most (weight sat^2 * value),
 //   so a red explosion beats a grey wall. Philips extracts a dominant/"feature" colour for the same
 //   reason; a plain average turns most scenes muddy brown-grey.
+// - One colour, not a blend: when an edge holds two different vivid colours (orange sunset next to a
+//   blue sky) their average is a colour that is not on screen (pink-grey). The vivid pixels are
+//   binned by hue, the strongest hue family wins (with a little stickiness so near-ties do not flip)
+//   and pixels far from that hue stop counting, like HyperHDR's dominant-colour mode and Philips'
+//   dominant colour per zone.
 // - Light mixes linearly: colours are averaged after undoing the screen's gamma (2.2), like
 //   HyperHDR's linear-sRGB pipeline.
 // - Edges, not halves: left/right bulbs follow the outer 20% of the picture, as Ambilight samples
 //   the screen border next to each light. Center follows the whole picture.
 // - Static parts are ignored: pixels that have not changed for 10 s (letterbox and pillarbox bars,
-//   channel logos, a paused player bar) fade to 5% weight, so black bars never darken the edges
-//   (Hyperion's black-border detector does the same job).
+//   channel logos, a paused player bar) fade to 5% weight. Black bars are also caught at once, like
+//   Hyperion's black-border detector: near-black rows and columns at the picture's edges that
+//   stay the same size for 3 pictures stop counting straight away.
 // - Vividness: saturation x1.5, faded out on (nearly) black-and-white video so grey scenes give
 //   neutral light instead of a tint from a tiny coloured element (Hyperion "saturation gain").
 // - Never fully dark (15% floor) and a small bright highlight on a dark screen still lights the room.
@@ -38,6 +44,12 @@ var WHITE_BRIGHTNESS = 0.05;
 var SMOOTHING = 0.6;
 var CUT_SMOOTHING = 0.08;
 var CUT_SIZE = 0.25;
+var BLACK_LEVEL = 18; // 0..255: darker than this counts as a black bar
+var MAX_BAR = 0.3; // a bar never covers more than this share of a side (a black scene is not a bar)
+var BAR_FRAMES = 3; // a new bar size must be seen this many pictures in a row
+var HUE_BINS = 24;
+var HUE_WIDTH = 0.125; // pixels this far from the dominant hue (in turns, 45 degrees) no longer count
+var HUE_STICKY = 0.8; // keep the previous dominant hue while it has at least 80% of the strongest one's weight
 
 var LINEAR = (function () {
   var table = new Array(256);
@@ -55,7 +67,7 @@ function emptySums() {
 
 // Dominant colour from region totals: linear colour 0..1, brightness 0..1, colourfulness, overall.
 function summarise(t) {
-  var n = Math.max(t.n, 1e-6), colourfulness = t.w / n, colour, dominantV;
+  var n = Math.max(t.n, 1e-6), colourfulness = (t.all !== undefined ? t.all : t.w) / n, colour, dominantV;
   if (t.w > 1e-6) {
     colour = [t.wc[0] / t.w, t.wc[1] / t.w, t.wc[2] / t.w];
     dominantV = t.wv / t.w;
@@ -73,7 +85,33 @@ function Analyser() {
   this.still = null;
   this.cols = 0;
   this.rows = 0;
+  this.bars = { top: 0, bottom: 0, left: 0, right: 0 };
+  this.barSeen = { top: [0, 0], bottom: [0, 0], left: [0, 0], right: [0, 0] };
 }
+
+// Near-black rows/columns at each side, accepted once stable for BAR_FRAMES pictures.
+Analyser.prototype.detectBars = function (r, g, b, cols, rows) {
+  function dark(i) { return r[i] < BLACK_LEVEL && g[i] < BLACK_LEVEL && b[i] < BLACK_LEVEL; }
+  function rowDark(y) { for (var x = 0; x < cols; x++) if (!dark(y * cols + x)) return false; return true; }
+  function colDark(x) { for (var y = 0; y < rows; y++) if (!dark(y * cols + x)) return false; return true; }
+  var limitY = Math.floor(rows * MAX_BAR), limitX = Math.floor(cols * MAX_BAR), found = {}, n;
+  for (n = 0; n < limitY && rowDark(n); n++);
+  found.top = n === limitY ? 0 : n;
+  for (n = 0; n < limitY && rowDark(rows - 1 - n); n++);
+  found.bottom = n === limitY ? 0 : n;
+  for (n = 0; n < limitX && colDark(n); n++);
+  found.left = n === limitX ? 0 : n;
+  for (n = 0; n < limitX && colDark(cols - 1 - n); n++);
+  found.right = n === limitX ? 0 : n;
+  for (var side in found) {
+    if (!Object.prototype.hasOwnProperty.call(found, side)) continue;
+    var seen = this.barSeen[side];
+    if (seen[0] === found[side]) seen[1]++;
+    else { seen[0] = found[side]; seen[1] = 1; }
+    if (seen[1] >= BAR_FRAMES) this.bars[side] = found[side];
+  }
+  return this.bars;
+};
 
 // image: { w, h, bpp, data } (decoded PNG). dt: seconds since the previous picture.
 Analyser.prototype.analyse = function (image, dt) {
@@ -92,6 +130,8 @@ Analyser.prototype.analyse = function (image, dt) {
 
   // Seconds each sample has been unchanged.
   if (!this.prev || this.cols !== cols || this.rows !== rows) {
+    this.bars = { top: 0, bottom: 0, left: 0, right: 0 };
+    this.barSeen = { top: [0, 0], bottom: [0, 0], left: [0, 0], right: [0, 0] };
     this.prev = { r: r, g: g, b: b };
     this.still = new Array(count);
     for (i = 0; i < count; i++) this.still[i] = 0;
@@ -111,6 +151,12 @@ Analyser.prototype.analyse = function (image, dt) {
   for (i = 0; i < count; i++) {
     mask[i] = allCount ? 1 : Math.max(STATIC_WEIGHT, Math.min(1, 1 - (this.still[i] - STATIC_AFTER) / 2));
   }
+  var bars = this.detectBars(r, g, b, cols, rows);
+  for (y = 0, i = 0; y < rows; y++) {
+    for (x = 0; x < cols; x++, i++) {
+      if (y < bars.top || y >= rows - bars.bottom || x < bars.left || x >= cols - bars.right) mask[i] = 0;
+    }
+  }
 
   // The moving picture's own left and right edge (skips static pillarbox bars).
   var x0 = 0, x1 = cols, first = -1, last = -1, live = 0;
@@ -122,25 +168,77 @@ Analyser.prototype.analyse = function (image, dt) {
   if (live >= cols * 0.3) { x0 = first; x1 = last + 1; }
   var e = Math.max(1, Math.round((x1 - x0) * EDGE));
 
-  var left = emptySums(), right = emptySums(), all = emptySums();
-  for (y = 0; y < rows; y++) {
-    for (x = 0; x < cols; x++) {
-      i = y * cols + x;
-      var rr = r[i] / 255, gg = g[i] / 255, bb = b[i] / 255;
-      var hi = Math.max(rr, gg, bb), lo = Math.min(rr, gg, bb);
-      var sat = (hi - lo) / Math.max(hi, 1e-6), m = mask[i], w = sat * sat * hi * m;
-      var lin = [LINEAR[r[i]], LINEAR[g[i]], LINEAR[b[i]]];
-      var targets = [all];
-      if (x >= x0 && x < x0 + e) targets.push(left);
-      if (x >= x1 - e && x < x1) targets.push(right);
-      for (var t = 0; t < targets.length; t++) {
-        var s = targets[t];
-        s.n += m; s.w += w; s.wv += w * hi; s.hi += m * hi;
-        for (k = 0; k < 3; k++) { s.wc[k] += w * lin[k]; s.c[k] += m * lin[k]; }
+  // Per sample: weight (vivid and bright count most), hue, brightness, linear colour.
+  var weight = new Array(count), hue = new Array(count), value = new Array(count);
+  for (i = 0; i < count; i++) {
+    var rr = r[i] / 255, gg = g[i] / 255, bb = b[i] / 255;
+    var hi = Math.max(rr, gg, bb), lo = Math.min(rr, gg, bb), d = hi - lo, h = 0;
+    if (d > 0) {
+      if (hi === rr) h = ((gg - bb) / d) % 6;
+      else if (hi === gg) h = (bb - rr) / d + 2;
+      else h = (rr - gg) / d + 4;
+      h /= 6;
+      if (h < 0) h += 1;
+    }
+    var sat = d / Math.max(hi, 1e-6);
+    weight[i] = sat * sat * hi * mask[i];
+    hue[i] = h;
+    value[i] = hi;
+  }
+
+  var self = this;
+  if (!this.peaks) this.peaks = {};
+  function region(name, from, to) {
+    // pass 1: hue histogram of the vivid pixels -> dominant hue
+    var hist = [], cos = [], sin = [], bin, j, xx, yy;
+    for (j = 0; j < HUE_BINS; j++) { hist.push(0); cos.push(0); sin.push(0); }
+    for (yy = 0; yy < rows; yy++) {
+      for (xx = from; xx < to; xx++) {
+        j = yy * cols + xx;
+        if (weight[j] <= 0) continue;
+        bin = Math.floor(hue[j] * HUE_BINS) % HUE_BINS;
+        hist[bin] += weight[j];
+        cos[bin] += weight[j] * Math.cos(hue[j] * 2 * Math.PI);
+        sin[bin] += weight[j] * Math.sin(hue[j] * 2 * Math.PI);
       }
     }
+    function family(at) { // a bin with its neighbours: one hue family
+      return hist[(at + HUE_BINS - 1) % HUE_BINS] + hist[at] + hist[(at + 1) % HUE_BINS];
+    }
+    var peak = 0;
+    for (j = 1; j < HUE_BINS; j++) if (family(j) > family(peak)) peak = j;
+    var before = self.peaks[name];
+    if (before !== undefined && family(before) >= HUE_STICKY * family(peak)) peak = before;
+    self.peaks[name] = peak;
+    var pc = 0, ps = 0;
+    for (j = -1; j <= 1; j++) {
+      bin = (peak + j + HUE_BINS) % HUE_BINS;
+      pc += cos[bin]; ps += sin[bin];
+    }
+    var peakHue = Math.atan2(ps, pc) / (2 * Math.PI), useHue = pc * pc + ps * ps > 1e-12;
+
+    // pass 2: totals, with pixels far from the dominant hue fading out of the colour
+    var t = emptySums(), sum = 0;
+    for (yy = 0; yy < rows; yy++) {
+      for (xx = from; xx < to; xx++) {
+        j = yy * cols + xx;
+        var m = mask[j], w = weight[j], near = 1;
+        if (useHue && w > 0) {
+          var dh = Math.abs(hue[j] - peakHue) % 1;
+          if (dh > 0.5) dh = 1 - dh;
+          near = Math.max(0, 1 - dh / HUE_WIDTH);
+        }
+        var wn = w * near * near;
+        t.n += m; sum += w; t.w += wn; t.wv += wn * value[j]; t.hi += m * value[j];
+        var lr = LINEAR[r[j]], lg = LINEAR[g[j]], lb = LINEAR[b[j]];
+        t.wc[0] += wn * lr; t.wc[1] += wn * lg; t.wc[2] += wn * lb;
+        t.c[0] += m * lr; t.c[1] += m * lg; t.c[2] += m * lb;
+      }
+    }
+    t.all = sum; // colourfulness describes the whole region, not just the winning hue family
+    return summarise(t);
   }
-  return { left: summarise(left), right: summarise(right), center: summarise(all) };
+  return { left: region("left", x0, x0 + e), right: region("right", x1 - e, x1), center: region("center", 0, cols) };
 };
 
 // ---- Oklab ------------------------------------------------------------------------------------------
