@@ -33,7 +33,11 @@ left edge, the right edge or the whole picture (center), or stays off.
 - **Brightness.** An overall cap (Settings, or the Lights slider in the player's More actions,
   live) times each bulb's own cap (Settings).
 - **Bulbs.** The service talks Tuya local protocol 3.3 directly (TCP 6668, AES-128-ECB with each
-  bulb's local key). It remembers each bulb's state before taking it and restores it on stop.
+  bulb's local key). DP 5 comes in two formats: classic `rrggbbhhhhssvv` (0-255) and
+  `hhhhssssvvvv` (0-1000, bulbs with `colour_data_v2`). A bulb sent the wrong one still changes
+  colour but ignores brightness, so the format comes from the bulb list (written from the wizard's
+  data points) or else from the length of DP 5 in the bulb's own status. `/ambilight/state` shows
+  each bulb's format and the last value sent. It remembers each bulb's state before taking it and restores it on stop.
   If a bulb is not at its packaged address, it listens for the bulbs' UDP announcements once.
 - **Lifecycle.** The player starts the session on the first real `playing` event and stops it in
   its cleanup. The app pings every 3 s; the service stops by itself after 10 s without a ping,

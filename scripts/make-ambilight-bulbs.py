@@ -38,6 +38,15 @@ def read_json(path, default):
         return default
 
 
+def colour_format(dev):
+    """DP 5's format from the wizard's data point list, as bulbs.py decides it: colour_data_v2 means
+    hhhhssssvvvv (0-1000), colour_data the classic rrggbbhhhhssvv. "" when unknown (the TV then
+    reads it from the bulb's own status)."""
+    mapping = dev.get("mapping") if isinstance(dev.get("mapping"), dict) else {}
+    code = (mapping.get("5") or {}).get("code") if isinstance(mapping.get("5"), dict) else ""
+    return {"colour_data_v2": "hsv16", "colour_data": "rgb8"}.get(code or "", "")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--tuya-dir", required=True, type=Path, help="folder with devices.json and bulbs.py")
@@ -74,8 +83,12 @@ def main():
             position = "center"
         if active and dev["id"] not in active:
             position = "off"  # not seen by the PC hub lately (unplugged?): switch it on in the app
-        bulbs.append({"name": name, "id": dev["id"], "key": dev["key"], "ip": ip, "pos": position})
-        print("bulb %-14s %-15s starts on %s" % (name, ip, position))
+        entry = {"name": name, "id": dev["id"], "key": dev["key"], "ip": ip, "pos": position}
+        fmt = colour_format(dev)
+        if fmt:
+            entry["format"] = fmt
+        bulbs.append(entry)
+        print("bulb %-14s %-15s starts on %-6s colour format %s" % (name, ip, position, fmt or "from the bulb"))
 
     args.out.write_text(json.dumps(bulbs, indent=1), encoding="utf-8")
     print("wrote %s with %d bulb(s); keep it private, it holds local keys" % (args.out, len(bulbs)))

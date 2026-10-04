@@ -56,6 +56,20 @@ function normalizePosition(value, fallback) {
   return POSITIONS.indexOf(text) >= 0 ? text : fallback;
 }
 
+// Colour data point formats (tinytuya's names): "rgb8" = rrggbb + hhhh + ss + vv (0-255), the
+// classic layout; "hsv16" = hhhh + ssss + vvvv (0-1000), what bulbs with colour_data_v2 on DP 5
+// expect. A bulb fed the wrong one shows colours but ignores the brightness.
+function normalizeFormat(value) {
+  var text = String(value || "").toLowerCase();
+  return text === "rgb8" || text === "hsv16" ? text : "";
+}
+
+// Format from what the bulb itself reports for DP 5 (12 hex digits = hsv16, 14 = rgb8).
+function formatFromDps(dps) {
+  var value = dps && typeof dps["5"] === "string" ? dps["5"] : "";
+  return value.length === 12 ? "hsv16" : value.length === 14 ? "rgb8" : "";
+}
+
 function normalizeBulbList(list) {
   var out = [], seen = {};
   (Array.isArray(list) ? list : []).forEach(function (entry) {
@@ -63,7 +77,8 @@ function normalizeBulbList(list) {
     var id = String(entry.id || ""), key = String(entry.key || ""), ip = String(entry.ip || "");
     if (!id || key.length !== 16 || !ip || seen[id]) return;
     seen[id] = true;
-    out.push({ id: id, name: String(entry.name || id), key: key, ip: ip, pos: normalizePosition(entry.pos, "center") });
+    out.push({ id: id, name: String(entry.name || id), key: key, ip: ip, pos: normalizePosition(entry.pos, "center"),
+      format: normalizeFormat(entry.format) });
   });
   return out;
 }
@@ -191,7 +206,12 @@ function hex(value, digits) {
   return s;
 }
 
-// Data point 5 on these bulbs: rrggbb + hue (0-360, 4 hex) + saturation and value (0-255, 2 hex each).
+function hsv16Hex(hsv) {
+  return hex(Math.round(hsv[0] * 360) % 360, 4) + hex(Math.round(hsv[1] * 1000), 4) +
+    hex(Math.max(10, Math.round(hsv[2] * 1000)), 4);
+}
+
+// Data point 5 in rgb8: rrggbb + hue (0-360, 4 hex) + saturation and value (0-255, 2 hex each).
 function colourHex(c) {
   var r = c[0], g = c[1], b = c[2], max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min, h = 0;
   if (max < 10) { r = g = b = max = 10; d = 0; } // never fully dark: the bulb would look switched off
@@ -207,7 +227,7 @@ function colourHex(c) {
 
 function Bulb(config) {
   this.id = config.id; this.name = config.name; this.key = config.key; this.ip = config.ip;
-  this.pos = config.pos; this.max = normalizeMax(config.max);
+  this.pos = config.pos; this.max = normalizeMax(config.max); this.format = normalizeFormat(config.format);
   this.mode = ""; this.lastHex = ""; this.prevHex = ""; this.hexTime = 0;
   this.seq = 1; this.socket = null; this.rx = new Buffer(0); this.connected = false;
   this.dps = null; this.original = null; this.sent = 0; this.errors = []; this.inColour = false;
@@ -298,16 +318,19 @@ Bulb.prototype.set = function (dps) {
 // state: { mode: "colour", hsv: [h, s, v] 0..1 } or { mode: "white" }; level: overall cap 0..100.
 Bulb.prototype.show = function (state, level) {
   var f = (Math.max(0, Math.min(100, level)) / 100) * (this.max / 100), now = Date.now(), value;
+  var v2 = (this.format || formatFromDps(this.original || this.dps)) === "hsv16";
   if (state.mode === "white") {
     // the bulb's own white LEDs look far better than white mixed from colour; warmest, dimmest end
-    value = Math.round(25 + 230 * colourEngine.WHITE_BRIGHTNESS * f);
+    var low = v2 ? 10 : 25, high = v2 ? 1000 : 255;
+    value = Math.max(low, Math.round(low + (high - low) * colourEngine.WHITE_BRIGHTNESS * f));
     if (this.mode === "white" && this.lastHex === "w" + value) return;
-    if (this.set({ 1: true, 2: "white", 3: Math.max(25, value), 4: 0 })) {
+    if (this.set({ 1: true, 2: "white", 3: value, 4: 0 })) {
       this.mode = "white"; this.inColour = true; this.lastHex = "w" + value; this.prevHex = "";
     }
     return;
   }
-  value = colourHex(hsvToRgb255([state.hsv[0], state.hsv[1], state.hsv[2] * f]));
+  var hsv = [state.hsv[0], state.hsv[1], state.hsv[2] * f];
+  value = v2 ? hsv16Hex(hsv) : colourHex(hsvToRgb255(hsv));
   if (this.mode === "colour") {
     if (value === this.lastHex) return; // too small a change for the bulb to show
     // a near-still scene can hover between two of the bulb's steps: don't flip straight back
@@ -560,7 +583,13 @@ Session.prototype.describe = function () {
     perSecond: this.captures ? Math.round((this.captures * 10000) / (Date.now() - this.startedAt)) / 10 : 0,
     errors: this.errors,
     bulbs: this.bulbs.map(function (b) {
-      return { id: b.id, name: b.name, pos: b.pos, max: b.max, connected: b.connected, sent: b.sent, errors: b.errors };
+      // no keys here; DP values are only on/mode/brightness/colour and help diagnose a bulb
+      var reported = b.original || b.dps || {};
+      return {
+        id: b.id, name: b.name, pos: b.pos, max: b.max, connected: b.connected, sent: b.sent, errors: b.errors,
+        format: b.format || formatFromDps(reported) || "rgb8 (assumed)", last: b.lastHex,
+        reported: { 2: reported["2"], 3: reported["3"], 5: reported["5"] }
+      };
     })
   };
 };
@@ -575,7 +604,8 @@ function start(assignments, level) {
   var bulbs = loadBulbs()
     .map(function (config) {
       var a = assignments[config.id] || { pos: config.pos, max: 100 };
-      return new Bulb({ id: config.id, name: config.name, key: config.key, ip: config.ip, pos: a.pos, max: a.max });
+      return new Bulb({ id: config.id, name: config.name, key: config.key, ip: config.ip, pos: a.pos, max: a.max,
+        format: config.format });
     })
     .filter(function (b) { return b.pos !== "off"; });
   session = new Session(bulbs, level);
@@ -655,6 +685,8 @@ module.exports = {
     decodePng: decodePng,
     hsvToRgb255: hsvToRgb255,
     colourHex: colourHex,
+    hsv16Hex: hsv16Hex,
+    formatFromDps: formatFromDps,
     crc32: crc32,
     tuyaFrame: tuyaFrame,
     aes: aes,
