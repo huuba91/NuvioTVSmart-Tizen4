@@ -90,6 +90,7 @@ export function createPlayerScreenMethods57() {
       this.subtitleDialogVisible = false;
       this.audioDialogVisible = false;
       this.speedDialogVisible = false;
+      this.lightsDialogVisible = false;
       this.sourcesPanelVisible = false;
       this.setControlsVisible(false, { focus: false });
       this.renderSubtitleDialog();
@@ -287,6 +288,7 @@ export function createPlayerScreenMethods57() {
       this.subtitleDialogVisible = false;
       this.audioDialogVisible = false;
       this.speedDialogVisible = false;
+      this.lightsDialogVisible = false;
       this.sourcesPanelVisible = false;
       this.subtitleTimingDialogVisible = true;
       this.subtitleTimingStage = "wait";

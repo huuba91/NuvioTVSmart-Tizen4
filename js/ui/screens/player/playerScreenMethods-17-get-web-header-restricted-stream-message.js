@@ -189,6 +189,7 @@ export function createPlayerScreenMethods17() {
       this.resetSubtitleAutoSyncState();
       this.audioDialogVisible = false;
       this.speedDialogVisible = false;
+      this.lightsDialogVisible = false;
       this.episodePanelVisible = false;
       this.moreActionsVisible = false;
       this.seekOverlayVisible = false;
@@ -202,6 +203,7 @@ export function createPlayerScreenMethods17() {
       this.renderSubtitleTimingDialog();
       this.renderAudioDialog();
       this.renderSpeedDialog();
+      this.renderLightsDialog();
       this.renderEpisodePanel();
       this.renderPauseOverlay();
       this.renderStartupErrorOverlay();

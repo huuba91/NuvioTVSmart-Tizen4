@@ -165,6 +165,7 @@ export function createPlayerScreenMethods15() {
             <div id="playerSubtitleTimingDialog" class="player-subtitle-timing-modal hidden"></div>
             <div id="playerAudioDialog" class="player-modal player-audio-modal hidden"></div>
             <div id="playerSpeedDialog" class="player-modal player-speed-modal hidden"></div>
+            <div id="playerLightsDialog" class="player-modal player-lights-modal hidden"></div>
             <div id="playerSourcesPanel" class="player-sources-panel hidden"></div>
 
             <div id="playerControlsOverlay" class="player-controls-overlay">
@@ -214,6 +215,7 @@ export function createPlayerScreenMethods15() {
         this.renderSubtitleTimingDialog();
         this.renderAudioDialog();
         this.renderSpeedDialog();
+        this.renderLightsDialog();
         this.renderSourcesPanel();
         this.renderParentalGuideOverlay();
         this.renderSkipIntroButton();
@@ -261,6 +263,7 @@ export function createPlayerScreenMethods15() {
             subtitleTimingDialog: uiRoot.querySelector("#playerSubtitleTimingDialog"),
             audioDialog: uiRoot.querySelector("#playerAudioDialog"),
             speedDialog: uiRoot.querySelector("#playerSpeedDialog"),
+            lightsDialog: uiRoot.querySelector("#playerLightsDialog"),
             sourcesPanel: uiRoot.querySelector("#playerSourcesPanel"),
             controlsOverlay: uiRoot.querySelector("#playerControlsOverlay"),
             controlsBottom: uiRoot.querySelector(".player-controls-bottom"),

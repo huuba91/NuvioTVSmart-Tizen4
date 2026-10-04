@@ -296,6 +296,7 @@ export function createPlayerScreenMethods62() {
       this.subtitleDialogVisible = false;
       this.audioDialogVisible = false;
       this.speedDialogVisible = false;
+      this.lightsDialogVisible = false;
       this.moreActionsVisible = false;
 
       const filters = this.getSourceFilters();
@@ -308,6 +309,7 @@ export function createPlayerScreenMethods62() {
       this.renderSubtitleDialog();
       this.renderAudioDialog();
       this.renderSpeedDialog();
+      this.renderLightsDialog();
       this.renderSourcesPanel();
       this.updateModalBackdrop();
       void this.preloadPlayerSourceLogos();

@@ -242,6 +242,11 @@ export function createPlayerScreenMethods68() {
         return;
       }
 
+      if (action === "lights") {
+        this.openLightsDialog();
+        return;
+      }
+
       if (action === "aspect") {
         this.cycleAspectMode();
         return;

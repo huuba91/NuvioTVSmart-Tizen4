@@ -119,6 +119,7 @@ export function createPlayerScreenMethods53() {
       this.beginSubtitleDialogSession();
       this.audioDialogVisible = false;
       this.speedDialogVisible = false;
+      this.lightsDialogVisible = false;
       this.sourcesPanelVisible = false;
       const languageRail = this.getSubtitleLanguageRailItems();
       const selectedLanguageKey = this.getSelectedSubtitleLanguageKey();
@@ -136,6 +137,7 @@ export function createPlayerScreenMethods53() {
       this.renderSubtitleDialog();
       this.renderAudioDialog();
       this.renderSpeedDialog();
+      this.renderLightsDialog();
       this.renderSourcesPanel();
       this.updateModalBackdrop();
     },

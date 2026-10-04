@@ -3,10 +3,13 @@
 
 // Ambilight for the Tizen 4 build (UE49NU7100): the TV's own capture service
 // takes a small PNG of the real screen (video plane included, any codec or
-// resolution), this module averages its left half, right half and the whole
-// picture, and drives Tuya bulbs over the local protocol 3.3 directly from the
+// resolution), ambilight-colour.cjs turns it into a dominant colour for the left
+// edge, the right edge and the whole picture (same engine as the PC sync), and
+// this module drives Tuya bulbs over the local protocol 3.3 directly from the
 // TV. Measured on the target: two overlapped captures give ~9 pictures/s at
 // ~43% CPU; canvas/WebGL readback of the video is blank on this firmware.
+// Between pictures the colour keeps gliding at 20 updates/s, so fades look
+// smooth without capturing more often.
 //
 // The bulb list (names, ids, addresses, local keys) is packaged next to the
 // service as ambilight-bulbs.json by scripts/make-ambilight-bulbs.py. Keys never
@@ -14,7 +17,8 @@
 //
 // Routes (served through the EngineFS listener on 2710):
 //   GET /ambilight/bulbs                         configured bulbs, no keys
-//   GET /ambilight/start?assign=id:pos,..&level=N start or update a session
+//   GET /ambilight/start?assign=id:pos:max,..&level=N start or update a session
+//   GET /ambilight/level?value=N                 change the overall brightness live
 //   GET /ambilight/ping                          keep the session alive
 //   GET /ambilight/stop                          stop and restore the bulbs
 //   GET /ambilight/state                         diagnostics
@@ -29,6 +33,10 @@ var CAPTURE_SIZE = [64, 36]; // capture mode 2 returns at least 320x180
 var CAPTURE_WORKERS = 2; // the owner preferred two overlapped captures, no fade
 var WATCHDOG_MS = 10000; // stop when the app stops pinging (player gone, app killed)
 var MAX_FAILED_CAPTURES = 6;
+var TICK_MS = 50; // colour updates per bulb between pictures: 20/s (the PC sync sends up to 30/s)
+var FLIP_BACK_AFTER = 500; // anti-flicker: no straight return to the colour just left within this time
+
+var colourEngine = require("./ambilight-colour.cjs");
 
 function describeError(error) {
   return String(((error && (error.code || error.name)) || "") + " " + ((error && error.message) || error)).slice(0, 200);
@@ -74,19 +82,24 @@ function loadBulbs() {
   return [];
 }
 
-// "id:pos,id:pos" -> { id: pos }
+function normalizeMax(value) {
+  var n = Math.round(Number(value));
+  return isFinite(n) && n >= 1 ? Math.min(100, n) : 100;
+}
+
+// "id:pos:max,id:pos" -> { id: { pos, max } } (max: the bulb's own brightness cap, 1-100, default 100)
 function parseAssignments(text) {
   var out = {};
   String(text || "").split(",").forEach(function (pair) {
-    var at = pair.lastIndexOf(":");
-    if (at <= 0) return;
-    var id = decodeURIComponent(pair.slice(0, at)), pos = normalizePosition(pair.slice(at + 1), "");
-    if (id && pos) out[id] = pos;
+    var parts = pair.split(":");
+    if (parts.length < 2) return;
+    var id = decodeURIComponent(parts[0]), pos = normalizePosition(parts[1], "");
+    if (id && pos) out[id] = { pos: pos, max: normalizeMax(parts[2]) };
   });
   return out;
 }
 
-// ---- colour zones ----------------------------------------------------------------------------------
+// ---- picture decoding ------------------------------------------------------------------------------
 function decodePng(buffer) {
   var zlib = require("zlib");
   if (buffer.length < 33 || buffer.readUInt32BE(0) !== 0x89504e47) throw new Error("not a PNG");
@@ -130,29 +143,11 @@ function decodePng(buffer) {
   return { w: w, h: h, bpp: bpp, data: out };
 }
 
-// Average colour of the left half, the right half and the whole picture.
-function zones(image) {
-  var half = image.w >> 1, l = [0, 0, 0], r = [0, 0, 0], ln = 0, rn = 0, x, y, p, t, grey = image.bpp < 3;
-  for (y = 0; y < image.h; y++) {
-    for (x = 0; x < image.w; x++) {
-      p = (y * image.w + x) * image.bpp;
-      if (x < half) { t = l; ln++; } else { t = r; rn++; }
-      t[0] += image.data[p]; t[1] += image.data[grey ? p : p + 1]; t[2] += image.data[grey ? p : p + 2];
-    }
-  }
-  ln = ln || 1; rn = rn || 1;
-  var L = [Math.round(l[0] / ln), Math.round(l[1] / ln), Math.round(l[2] / ln)];
-  var R = [Math.round(r[0] / rn), Math.round(r[1] / rn), Math.round(r[2] / rn)];
-  return {
-    left: L,
-    right: R,
-    center: [Math.round((L[0] + R[0]) / 2), Math.round((L[1] + R[1]) / 2), Math.round((L[2] + R[2]) / 2)]
-  };
-}
-
-function scale(c, level) {
-  var f = Math.max(0, Math.min(100, level)) / 100;
-  return [Math.round(c[0] * f), Math.round(c[1] * f), Math.round(c[2] * f)];
+function hsvToRgb255(hsv) {
+  var h = (((hsv[0] % 1) + 1) % 1) * 6, s = hsv[1], v = hsv[2], i = Math.floor(h), f = h - i;
+  var p = v * (1 - s), q = v * (1 - s * f), t = v * (1 - s * (1 - f));
+  var rgb = [[v, t, p], [q, v, p], [p, v, t], [p, q, v], [t, p, v], [v, p, q]][i % 6];
+  return [Math.round(rgb[0] * 255), Math.round(rgb[1] * 255), Math.round(rgb[2] * 255)];
 }
 
 // ---- Tuya local protocol 3.3 (AES-128-ECB with the bulb's local key, TCP 6668) ---------------------
@@ -212,9 +207,10 @@ function colourHex(c) {
 
 function Bulb(config) {
   this.id = config.id; this.name = config.name; this.key = config.key; this.ip = config.ip;
-  this.pos = config.pos;
+  this.pos = config.pos; this.max = normalizeMax(config.max);
+  this.mode = ""; this.lastHex = ""; this.prevHex = ""; this.hexTime = 0;
   this.seq = 1; this.socket = null; this.rx = new Buffer(0); this.connected = false;
-  this.dps = null; this.original = null; this.sent = 0; this.errors = []; this.last = null; this.inColour = false;
+  this.dps = null; this.original = null; this.sent = 0; this.errors = []; this.inColour = false;
 }
 
 Bulb.prototype.connect = function (done) {
@@ -299,14 +295,28 @@ Bulb.prototype.set = function (dps) {
   return ok;
 };
 
-Bulb.prototype.colour = function (c) {
-  var last = this.last;
-  if (last && Math.abs(last[0] - c[0]) < 2 && Math.abs(last[1] - c[1]) < 2 && Math.abs(last[2] - c[2]) < 2) return;
-  var value = colourHex(c);
-  // the first update also switches the bulb on and into colour mode; afterwards only the colour is sent
-  if (this.set(this.inColour ? { 5: value } : { 1: true, 2: "colour", 5: value })) {
-    this.inColour = true;
-    this.last = c;
+// state: { mode: "colour", hsv: [h, s, v] 0..1 } or { mode: "white" }; level: overall cap 0..100.
+Bulb.prototype.show = function (state, level) {
+  var f = (Math.max(0, Math.min(100, level)) / 100) * (this.max / 100), now = Date.now(), value;
+  if (state.mode === "white") {
+    // the bulb's own white LEDs look far better than white mixed from colour; warmest, dimmest end
+    value = Math.round(25 + 230 * colourEngine.WHITE_BRIGHTNESS * f);
+    if (this.mode === "white" && this.lastHex === "w" + value) return;
+    if (this.set({ 1: true, 2: "white", 3: Math.max(25, value), 4: 0 })) {
+      this.mode = "white"; this.inColour = true; this.lastHex = "w" + value; this.prevHex = "";
+    }
+    return;
+  }
+  value = colourHex(hsvToRgb255([state.hsv[0], state.hsv[1], state.hsv[2] * f]));
+  if (this.mode === "colour") {
+    if (value === this.lastHex) return; // too small a change for the bulb to show
+    // a near-still scene can hover between two of the bulb's steps: don't flip straight back
+    if (value === this.prevHex && now - this.hexTime < FLIP_BACK_AFTER) return;
+  }
+  // entering colour mode also switches the bulb on; afterwards only the colour is sent
+  if (this.set(this.mode === "colour" ? { 5: value } : { 1: true, 2: "colour", 5: value })) {
+    this.inColour = true; this.mode = "colour";
+    this.prevHex = this.lastHex; this.lastHex = value; this.hexTime = now;
   }
 };
 
@@ -379,7 +389,7 @@ function captureOnce(name, done) {
     function (error) {
       if (error) { done("capture " + describeError(error)); return; }
       try {
-        done(null, zones(decodePng(fs.readFileSync(file))));
+        done(null, decodePng(fs.readFileSync(file)));
       } catch (problem) {
         done("decode " + describeError(problem));
       }
@@ -406,6 +416,11 @@ function Session(bulbs, level) {
   this.errors = [];
   this.startedAt = Date.now();
   this.watchdog = null;
+  this.ticker = null;
+  this.analyser = new colourEngine.Analyser();
+  this.regions = { left: new colourEngine.Region(), center: new colourEngine.Region(), right: new colourEngine.Region() };
+  this.lastPicture = 0;
+  this.lastTick = 0;
 }
 
 Session.prototype.note = function (text) {
@@ -460,6 +475,8 @@ Session.prototype.begin = function () {
         if (self.stopped) return;
         self.bulbs.forEach(function (x) { if (x.dps) x.original = JSON.parse(JSON.stringify(x.dps)); });
         self.running = true;
+        self.lastTick = Date.now();
+        self.ticker = setInterval(function () { self.tick(); }, TICK_MS);
         for (var w = 0; w < CAPTURE_WORKERS; w++) {
           (function (index) { setTimeout(function () { self.loop(index); }, index * 60); })(w);
         }
@@ -474,7 +491,7 @@ Session.prototype.loop = function (worker) {
   var self = this;
   if (this.stopped) return;
   var begun = Date.now();
-  captureOnce(CAPTURE_PREFIX + worker, function (error, z) {
+  captureOnce(CAPTURE_PREFIX + worker, function (error, image) {
     if (self.stopped) return;
     if (error) {
       self.failures++;
@@ -486,25 +503,36 @@ Session.prototype.loop = function (worker) {
     self.captures++;
     if (begun >= self.shownBegun) {
       self.shownBegun = begun;
-      self.apply(z);
+      self.analyse(image);
     }
     self.loop(worker);
   });
 };
 
-Session.prototype.apply = function (z) {
-  var level = this.level;
+// A new picture only moves the goal; tick() glides the bulbs towards it.
+Session.prototype.analyse = function (image) {
+  var now = Date.now(), dt = this.lastPicture ? Math.min(1, (now - this.lastPicture) / 1000) : 0.1;
+  this.lastPicture = now;
+  var summary = this.analyser.analyse(image, dt), regions = this.regions;
+  POSITIONS.forEach(function (pos) { regions[pos].setGoal(summary[pos]); });
+};
+
+// Runs between pictures too, so every bulb fades through intermediate colours instead of stepping.
+Session.prototype.tick = function () {
+  var now = Date.now(), dt = Math.max(0.001, Math.min(0.25, (now - this.lastTick) / 1000)), states = {}, level = this.level;
+  this.lastTick = now;
+  var regions = this.regions;
+  POSITIONS.forEach(function (pos) { states[pos] = regions[pos].step(dt); });
   this.bulbs.forEach(function (b) {
-    if (b.pos === "off" || !z[b.pos]) return;
-    b.colour(scale(z[b.pos], level));
+    if (b.pos !== "off" && states[b.pos]) b.show(states[b.pos], level);
   });
 };
 
 Session.prototype.update = function (assignments, level) {
-  this.level = level;
+  if (isFinite(level)) this.level = level;
   this.bulbs.forEach(function (b) {
-    var pos = assignments[b.id];
-    if (pos) b.pos = pos;
+    var a = assignments[b.id];
+    if (a) { b.pos = a.pos; b.max = a.max; b.lastHex = ""; }
   });
 };
 
@@ -514,6 +542,7 @@ Session.prototype.stop = function (reason) {
   this.running = false;
   this.endReason = reason;
   clearInterval(this.watchdog);
+  clearInterval(this.ticker);
   var fs = require("fs"), bulbs = this.bulbs;
   for (var w = 0; w < CAPTURE_WORKERS; w++) {
     try { fs.unlinkSync(CAPTURE_DIR + "/" + CAPTURE_PREFIX + w + ".png"); } catch (_) {}
@@ -531,7 +560,7 @@ Session.prototype.describe = function () {
     perSecond: this.captures ? Math.round((this.captures * 10000) / (Date.now() - this.startedAt)) / 10 : 0,
     errors: this.errors,
     bulbs: this.bulbs.map(function (b) {
-      return { id: b.id, name: b.name, pos: b.pos, connected: b.connected, sent: b.sent, errors: b.errors };
+      return { id: b.id, name: b.name, pos: b.pos, max: b.max, connected: b.connected, sent: b.sent, errors: b.errors };
     })
   };
 };
@@ -545,7 +574,8 @@ function start(assignments, level) {
   // Only bulbs that follow a part of the screen are opened: an "off" bulb stays free for other apps.
   var bulbs = loadBulbs()
     .map(function (config) {
-      return new Bulb({ id: config.id, name: config.name, key: config.key, ip: config.ip, pos: assignments[config.id] || config.pos });
+      var a = assignments[config.id] || { pos: config.pos, max: 100 };
+      return new Bulb({ id: config.id, name: config.name, key: config.key, ip: config.ip, pos: a.pos, max: a.max });
     })
     .filter(function (b) { return b.pos !== "off"; });
   session = new Session(bulbs, level);
@@ -586,6 +616,15 @@ function handleRequest(request, response) {
         sendJson(response, 200, { ok: true, state: s.describe() });
         return;
       }
+      case "/ambilight/level": {
+        var value = Number(query.value);
+        if (session && isFinite(value)) {
+          session.level = Math.max(1, Math.min(100, value));
+          session.bulbs.forEach(function (b) { b.lastHex = ""; });
+        }
+        sendJson(response, 200, { ok: true, active: !!session, level: session ? session.level : null });
+        return;
+      }
       case "/ambilight/ping":
         if (session) session.lastPing = Date.now();
         sendJson(response, 200, { ok: true, active: !!session });
@@ -614,8 +653,7 @@ module.exports = {
     normalizeBulbList: normalizeBulbList,
     parseAssignments: parseAssignments,
     decodePng: decodePng,
-    zones: zones,
-    scale: scale,
+    hsvToRgb255: hsvToRgb255,
     colourHex: colourHex,
     crc32: crc32,
     tuyaFrame: tuyaFrame,

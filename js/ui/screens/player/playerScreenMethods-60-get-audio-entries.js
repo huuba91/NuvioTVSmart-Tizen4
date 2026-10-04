@@ -242,6 +242,7 @@ export function createPlayerScreenMethods60() {
       this.audioDialogVisible = true;
       this.subtitleDialogVisible = false;
       this.speedDialogVisible = false;
+      this.lightsDialogVisible = false;
       this.sourcesPanelVisible = false;
       let entries = this.getAudioEntries();
       if (!entries.length) {
@@ -254,6 +255,7 @@ export function createPlayerScreenMethods60() {
       this.renderSubtitleDialog();
       this.renderAudioDialog();
       this.renderSpeedDialog();
+      this.renderLightsDialog();
       this.renderSourcesPanel();
       this.updateModalBackdrop();
     },

@@ -3,6 +3,7 @@ import {
   AMBILIGHT_LEVEL_OPTIONS,
   AMBILIGHT_POSITIONS,
   AmbilightSettingsStore,
+  getBulbMaxBrightness,
   getBulbPosition
 } from "../../../data/local/ambilightSettingsStore.js";
 import { AmbilightController } from "../../../core/ambilight/ambilightController.js";
@@ -38,12 +39,12 @@ export function registerPlaybackAmbilightActions() {
   });
   this.actionMap.set("playback:ambilightLevel", () => {
     this.openOptionDialog({
-      title: t("settings.playback.ambilight.level.title", {}, "Brightness"),
+      title: t("settings.playback.ambilight.level.title", {}, "Overall max brightness"),
       options: AMBILIGHT_LEVEL_OPTIONS.map((level) => ({ id: level, label: `${level}%` })),
       selectedId: AmbilightSettingsStore.get().level,
       returnFocusKey: "playback:ambilightLevel",
       onSelect: (option) => {
-        AmbilightSettingsStore.setLevel(Number(option.id));
+        AmbilightController.setLevel(Number(option.id));
       }
     });
   });
@@ -59,6 +60,20 @@ export function registerPlaybackAmbilightActions() {
         returnFocusKey: focusKey,
         onSelect: (option) => {
           AmbilightSettingsStore.setBulbPosition(bulb.id, String(option.id));
+          AmbilightController.applySettings();
+        }
+      });
+    });
+    const maxKey = `playback:ambilightBulbMax:${bulb.id}`;
+    this.actionMap.set(maxKey, () => {
+      this.openOptionDialog({
+        title: t("settings.playback.ambilight.bulbMax.title", { name: bulb.name }, `${bulb.name} max brightness`),
+        options: AMBILIGHT_LEVEL_OPTIONS.map((level) => ({ id: level, label: `${level}%` })),
+        selectedId: getBulbMaxBrightness(AmbilightSettingsStore.get(), bulb),
+        returnFocusKey: maxKey,
+        onSelect: (option) => {
+          AmbilightSettingsStore.setBulbMaxBrightness(bulb.id, Number(option.id));
+          AmbilightController.applySettings();
         }
       });
     });

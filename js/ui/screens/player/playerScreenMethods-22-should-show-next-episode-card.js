@@ -238,6 +238,7 @@ export function createPlayerScreenMethods22() {
         !this.subtitleDialogVisible &&
         !this.audioDialogVisible &&
         !this.speedDialogVisible &&
+        !this.lightsDialogVisible &&
         !this.sourcesPanelVisible &&
         !this.episodePanelVisible &&
         !this.moreActionsVisible &&

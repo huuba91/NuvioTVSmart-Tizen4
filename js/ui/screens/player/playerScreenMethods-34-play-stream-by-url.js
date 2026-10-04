@@ -173,6 +173,7 @@ export function createPlayerScreenMethods34() {
       this.resetSubtitleAutoSyncState();
       this.audioDialogVisible = false;
       this.speedDialogVisible = false;
+      this.lightsDialogVisible = false;
       if (!preserveWebOsTrackSelections) {
         this.selectedAddonSubtitleId = null;
         this.selectedSubtitleTrackIndex = -1;
@@ -261,6 +262,7 @@ export function createPlayerScreenMethods34() {
       this.renderSubtitleDialog();
       this.renderAudioDialog();
       this.renderSpeedDialog();
+      this.renderLightsDialog();
       if (!prioritizeWebOsRemoteMkvPlayback) {
         this.startPlayerControllerPlayback(this.activePlaybackUrl, playbackContext, {
           mountToken,

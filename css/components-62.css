@@ -1,0 +1,56 @@
+/* Player "Lights" dialog: vertical slider for the ambilight's overall brightness. */
+.player-lights-modal {
+  left: 44px;
+  bottom: 64px;
+  width: 240px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: var(--player-background-elevated);
+}
+
+.player-lights-value {
+  font-size: 34px;
+  font-weight: 700;
+  color: #ffffff;
+  margin: 4px 0 16px;
+}
+
+.player-lights-slider {
+  position: relative;
+  width: 28px;
+  height: 320px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.18);
+  overflow: visible;
+}
+
+.player-lights-slider.focused {
+  box-shadow: 0 0 0 3px var(--focus-color, #ffffff);
+}
+
+.player-lights-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.player-lights-knob {
+  position: absolute;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  margin: 0 0 -22px -22px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+}
+
+.player-lights-hint {
+  margin-top: 22px;
+  text-align: center;
+}

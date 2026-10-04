@@ -1,5 +1,5 @@
 import * as internals from "./settingsScreenContext.js";
-import { AmbilightSettingsStore, getBulbPosition } from "../../../data/local/ambilightSettingsStore.js";
+import { AmbilightSettingsStore, getBulbMaxBrightness, getBulbPosition } from "../../../data/local/ambilightSettingsStore.js";
 
 export function ambilightPositionLabel(position) {
   const { t } = internals;
@@ -13,13 +13,24 @@ export function renderPlaybackAmbilightBody() {
   const { t } = internals;
   const settings = AmbilightSettingsStore.get();
   const bulbRows = settings.bulbs
-    .map((bulb) =>
-      this.renderActionRow({
-        focusKey: `playback:ambilightBulb:${bulb.id}`,
-        title: bulb.name,
-        subtitle: t("settings.playback.ambilight.bulb.subtitle", {}, "Which part of the picture this bulb follows."),
-        value: ambilightPositionLabel(getBulbPosition(settings, bulb))
-      })
+    .map(
+      (bulb) =>
+        this.renderActionRow({
+          focusKey: `playback:ambilightBulb:${bulb.id}`,
+          title: bulb.name,
+          subtitle: t("settings.playback.ambilight.bulb.subtitle", {}, "Which part of the picture this bulb follows."),
+          value: ambilightPositionLabel(getBulbPosition(settings, bulb))
+        }) +
+        this.renderActionRow({
+          focusKey: `playback:ambilightBulbMax:${bulb.id}`,
+          title: t("settings.playback.ambilight.bulbMax.title", { name: bulb.name }, `${bulb.name} max brightness`),
+          subtitle: t(
+            "settings.playback.ambilight.bulbMax.subtitle",
+            {},
+            "Cap for this bulb on its own, on top of the overall brightness."
+          ),
+          value: `${getBulbMaxBrightness(settings, bulb)}%`
+        })
     )
     .join("");
   const findSubtitle =
@@ -37,8 +48,12 @@ export function renderPlaybackAmbilightBody() {
             })}
             ${this.renderActionRow({
               focusKey: "playback:ambilightLevel",
-              title: t("settings.playback.ambilight.level.title", {}, "Brightness"),
-              subtitle: t("settings.playback.ambilight.level.subtitle", {}, "How bright the bulbs follow the picture."),
+              title: t("settings.playback.ambilight.level.title", {}, "Overall max brightness"),
+              subtitle: t(
+                "settings.playback.ambilight.level.subtitle",
+                {},
+                "Caps every bulb. Also on the Lights slider in the player menu."
+              ),
               value: `${settings.level}%`
             })}
             ${bulbRows}

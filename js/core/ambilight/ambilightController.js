@@ -2,6 +2,7 @@ import { Platform } from "../../platform/index.js";
 import { TizenEngineFsService } from "../../platform/tizen/tizenEngineFsService.js";
 import {
   AmbilightSettingsStore,
+  getBulbMaxBrightness,
   getBulbPosition
 } from "../../data/local/ambilightSettingsStore.js";
 
@@ -47,7 +48,10 @@ async function ensureService() {
 
 export function buildAssignQuery(settings) {
   return settings.bulbs
-    .map((bulb) => `${encodeURIComponent(bulb.id)}:${getBulbPosition(settings, bulb)}`)
+    .map(
+      (bulb) =>
+        `${encodeURIComponent(bulb.id)}:${getBulbPosition(settings, bulb)}:${getBulbMaxBrightness(settings, bulb)}`
+    )
     .join(",");
 }
 
@@ -105,6 +109,30 @@ export const AmbilightController = {
       console.warn("Ambilight could not start", error?.message || error);
     } finally {
       starting = false;
+    }
+  },
+
+  isActive() {
+    return Boolean(activeBaseUrl);
+  },
+
+  // Saves the overall brightness cap and applies it to the running lights at once.
+  setLevel(level) {
+    const settings = AmbilightSettingsStore.setLevel(level);
+    if (activeBaseUrl) {
+      request(activeBaseUrl, `/ambilight/level?value=${settings.level}`).catch(() => {});
+    }
+    return settings.level;
+  },
+
+  // Re-sends positions and per-bulb caps to a running session (settings changed mid-playback).
+  applySettings() {
+    const settings = AmbilightSettingsStore.get();
+    if (activeBaseUrl && settings.enabled) {
+      request(
+        activeBaseUrl,
+        `/ambilight/start?level=${settings.level}&assign=${encodeURIComponent(buildAssignQuery(settings))}`
+      ).catch(() => {});
     }
   },
 

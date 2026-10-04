@@ -4,13 +4,17 @@ import { LocalStore } from "../../core/storage/localStore.js";
 const KEY = "ambilightSettings";
 
 export const AMBILIGHT_POSITIONS = ["left", "center", "right", "off"];
-export const AMBILIGHT_LEVEL_OPTIONS = [25, 50, 75, 100];
+// Brightness caps in percent: the overall one (player slider and settings) and one per bulb.
+export const AMBILIGHT_LEVEL_OPTIONS = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+export const AMBILIGHT_LEVEL_STEP = 10;
 
 export const AMBILIGHT_SETTINGS_DEFAULTS = {
   enabled: false,
   level: 100,
   // bulb id -> left | center | right | off; missing ids use the bulb's packaged default
   positions: {},
+  // bulb id -> its own brightness cap; missing ids use 100
+  maxBrightness: {},
   // last bulb list reported by the TV service: [{ id, name, pos }] (never keys)
   bulbs: []
 };
@@ -18,6 +22,11 @@ export const AMBILIGHT_SETTINGS_DEFAULTS = {
 function normalizePosition(value) {
   const text = String(value || "").toLowerCase();
   return AMBILIGHT_POSITIONS.includes(text) ? text : "";
+}
+
+function normalizeLevel(value) {
+  const level = Math.round(Number(value) / AMBILIGHT_LEVEL_STEP) * AMBILIGHT_LEVEL_STEP;
+  return AMBILIGHT_LEVEL_OPTIONS.includes(level) ? level : 0;
 }
 
 function normalizeBulbs(value) {
@@ -36,8 +45,8 @@ function normalizeBulbs(value) {
 
 export function normalizeAmbilightSettings(value = {}) {
   const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
-  const level = Number(source.level);
   const positions = {};
+  const maxBrightness = {};
   Object.entries(
     source.positions && typeof source.positions === "object" ? source.positions : {}
   ).forEach(([id, pos]) => {
@@ -46,16 +55,29 @@ export function normalizeAmbilightSettings(value = {}) {
       positions[id] = normalized;
     }
   });
+  Object.entries(
+    source.maxBrightness && typeof source.maxBrightness === "object" ? source.maxBrightness : {}
+  ).forEach(([id, max]) => {
+    const normalized = normalizeLevel(max);
+    if (id && normalized && normalized < 100) {
+      maxBrightness[id] = normalized;
+    }
+  });
   return {
     enabled: Boolean(source.enabled),
-    level: AMBILIGHT_LEVEL_OPTIONS.includes(level) ? level : AMBILIGHT_SETTINGS_DEFAULTS.level,
+    level: normalizeLevel(source.level) || AMBILIGHT_SETTINGS_DEFAULTS.level,
     positions,
+    maxBrightness,
     bulbs: normalizeBulbs(source.bulbs)
   };
 }
 
 export function getBulbPosition(settings, bulb) {
   return settings.positions[bulb.id] || bulb.pos || "center";
+}
+
+export function getBulbMaxBrightness(settings, bulb) {
+  return settings.maxBrightness[bulb.id] || 100;
 }
 
 export const AmbilightSettingsStore = {
@@ -80,6 +102,11 @@ export const AmbilightSettingsStore = {
   setBulbPosition(bulbId, position) {
     const current = this.get();
     return this.set({ positions: { ...current.positions, [String(bulbId)]: position } });
+  },
+
+  setBulbMaxBrightness(bulbId, max) {
+    const current = this.get();
+    return this.set({ maxBrightness: { ...current.maxBrightness, [String(bulbId)]: max } });
   },
 
   setBulbs(bulbs) {

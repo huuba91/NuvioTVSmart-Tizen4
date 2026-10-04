@@ -224,7 +224,8 @@ export function createPlayerScreenMethods26() {
         this.audioDialogVisible ||
         this.sourcesPanelVisible ||
         this.episodePanelVisible ||
-        this.speedDialogVisible;
+        this.speedDialogVisible ||
+        this.lightsDialogVisible;
       modalBackdrop.classList.toggle("hidden", !hasModal);
       modalBackdrop.classList.toggle("episodes-open", Boolean(this.episodePanelVisible));
       controlsOverlay?.classList.toggle("modal-blocked", hasModal);

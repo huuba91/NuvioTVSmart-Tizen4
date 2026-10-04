@@ -56,20 +56,22 @@ function call(url) {
   });
 }
 
-test("left, right and center averages come from a decoded capture", function () {
+test("captures decode to raw pixels", function () {
   var image = internals.decodePng(png(8, 4, function (x) { return x < 4 ? [200, 0, 0] : [0, 0, 100]; }));
   assert.equal(image.w, 8);
-  var z = internals.zones(image);
-  assert.deepEqual(z.left, [200, 0, 0]);
-  assert.deepEqual(z.right, [0, 0, 100]);
-  assert.deepEqual(z.center, [100, 0, 50]);
+  assert.equal(image.h, 4);
+  assert.deepEqual(Array.from(image.data.slice(0, 3)), [200, 0, 0]);
+  assert.deepEqual(Array.from(image.data.slice(7 * 3, 8 * 3)), [0, 0, 100]);
+  assert.deepEqual(Array.from(image.data.slice(3 * 8 * 3 + 21, 3 * 8 * 3 + 24)), [0, 0, 100]);
 });
 
 test("colour data point carries rgb, hue, saturation and value and never goes fully dark", function () {
   assert.equal(internals.colourHex([255, 0, 0]), "ff0000" + "0000" + "ff" + "ff");
   assert.equal(internals.colourHex([0, 0, 255]), "0000ff" + "00f0" + "ff" + "ff");
   assert.equal(internals.colourHex([0, 0, 0]), "0a0a0a" + "0000" + "00" + "0a");
-  assert.deepEqual(internals.scale([200, 100, 50], 50), [100, 50, 25]);
+  assert.deepEqual(internals.hsvToRgb255([0, 1, 0.5]), [128, 0, 0]);
+  assert.deepEqual(internals.hsvToRgb255([2 / 3, 1, 1]), [0, 0, 255]);
+  assert.deepEqual(internals.hsvToRgb255([0.5, 0, 1]), [255, 255, 255]);
 });
 
 test("Tuya frames use the standard CRC-32 and AES round-trips with the local key", function () {
@@ -99,7 +101,11 @@ test("the bulb list drops excluded devices and incomplete entries", function () 
     { id: "c", name: "Odd position", key: KEY, ip: "10.0.0.6", pos: "top" }
   ]);
   assert.deepEqual(list.map(function (b) { return b.id + ":" + b.pos; }), ["a:center", "c:center"]);
-  assert.deepEqual(internals.parseAssignments("a:left,c%3A1:off,d:up,e"), { a: "left", "c:1": "off" });
+  assert.deepEqual(internals.parseAssignments("a:left,c%3A1:off:40,d:up,e,f:right:0"), {
+    a: { pos: "left", max: 100 },
+    "c:1": { pos: "off", max: 40 },
+    f: { pos: "right", max: 100 }
+  });
 });
 
 test("routes list bulbs without their keys and answer pings without a session", async function () {
@@ -123,7 +129,7 @@ test("routes list bulbs without their keys and answer pings without a session", 
 
 // End to end on Linux: a stand-in for Samsung's capture service (a fake `gdbus` on PATH that
 // writes a half red, half blue PNG) and a fake Tuya bulb on 127.0.0.1:6668.
-test("a session colours the bulb from its zone and restores it on stop", { skip: process.platform !== "linux" || !fs.existsSync("/dev/shm") }, async function () {
+test("a session colours the bulb from its zone, follows live brightness and restores it on stop", { skip: process.platform !== "linux" || !fs.existsSync("/dev/shm") }, async function () {
   var os = require("node:os");
   var net = require("node:net");
   var dir = fs.mkdtempSync(path.join(os.tmpdir(), "ambilight-"));
@@ -156,14 +162,19 @@ test("a session colours the bulb from its zone and restores it on stop", { skip:
   await new Promise(function (resolve) { server.listen(6668, "127.0.0.1", resolve); });
   fs.writeFileSync(BULBS_FILE, JSON.stringify([{ id: "a", name: "Desk left", key: KEY, ip: "127.0.0.1", pos: "center" }]));
   try {
-    var started = await call("/ambilight/start?level=50&assign=a:left");
+    var started = await call("/ambilight/start?level=100&assign=a:left:50");
     assert.equal(started.body.ok, true);
     await new Promise(function (resolve) { setTimeout(resolve, 2600); });
     var colour = received.filter(function (m) { return m.command === 7 && m.dps["5"]; })[0];
     assert.ok(colour, "the bulb received a colour");
     assert.equal(colour.dps["1"], true);
     assert.equal(colour.dps["2"], "colour");
-    assert.equal(colour.dps["5"].slice(0, 6), "640000"); // left half (200,0,0) at 50%
+    assert.equal(colour.dps["5"].slice(0, 6), "640000"); // left edge (200,0,0) at 50%
+    var level = await call("/ambilight/level?value=50");
+    assert.equal(level.body.level, 50);
+    await new Promise(function (resolve) { setTimeout(resolve, 200); });
+    var colours = received.filter(function (m) { return m.command === 7 && m.dps["5"]; });
+    assert.deepEqual(colours[colours.length - 1].dps, { 5: "3200000000ff32" }); // bulb cap 50% x overall 50%, colour only
     var state1 = (await call("/ambilight/state")).body.state;
     assert.equal(state1.running, true);
     assert.ok(state1.captures > 0);

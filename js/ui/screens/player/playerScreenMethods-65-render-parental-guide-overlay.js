@@ -233,6 +233,7 @@ export function createPlayerScreenMethods65() {
       this.subtitleDialogVisible = false;
       this.audioDialogVisible = false;
       this.speedDialogVisible = false;
+      this.lightsDialogVisible = false;
       this.sourcesPanelVisible = false;
       this.syncEpisodePanelSeasonToIndex();
       this.episodePanelFocusZone = "episodes";
@@ -241,6 +242,7 @@ export function createPlayerScreenMethods65() {
       this.renderSubtitleDialog();
       this.renderAudioDialog();
       this.renderSpeedDialog();
+      this.renderLightsDialog();
       this.renderSourcesPanel();
       this.renderEpisodePanel();
     },
