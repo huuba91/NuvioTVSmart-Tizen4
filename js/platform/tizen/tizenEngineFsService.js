@@ -7,7 +7,7 @@ const START_TIMEOUT_MS = 12000;
 const PROBE_TIMEOUT_MS = 2500;
 const SERVICE_START_CALL_TIMEOUT_MS = 4000;
 const TIZEN_DEFAULT_OPERATION = "http://tizen.org/appcontrol/operation/default";
-const PURPOSES_ALLOWING_LEGACY_SERVICE = new Set(["p2p", "p2p-probe", "playback-proxy"]);
+const PURPOSES_ALLOWING_LEGACY_SERVICE = new Set(["p2p", "p2p-probe", "playback-proxy", "ambilight"]);
 
 let startPromise = null;
 

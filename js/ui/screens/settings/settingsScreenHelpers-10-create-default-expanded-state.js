@@ -155,7 +155,8 @@ export function createDefaultExpandedState(sectionId) {
       audio: false,
       audioCompatibility: false,
       subtitles: false,
-      p2p: false
+      p2p: false,
+      ambilight: false
     };
   }
 

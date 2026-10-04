@@ -5,6 +5,7 @@ import { renderPlaybackAudioBody } from "./settingsScreenPlaybackMarkup-02-audio
 import { renderPlaybackAudioCompatibilityBody } from "./settingsScreenPlaybackMarkup-03-audio-compatibility.js";
 import { renderPlaybackSubtitleBody } from "./settingsScreenPlaybackMarkup-04-subtitles.js";
 import { renderPlaybackP2pBody } from "./settingsScreenPlaybackMarkup-05-p2p.js";
+import { renderPlaybackAmbilightBody } from "./settingsScreenPlaybackMarkup-07-ambilight.js";
 
 export function renderPlaybackSectionMarkup(model) {
   const { TorrentSettingsStore, Platform, TizenCapabilities, SECTION_META, t } = internals;
@@ -70,6 +71,21 @@ export function renderPlaybackSectionMarkup(model) {
                 expanded: Boolean(expanded.p2p),
                 bodyHtml: p2pBody
               })}
+              ${
+                Platform.isTizen()
+                  ? this.renderCollapsibleRow({
+                      focusKey: "playback:toggle:ambilight",
+                      title: t("settings.playback.groups.ambilight.title", {}, "Ambilight"),
+                      subtitle: t(
+                        "settings.playback.groups.ambilight.subtitle",
+                        {},
+                        "Smart bulbs follow the left, center or right of the picture."
+                      ),
+                      expanded: Boolean(expanded.ambilight),
+                      bodyHtml: expanded.ambilight ? renderPlaybackAmbilightBody.call(this, model) : ""
+                    })
+                  : ""
+              }
             </div>
           </div>
         `;

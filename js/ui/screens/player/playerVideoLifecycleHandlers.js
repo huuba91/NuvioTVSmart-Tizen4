@@ -1,5 +1,6 @@
 /* eslint-disable no-unused-vars */
 import * as internals from "./playerScreenContext.js";
+import { AmbilightController } from "../../../core/ambilight/ambilightController.js";
 
 export function createPlayerVideoLifecycleHandlers(video, isTizenAvPlayPlayback) {
   const { PlayerController, PlayerSettingsStore, Environment, TrackingScrobbleService } = internals;
@@ -74,6 +75,8 @@ export function createPlayerVideoLifecycleHandlers(video, isTizenAvPlayPlayback)
     this.startupSourceFallbackAttempts = 0;
     this.startupSourceRefreshAttempts = 0;
     this.beginPlaybackEngineValidation();
+    // Lights follow the screen once real playback runs; a no-op when disabled or already on.
+    AmbilightController.start();
     this.bufferingActive = false;
     this.clearBufferingSpinnerTimer();
     if (this.seekLoading) {

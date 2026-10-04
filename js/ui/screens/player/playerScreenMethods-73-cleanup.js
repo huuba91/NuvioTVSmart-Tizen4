@@ -1,5 +1,6 @@
 /* eslint-disable no-unused-vars */
 import * as internals from "./playerScreenContext.js";
+import { AmbilightController } from "../../../core/ambilight/ambilightController.js";
 
 export function createPlayerScreenMethods73() {
   const { PlayerController, streamRepository, TrackingScrobbleService, ENGINEFS_NAVIGATION_CLEANUP_GRACE_MS } = internals;
@@ -50,6 +51,7 @@ export function createPlayerScreenMethods73() {
           this.endedHandler = null;
         }
         TrackingScrobbleService.cancel();
+        AmbilightController.stop();
         this.unbindPlayerExitCleanup();
         this.releaseCurrentEngineFsStreamBestEffort("player-cleanup", {
           removeTorrent: true,
