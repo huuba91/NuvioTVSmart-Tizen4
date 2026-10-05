@@ -113,8 +113,12 @@ Analyser.prototype.detectBars = function (r, g, b, cols, rows) {
   return this.bars;
 };
 
+// The eight zones of a strip run round the back of the TV, named by where they sit on the picture.
+var STRIP_ZONES = ["tl", "t", "tr", "r", "br", "b", "bl", "l"];
+
 // image: { w, h, bpp, data } (decoded PNG). dt: seconds since the previous picture.
-Analyser.prototype.analyse = function (image, dt) {
+// withZones: also return the eight edge zones (STRIP_ZONES) for a surround strip.
+Analyser.prototype.analyse = function (image, dt, withZones) {
   var step = Math.max(1, Math.ceil(image.w / MAX_COLUMNS));
   var cols = Math.floor((image.w - 1) / step) + 1, rows = Math.floor((image.h - 1) / step) + 1;
   var count = cols * rows, grey = image.bpp < 3, x, y, i, p, k;
@@ -188,11 +192,12 @@ Analyser.prototype.analyse = function (image, dt) {
 
   var self = this;
   if (!this.peaks) this.peaks = {};
-  function region(name, from, to) {
+  function region(name, from, to, top, bottom) {
+    var y0 = top === undefined ? 0 : top, y1 = bottom === undefined ? rows : bottom;
     // pass 1: hue histogram of the vivid pixels -> dominant hue
     var hist = [], cos = [], sin = [], bin, j, xx, yy;
     for (j = 0; j < HUE_BINS; j++) { hist.push(0); cos.push(0); sin.push(0); }
-    for (yy = 0; yy < rows; yy++) {
+    for (yy = y0; yy < y1; yy++) {
       for (xx = from; xx < to; xx++) {
         j = yy * cols + xx;
         if (weight[j] <= 0) continue;
@@ -219,7 +224,7 @@ Analyser.prototype.analyse = function (image, dt) {
 
     // pass 2: totals, with pixels far from the dominant hue fading out of the colour
     var t = emptySums(), sum = 0;
-    for (yy = 0; yy < rows; yy++) {
+    for (yy = y0; yy < y1; yy++) {
       for (xx = from; xx < to; xx++) {
         j = yy * cols + xx;
         var m = mask[j], w = weight[j], near = 1;
@@ -238,7 +243,25 @@ Analyser.prototype.analyse = function (image, dt) {
     t.all = sum; // colourfulness describes the whole region, not just the winning hue family
     return summarise(t);
   }
-  return { left: region("left", x0, x0 + e), right: region("right", x1 - e, x1), center: region("center", 0, cols) };
+  var out = { left: region("left", x0, x0 + e), right: region("right", x1 - e, x1), center: region("center", 0, cols) };
+  if (withZones) {
+    // Picture rectangle without black bars; each zone is the edge band next to its part of the strip.
+    var ya = Math.min(bars.top, rows - 1), yb = Math.max(ya + 1, rows - bars.bottom);
+    var w = x1 - x0, h = yb - ya, ex = Math.max(1, Math.round(w * EDGE)), ey = Math.max(1, Math.round(h * EDGE));
+    var xs = [x0, x0 + Math.round(w / 3), x0 + Math.round((2 * w) / 3), x1];
+    var ys = [ya, ya + Math.round(h / 3), ya + Math.round((2 * h) / 3), yb];
+    out.zones = {
+      tl: region("tl", xs[0], Math.max(xs[0] + 1, xs[1]), ya, ya + ey),
+      t: region("t", xs[1], Math.max(xs[1] + 1, xs[2]), ya, ya + ey),
+      tr: region("tr", xs[2], Math.max(xs[2] + 1, xs[3]), ya, ya + ey),
+      r: region("r", x1 - ex, x1, ys[1], Math.max(ys[1] + 1, ys[2])),
+      br: region("br", xs[2], Math.max(xs[2] + 1, xs[3]), yb - ey, yb),
+      b: region("b", xs[1], Math.max(xs[1] + 1, xs[2]), yb - ey, yb),
+      bl: region("bl", xs[0], Math.max(xs[0] + 1, xs[1]), yb - ey, yb),
+      l: region("l", x0, x0 + ex, ys[1], Math.max(ys[1] + 1, ys[2]))
+    };
+  }
+  return out;
 };
 
 // ---- Oklab ------------------------------------------------------------------------------------------
@@ -355,6 +378,7 @@ Region.prototype.step = function (dt) {
 };
 
 module.exports = {
+  STRIP_ZONES: STRIP_ZONES,
   Analyser: Analyser,
   Region: Region,
   WHITE_BRIGHTNESS: WHITE_BRIGHTNESS,

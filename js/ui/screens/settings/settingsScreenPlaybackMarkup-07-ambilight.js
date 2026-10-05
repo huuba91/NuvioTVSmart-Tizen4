@@ -9,6 +9,21 @@ export function ambilightPositionLabel(position) {
   return t("settings.playback.ambilight.position.center", {}, "Center");
 }
 
+export function ambilightStripStartLabel(start) {
+  const { t } = internals;
+  const labels = {
+    tl: t("settings.playback.ambilight.strip.start.tl", {}, "Top left"),
+    t: t("settings.playback.ambilight.strip.start.t", {}, "Top"),
+    tr: t("settings.playback.ambilight.strip.start.tr", {}, "Top right"),
+    r: t("settings.playback.ambilight.strip.start.r", {}, "Right"),
+    br: t("settings.playback.ambilight.strip.start.br", {}, "Bottom right"),
+    b: t("settings.playback.ambilight.strip.start.b", {}, "Bottom"),
+    bl: t("settings.playback.ambilight.strip.start.bl", {}, "Bottom left"),
+    l: t("settings.playback.ambilight.strip.start.l", {}, "Left")
+  };
+  return labels[start] || labels.bl;
+}
+
 export function renderPlaybackAmbilightBody() {
   const { t } = internals;
   const settings = AmbilightSettingsStore.get();
@@ -55,6 +70,40 @@ export function renderPlaybackAmbilightBody() {
                 "Caps every bulb. Also on the Lights slider in the player menu."
               ),
               value: `${settings.level}%`
+            })}
+            ${this.renderToggleRow({
+              focusKey: "playback:ambilightStripEnabled",
+              title: t("settings.playback.ambilight.strip.enabled.title", {}, "Surround strip"),
+              subtitle: t(
+                "settings.playback.ambilight.strip.enabled.subtitle",
+                {},
+                "The 8-segment LED strip round the back of the TV follows the edges of the picture."
+              ),
+              checked: settings.strip.enabled
+            })}
+            ${this.renderActionRow({
+              focusKey: "playback:ambilightStripStart",
+              title: t("settings.playback.ambilight.strip.start.title", {}, "Strip controller end"),
+              subtitle: t(
+                "settings.playback.ambilight.strip.start.subtitle",
+                {},
+                "Where the first segment sits, seen from the front of the TV."
+              ),
+              value: ambilightStripStartLabel(settings.strip.start)
+            })}
+            ${this.renderActionRow({
+              focusKey: "playback:ambilightStripDirection",
+              title: t("settings.playback.ambilight.strip.direction.title", {}, "Strip direction"),
+              subtitle: t("settings.playback.ambilight.strip.direction.subtitle", {}, "Which way the strip runs from the controller end."),
+              value: settings.strip.clockwise
+                ? t("settings.playback.ambilight.strip.direction.cw", {}, "Clockwise")
+                : t("settings.playback.ambilight.strip.direction.ccw", {}, "Counter-clockwise")
+            })}
+            ${this.renderActionRow({
+              focusKey: "playback:ambilightStripLevel",
+              title: t("settings.playback.ambilight.strip.level.title", {}, "Strip max brightness"),
+              subtitle: t("settings.playback.ambilight.strip.level.subtitle", {}, "Cap for the strip, on top of the overall brightness."),
+              value: `${settings.strip.level}%`
             })}
             ${bulbRows}
             ${this.renderActionRow({

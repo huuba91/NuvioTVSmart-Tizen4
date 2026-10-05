@@ -3,7 +3,8 @@ import { TizenEngineFsService } from "../../platform/tizen/tizenEngineFsService.
 import {
   AmbilightSettingsStore,
   getBulbMaxBrightness,
-  getBulbPosition
+  getBulbPosition,
+  AMBILIGHT_STRIP_STARTS
 } from "../../data/local/ambilightSettingsStore.js";
 
 // Drives the ambilight that lives in the Tizen EngineFS service
@@ -55,6 +56,20 @@ export function buildAssignQuery(settings) {
     .join(",");
 }
 
+// Extra start parameters when the surround strip is on ("" otherwise).
+export function buildStripQuery(settings) {
+  const strip = settings.strip;
+  if (!strip?.enabled) {
+    return "";
+  }
+  const start = Math.max(0, AMBILIGHT_STRIP_STARTS.indexOf(strip.start));
+  return `&strip=on&stripStart=${start}&stripDir=${strip.clockwise ? "cw" : "ccw"}&stripBright=${strip.level}`;
+}
+
+function startUrl(settings) {
+  return `/ambilight/start?level=${settings.level}&assign=${encodeURIComponent(buildAssignQuery(settings))}${buildStripQuery(settings)}`;
+}
+
 function clearPing() {
   if (pingTimer) {
     clearInterval(pingTimer);
@@ -92,10 +107,7 @@ export const AmbilightController = {
       if (token !== sessionToken || !current.enabled) {
         return;
       }
-      await request(
-        baseUrl,
-        `/ambilight/start?level=${current.level}&assign=${encodeURIComponent(buildAssignQuery(current))}`
-      );
+      await request(baseUrl, startUrl(current));
       if (token !== sessionToken) {
         request(baseUrl, "/ambilight/stop").catch(() => {});
         return;
@@ -129,10 +141,7 @@ export const AmbilightController = {
   applySettings() {
     const settings = AmbilightSettingsStore.get();
     if (activeBaseUrl && settings.enabled) {
-      request(
-        activeBaseUrl,
-        `/ambilight/start?level=${settings.level}&assign=${encodeURIComponent(buildAssignQuery(settings))}`
-      ).catch(() => {});
+      request(activeBaseUrl, startUrl(settings)).catch(() => {});
     }
   },
 

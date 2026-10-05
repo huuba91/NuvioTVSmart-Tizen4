@@ -18,6 +18,9 @@
 // Routes (served through the EngineFS listener on 2710):
 //   GET /ambilight/bulbs                         configured bulbs, no keys
 //   GET /ambilight/start?assign=id:pos:max,..&level=N start or update a session
+//       &strip=<ip|on>&stripStart=0-7&stripDir=cw|ccw&stripBright=N  also drive the 8-segment surround
+//       strip (ambilight-strip.cjs) over DDP; stripStart is where the strip's controller end sits,
+//       0 = top-left, then clockwise (tl t tr r br b bl l)
 //   GET /ambilight/level?value=N                 change the overall brightness live
 //   GET /ambilight/ping                          keep the session alive
 //   GET /ambilight/stop                          stop and restore the bulbs
@@ -37,6 +40,7 @@ var TICK_MS = 50; // colour updates per bulb between pictures: 20/s (the PC sync
 var FLIP_BACK_AFTER = 500; // anti-flicker: no straight return to the colour just left within this time
 
 var colourEngine = require("./ambilight-colour.cjs");
+var stripOutput = require("./ambilight-strip.cjs");
 
 function describeError(error) {
   return String(((error && (error.code || error.name)) || "") + " " + ((error && error.message) || error)).slice(0, 200);
@@ -112,6 +116,19 @@ function parseAssignments(text) {
     if (id && pos) out[id] = { pos: pos, max: normalizeMax(parts[2]) };
   });
   return out;
+}
+
+// "strip=on|ip" (+ stripStart, stripDir, stripBright) -> config for ambilight-strip.cjs, or null for no strip.
+function parseStrip(query) {
+  var flag = String((query && query.strip) || "");
+  if (!flag || flag === "off" || flag === "0") return null;
+  var start = Number(query.stripStart), bright = Number(query.stripBright);
+  return {
+    ip: stripOutput._internals.normalizeIp(flag) || stripOutput.DEFAULT_IP,
+    start: isFinite(start) ? start : 0,
+    clockwise: String(query.stripDir || "cw").toLowerCase() !== "ccw",
+    bright: isFinite(bright) && bright > 0 ? Math.min(100, bright) : 0
+  };
 }
 
 // ---- picture decoding ------------------------------------------------------------------------------
@@ -482,8 +499,9 @@ function publicBulb(b) {
   return { id: b.id, name: b.name, pos: b.pos };
 }
 
-function Session(bulbs, level) {
+function Session(bulbs, level, stripConfig) {
   this.bulbs = bulbs;
+  this.strip = stripConfig ? new stripOutput.Strip(stripConfig) : null;
   this.level = level;
   this.running = false;
   this.stopped = false;
@@ -510,7 +528,26 @@ Session.prototype.begin = function () {
   this.watchdog = setInterval(function () {
     if (Date.now() - self.lastPing > WATCHDOG_MS) self.stop("watchdog");
   }, 1000);
-  if (!waiting) { this.stop("no-bulbs"); return; }
+  if (this.strip) this.strip.open();
+  function startCapture() {
+    if (self.stopped) return;
+    self.bulbs.forEach(function (x) { if (x.dps) x.original = JSON.parse(JSON.stringify(x.dps)); });
+    self.running = true;
+    self.bulbs.forEach(function (x) {
+      x.autoReconnect = true;
+      if (!x.connected) x.reconnectLater(); // not reachable at the start: keep trying
+    });
+    self.lastTick = Date.now();
+    self.ticker = setInterval(function () { self.tick(); }, TICK_MS);
+    for (var w = 0; w < CAPTURE_WORKERS; w++) {
+      (function (index) { setTimeout(function () { self.loop(index); }, index * 60); })(w);
+    }
+  }
+  if (!waiting) {
+    if (this.strip) startCapture(); // strip only: nothing to connect first
+    else this.stop("no-bulbs");
+    return;
+  }
   var discovery = null;
   function rediscover(cb) {
     if (!discovery) {
@@ -549,20 +586,7 @@ Session.prototype.begin = function () {
     connectBulb(b, 1, false, function () {
       if (--waiting > 0) return;
       // give the status replies a moment, remember how each bulb was set, then start capturing
-      setTimeout(function () {
-        if (self.stopped) return;
-        self.bulbs.forEach(function (x) { if (x.dps) x.original = JSON.parse(JSON.stringify(x.dps)); });
-        self.running = true;
-        self.bulbs.forEach(function (x) {
-          x.autoReconnect = true;
-          if (!x.connected) x.reconnectLater(); // not reachable at the start: keep trying
-        });
-        self.lastTick = Date.now();
-        self.ticker = setInterval(function () { self.tick(); }, TICK_MS);
-        for (var w = 0; w < CAPTURE_WORKERS; w++) {
-          (function (index) { setTimeout(function () { self.loop(index); }, index * 60); })(w);
-        }
-      }, 1500);
+      setTimeout(startCapture, 1500);
     });
   });
 };
@@ -595,8 +619,12 @@ Session.prototype.loop = function (worker) {
 Session.prototype.analyse = function (image) {
   var now = Date.now(), dt = this.lastPicture ? Math.min(1, (now - this.lastPicture) / 1000) : 0.1;
   this.lastPicture = now;
-  var summary = this.analyser.analyse(image, dt), regions = this.regions;
+  var summary = this.analyser.analyse(image, dt, !!this.strip), regions = this.regions;
   POSITIONS.forEach(function (pos) { regions[pos].setGoal(summary[pos]); });
+  if (this.strip && summary.zones) {
+    this.strip.setGoals(summary.zones);
+    this.strip.record(this.strip.analyseMs, Date.now() - now); // whole picture analysis incl. the 8 zones
+  }
 };
 
 // Runs between pictures too, so every bulb fades through intermediate colours instead of stepping.
@@ -609,10 +637,14 @@ Session.prototype.tick = function () {
     if (b.pos !== "off" && states[b.pos]) b.show(states[b.pos], level);
     b.heartbeat(now);
   });
+  if (this.strip) this.strip.tick(dt, level);
 };
 
-Session.prototype.update = function (assignments, level) {
+Session.prototype.update = function (assignments, level, stripConfig) {
   if (isFinite(level)) this.level = level;
+  if (stripConfig && this.strip) this.strip.configure(stripConfig);
+  else if (stripConfig) { this.strip = new stripOutput.Strip(stripConfig); this.strip.open(); }
+  else if (this.strip) { this.strip.close(); this.strip = null; }
   this.bulbs.forEach(function (b) {
     var a = assignments[b.id];
     if (a) { b.pos = a.pos; b.max = a.max; b.lastHex = ""; }
@@ -631,6 +663,7 @@ Session.prototype.stop = function (reason) {
     try { fs.unlinkSync(CAPTURE_DIR + "/" + CAPTURE_PREFIX + w + ".png"); } catch (_) {}
   }
   bulbs.forEach(function (b) { b.autoReconnect = false; b.restore(); });
+  if (this.strip) this.strip.close();
   setTimeout(function () { bulbs.forEach(function (b) { b.close(); }); }, 1200);
   if (session === this) session = null;
 };
@@ -642,6 +675,7 @@ Session.prototype.describe = function () {
     captures: this.captures,
     perSecond: this.captures ? Math.round((this.captures * 10000) / (Date.now() - this.startedAt)) / 10 : 0,
     errors: this.errors,
+    strip: this.strip ? this.strip.describe() : null,
     bulbs: this.bulbs.map(function (b) {
       // no keys here; DP values are only on/mode/brightness/colour and help diagnose a bulb
       var reported = b.original || b.dps || {};
@@ -655,10 +689,10 @@ Session.prototype.describe = function () {
   };
 };
 
-function start(assignments, level) {
+function start(assignments, level, stripConfig) {
   if (session && !session.stopped) {
     session.lastPing = Date.now();
-    session.update(assignments, level);
+    session.update(assignments, level, stripConfig);
     return session;
   }
   // Only bulbs that follow a part of the screen are opened: an "off" bulb stays free for other apps.
@@ -669,7 +703,7 @@ function start(assignments, level) {
         format: config.format });
     })
     .filter(function (b) { return b.pos !== "off"; });
-  session = new Session(bulbs, level);
+  session = new Session(bulbs, level, stripConfig);
   session.begin();
   return session;
 }
@@ -703,7 +737,8 @@ function handleRequest(request, response) {
         return;
       case "/ambilight/start": {
         var level = Number(query.level);
-        var s = start(parseAssignments(query.assign), isFinite(level) && level > 0 ? Math.min(100, level) : 100);
+        var s = start(parseAssignments(query.assign), isFinite(level) && level > 0 ? Math.min(100, level) : 100,
+          parseStrip(query));
         sendJson(response, 200, { ok: true, state: s.describe() });
         return;
       }
@@ -743,6 +778,7 @@ module.exports = {
   _internals: {
     normalizeBulbList: normalizeBulbList,
     parseAssignments: parseAssignments,
+    parseStrip: parseStrip,
     decodePng: decodePng,
     hsvToRgb255: hsvToRgb255,
     colourHex: colourHex,

@@ -2,12 +2,13 @@ import * as internals from "./settingsScreenContext.js";
 import {
   AMBILIGHT_LEVEL_OPTIONS,
   AMBILIGHT_POSITIONS,
+  AMBILIGHT_STRIP_STARTS,
   AmbilightSettingsStore,
   getBulbMaxBrightness,
   getBulbPosition
 } from "../../../data/local/ambilightSettingsStore.js";
 import { AmbilightController } from "../../../core/ambilight/ambilightController.js";
-import { ambilightPositionLabel } from "./settingsScreenPlaybackMarkup-07-ambilight.js";
+import { ambilightPositionLabel, ambilightStripStartLabel } from "./settingsScreenPlaybackMarkup-07-ambilight.js";
 
 export function registerPlaybackAmbilightActions() {
   const { t } = internals;
@@ -49,6 +50,50 @@ export function registerPlaybackAmbilightActions() {
     });
   });
   this.actionMap.set("playback:ambilightRefresh", findBulbs);
+
+  this.actionMap.set("playback:ambilightStripEnabled", () => {
+    AmbilightSettingsStore.setStrip({ enabled: !AmbilightSettingsStore.get().strip.enabled });
+    AmbilightController.applySettings();
+  });
+  this.actionMap.set("playback:ambilightStripStart", () => {
+    this.openOptionDialog({
+      title: t("settings.playback.ambilight.strip.start.title", {}, "Strip controller end"),
+      options: AMBILIGHT_STRIP_STARTS.map((start) => ({ id: start, label: ambilightStripStartLabel(start) })),
+      selectedId: AmbilightSettingsStore.get().strip.start,
+      returnFocusKey: "playback:ambilightStripStart",
+      onSelect: (option) => {
+        AmbilightSettingsStore.setStrip({ start: String(option.id) });
+        AmbilightController.applySettings();
+      }
+    });
+  });
+  this.actionMap.set("playback:ambilightStripDirection", () => {
+    this.openOptionDialog({
+      title: t("settings.playback.ambilight.strip.direction.title", {}, "Strip direction"),
+      options: [
+        { id: "cw", label: t("settings.playback.ambilight.strip.direction.cw", {}, "Clockwise") },
+        { id: "ccw", label: t("settings.playback.ambilight.strip.direction.ccw", {}, "Counter-clockwise") }
+      ],
+      selectedId: AmbilightSettingsStore.get().strip.clockwise ? "cw" : "ccw",
+      returnFocusKey: "playback:ambilightStripDirection",
+      onSelect: (option) => {
+        AmbilightSettingsStore.setStrip({ clockwise: option.id === "cw" });
+        AmbilightController.applySettings();
+      }
+    });
+  });
+  this.actionMap.set("playback:ambilightStripLevel", () => {
+    this.openOptionDialog({
+      title: t("settings.playback.ambilight.strip.level.title", {}, "Strip max brightness"),
+      options: AMBILIGHT_LEVEL_OPTIONS.map((level) => ({ id: level, label: `${level}%` })),
+      selectedId: AmbilightSettingsStore.get().strip.level,
+      returnFocusKey: "playback:ambilightStripLevel",
+      onSelect: (option) => {
+        AmbilightSettingsStore.setStrip({ level: Number(option.id) });
+        AmbilightController.applySettings();
+      }
+    });
+  });
 
   AmbilightSettingsStore.get().bulbs.forEach((bulb) => {
     const focusKey = `playback:ambilightBulb:${bulb.id}`;

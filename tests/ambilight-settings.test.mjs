@@ -4,7 +4,7 @@ import {
   normalizeAmbilightSettings,
   getBulbPosition
 } from "../js/data/local/ambilightSettingsStore.js";
-import { buildAssignQuery } from "../js/core/ambilight/ambilightController.js";
+import { buildAssignQuery, buildStripQuery } from "../js/core/ambilight/ambilightController.js";
 
 test("ambilight settings keep only known positions and levels", () => {
   assert.equal(normalizeAmbilightSettings({ level: "x" }).level, 100);
@@ -42,4 +42,15 @@ test("the app sends each bulb's chosen position and brightness cap, falling back
   });
   assert.equal(getBulbPosition(settings, settings.bulbs[1]), "left");
   assert.equal(buildAssignQuery(settings), "a:right:100,b%3A1:left:60");
+});
+
+test("the strip settings keep a known controller end and add the strip to the start request", () => {
+  const settings = normalizeAmbilightSettings({
+    bulbs: [{ id: "a", name: "A", pos: "left" }],
+    strip: { enabled: true, start: "BR", clockwise: false, level: 45 }
+  });
+  assert.deepEqual(settings.strip, { enabled: true, start: "br", clockwise: false, level: 50 });
+  assert.equal(buildStripQuery(settings), "&strip=on&stripStart=4&stripDir=ccw&stripBright=50");
+  assert.equal(normalizeAmbilightSettings({ strip: { start: "up" } }).strip.start, "bl");
+  assert.equal(buildStripQuery(normalizeAmbilightSettings({})), "");
 });

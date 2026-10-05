@@ -8,6 +8,11 @@ export const AMBILIGHT_POSITIONS = ["left", "center", "right", "off"];
 export const AMBILIGHT_LEVEL_OPTIONS = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
 export const AMBILIGHT_LEVEL_STEP = 10;
 
+// Surround strip behind the TV (8 segments, DDP): where its controller end sits, as the part of the
+// picture that segment follows, and which way it runs from there.
+export const AMBILIGHT_STRIP_STARTS = ["tl", "t", "tr", "r", "br", "b", "bl", "l"];
+export const AMBILIGHT_STRIP_DEFAULTS = { enabled: false, start: "bl", clockwise: true, level: 60 };
+
 export const AMBILIGHT_SETTINGS_DEFAULTS = {
   enabled: false,
   level: 100,
@@ -15,6 +20,7 @@ export const AMBILIGHT_SETTINGS_DEFAULTS = {
   positions: {},
   // bulb id -> its own brightness cap; missing ids use 100
   maxBrightness: {},
+  strip: AMBILIGHT_STRIP_DEFAULTS,
   // last bulb list reported by the TV service: [{ id, name, pos }] (never keys)
   bulbs: []
 };
@@ -43,6 +49,17 @@ function normalizeBulbs(value) {
     .filter((bulb) => bulb.id && !seen.has(bulb.id) && seen.add(bulb.id));
 }
 
+function normalizeStrip(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const start = String(source.start || "").toLowerCase();
+  return {
+    enabled: Boolean(source.enabled),
+    start: AMBILIGHT_STRIP_STARTS.includes(start) ? start : AMBILIGHT_STRIP_DEFAULTS.start,
+    clockwise: source.clockwise === undefined ? AMBILIGHT_STRIP_DEFAULTS.clockwise : Boolean(source.clockwise),
+    level: normalizeLevel(source.level) || AMBILIGHT_STRIP_DEFAULTS.level
+  };
+}
+
 export function normalizeAmbilightSettings(value = {}) {
   const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
   const positions = {};
@@ -68,6 +85,7 @@ export function normalizeAmbilightSettings(value = {}) {
     level: normalizeLevel(source.level) || AMBILIGHT_SETTINGS_DEFAULTS.level,
     positions,
     maxBrightness,
+    strip: normalizeStrip(source.strip),
     bulbs: normalizeBulbs(source.bulbs)
   };
 }
@@ -107,6 +125,10 @@ export const AmbilightSettingsStore = {
   setBulbMaxBrightness(bulbId, max) {
     const current = this.get();
     return this.set({ maxBrightness: { ...current.maxBrightness, [String(bulbId)]: max } });
+  },
+
+  setStrip(partial) {
+    return this.set({ strip: { ...this.get().strip, ...(partial || {}) } });
   },
 
   setBulbs(bulbs) {
