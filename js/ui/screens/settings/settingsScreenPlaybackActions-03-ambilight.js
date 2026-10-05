@@ -55,6 +55,13 @@ export function registerPlaybackAmbilightActions() {
     AmbilightSettingsStore.setStrip({ enabled: !AmbilightSettingsStore.get().strip.enabled });
     AmbilightController.applySettings();
   });
+  this.actionMap.set("playback:ambilightStripStatus", async () => {
+    try {
+      this.ambilightStripStatus = await AmbilightController.describeStrip();
+    } catch (error) {
+      this.ambilightStripStatus = `Could not reach the TV service: ${error?.message || error}`;
+    }
+  });
   this.actionMap.set("playback:ambilightStripStart", () => {
     this.openOptionDialog({
       title: t("settings.playback.ambilight.strip.start.title", {}, "Strip controller end"),

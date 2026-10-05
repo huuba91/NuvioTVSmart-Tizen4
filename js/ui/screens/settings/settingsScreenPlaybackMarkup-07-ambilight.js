@@ -105,6 +105,13 @@ export function renderPlaybackAmbilightBody() {
               subtitle: t("settings.playback.ambilight.strip.level.subtitle", {}, "Cap for the strip, on top of the overall brightness."),
               value: `${settings.strip.level}%`
             })}
+            ${this.renderActionRow({
+              focusKey: "playback:ambilightStripStatus",
+              title: t("settings.playback.ambilight.strip.status.title", {}, "Strip status"),
+              subtitle:
+                this.ambilightStripStatus ||
+                t("settings.playback.ambilight.strip.status.subtitle", {}, "Select to see what the strip is receiving.")
+            })}
             ${bulbRows}
             ${this.renderActionRow({
               focusKey: "playback:ambilightRefresh",

@@ -101,3 +101,34 @@ test("the strip sends one DDP packet per changed colour and switches off on clos
     socket.close();
   }
 });
+
+test("when the strip counts nothing the sender moves on to the next way and ends on HTTP", async function () {
+  var http = require("node:http"), requests = [];
+  var web = http.createServer(function (request, response) {
+    requests.push(request.url);
+    response.end("<html>DDP received: 7 packets</html>"); // a counter that never moves
+  });
+  await new Promise(function (resolve) { web.listen(0, "127.0.0.1", resolve); });
+  var strip = new stripOutput.Strip({ ip: "127.0.0.1", ddpPort: 9, webPort: web.address().port, healthMs: 60, bright: 100 });
+  try {
+    strip.open();
+    var zones = {};
+    colour.STRIP_ZONES.forEach(function (name) {
+      zones[name] = { colour: [1, 0, 0], brightness: 1, colourfulness: 0.5, overall: 0.5 };
+    });
+    strip.setGoals(zones);
+    var seen = [];
+    for (var round = 0; round < 260; round++) {
+      strip.tick(0.05, 100 - (round % 2)); // a slightly different colour each time so every frame is sent
+      strip.last = "";
+      if (seen[seen.length - 1] !== strip.describe().method) seen.push(strip.describe().method);
+      await new Promise(function (resolve) { setTimeout(resolve, 6); });
+    }
+    assert.deepEqual(seen, ["udp", "udp-fresh", "udp-bound", "http"]);
+    assert.ok(requests.some(function (url) { return url.indexOf("SM16703P_SetRaw") >= 0; }), "frames went over HTTP");
+    assert.ok(strip.describe().health.switches >= 3);
+  } finally {
+    strip.close();
+    web.close();
+  }
+});

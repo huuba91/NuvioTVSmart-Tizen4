@@ -88,6 +88,10 @@ function Strip(config) {
   this.regions = {};
   colourEngine.STRIP_ZONES.forEach(function (name) { this.regions[name] = new colourEngine.Region(); }, this);
   this.socket = null;
+  this.method = 0;
+  this.closed = false;
+  this.httpBusy = false;
+  this.httpWaiting = null;
   this.sequence = 0;
   this.last = "";
   this.sent = 0;
@@ -104,21 +108,114 @@ Strip.prototype.configure = function (config) {
   this.ip = normalizeIp(config.ip) || DEFAULT_IP;
   this.order = segmentOrder(config.start, config.clockwise !== false);
   this.bright = clamp(Number(config.bright) > 0 ? Number(config.bright) / 100 : DEFAULT_BRIGHT, 0.05, 1);
+  this.ddpPort = config.ddpPort || DDP_PORT; // ports are only changed by tests
+  this.webPort = config.webPort || 80;
+  this.healthMs = config.healthMs || HEALTH_MS;
 };
 
 Strip.prototype.note = function (text) {
   if (this.errors.length < 6) this.errors.push(text);
 };
 
+// Ways of getting a frame to the strip, tried in this order. The first is plain DDP and should be
+// the only one ever needed; the others exist because this runs on a TV whose network stack we cannot
+// inspect. A health check watches the strip's own "DDP received" counter and moves on to the next way
+// when packets are sent but never counted.
+var METHODS = ["udp", "udp-fresh", "udp-bound", "http"];
+var HEALTH_MS = 4000;
+var HEALTH_MIN_SENT = 4; // packets sent between two checks before silence counts as a failure
+var HEALTH_FAILS = 2; // silent checks in a row before switching
+
 Strip.prototype.open = function () {
-  var self = this;
+  this.method = 0;
+  this.openMethod();
+  this.startHealth();
+};
+
+Strip.prototype.openMethod = function () {
+  var self = this, method = METHODS[this.method];
+  this.closeSocket();
+  this.last = ""; // the next frame goes out even when it equals the last one
+  if (method === "udp-fresh" || method === "http") return; // nothing to keep open
   try {
     this.socket = require("dgram").createSocket("udp4");
     this.socket.on("error", function (error) { self.note(String((error && error.message) || error)); });
+    if (method === "udp-bound") this.socket.bind(0);
   } catch (error) {
     this.socket = null;
-    this.note(String((error && error.message) || error));
+    this.note(method + ": " + String((error && error.message) || error));
   }
+};
+
+Strip.prototype.closeSocket = function () {
+  var socket = this.socket;
+  this.socket = null;
+  if (socket) { try { socket.close(); } catch (_) {} }
+};
+
+Strip.prototype.currentMethod = function () {
+  return METHODS[this.method];
+};
+
+// ---- health check: does the strip count what we send? ---------------------------------------------
+Strip.prototype.startHealth = function () {
+  var self = this;
+  this.health = { counter: null, sentAt: 0, fails: 0, available: null, switches: 0 };
+  this.healthTimer = setInterval(function () { self.checkHealth(); }, this.healthMs);
+};
+
+Strip.prototype.readCounter = function (done) {
+  var http = require("http"), body = "", finished = false;
+  function fin(value, error) { if (finished) return; finished = true; done(value, error); }
+  try {
+    var request = http.get({ host: this.ip, port: this.webPort, path: "/", agent: false }, function (response) {
+      response.setEncoding("utf8");
+      response.on("data", function (chunk) { if (body.length < 65536) body += chunk; });
+      response.on("end", function () {
+        var match = /DDP received:\s*(\d+)/i.exec(body);
+        fin(match ? Number(match[1]) : null, match ? "" : "no counter on the strip's web page");
+      });
+    });
+    request.setTimeout(3000, function () { request.abort(); fin(null, "web page timeout"); });
+    request.on("error", function (error) { fin(null, String((error && error.message) || error)); });
+  } catch (error) {
+    fin(null, String((error && error.message) || error));
+  }
+};
+
+Strip.prototype.checkHealth = function () {
+  var self = this, health = this.health, sentNow = this.sent;
+  if (this.currentMethod() === "http" || this.closed) return;
+  this.readCounter(function (value, error) {
+    if (self.closed) return;
+    if (value === null) {
+      health.available = false;
+      health.error = error;
+      return; // cannot judge: stay with the current way
+    }
+    health.available = true;
+    health.error = "";
+    if (health.counter !== null) {
+      var moved = value - health.counter, sent = sentNow - health.sentAt;
+      health.moved = moved;
+      if (moved > 0) {
+        health.fails = 0;
+      } else if (sent >= HEALTH_MIN_SENT) {
+        health.fails++;
+        if (health.fails >= HEALTH_FAILS && self.method < METHODS.length - 1) {
+          self.note(METHODS[self.method] + ": " + sent + " packets sent, strip counted none; trying " + METHODS[self.method + 1]);
+          self.method++;
+          health.switches++;
+          health.fails = 0;
+          self.openMethod();
+          health.counter = null; // start counting again for the new way
+          return;
+        }
+      }
+    }
+    health.counter = value;
+    health.sentAt = sentNow;
+  });
 };
 
 // The strip has no connection: the first frame is simply the first packet.
@@ -146,17 +243,32 @@ Strip.prototype.tick = function (dt, level) {
 };
 
 Strip.prototype.send = function (payload, force) {
-  var key = payload.toString("hex");
-  if (!this.socket) return false;
+  var key = payload.toString("hex"), method = this.currentMethod();
+  if (this.closed) return false;
   if (!force && key === this.last) { this.skipped++; return false; }
-  var begun = Date.now(), self = this;
+  var begun = Date.now(), self = this, packet;
   this.sequence = this.sequence % 15 + 1;
   try {
-    // Node 4 (the TV) only knows send(buffer, offset, length, port, address, callback)
-    var packet = buildPacket(payload, this.sequence);
-    this.socket.send(packet, 0, packet.length, DDP_PORT, this.ip, function (error) {
-      if (error) self.note(String(error.message || error));
-    });
+    if (method === "http") {
+      this.sendHttp(payload);
+    } else {
+      packet = buildPacket(payload, this.sequence);
+      // Node 4 (the TV) only knows send(buffer, offset, length, port, address, callback)
+      if (method === "udp-fresh") {
+        var fresh = require("dgram").createSocket("udp4");
+        fresh.on("error", function (error) { self.note(String((error && error.message) || error)); });
+        fresh.send(packet, 0, packet.length, this.ddpPort, this.ip, function (error) {
+          if (error) self.note(String(error.message || error));
+          try { fresh.close(); } catch (_) {}
+        });
+      } else if (this.socket) {
+        this.socket.send(packet, 0, packet.length, this.ddpPort, this.ip, function (error) {
+          if (error) self.note(String(error.message || error));
+        });
+      } else {
+        return false;
+      }
+    }
   } catch (error) {
     this.note(String((error && error.message) || error));
     return false;
@@ -167,12 +279,45 @@ Strip.prototype.send = function (payload, force) {
   return true;
 };
 
+// OpenBeken's own command interface; one request at a time, a newer frame replaces a waiting one.
+Strip.prototype.sendHttp = function (payload) {
+  var self = this;
+  if (this.httpBusy) { this.httpWaiting = payload; return; }
+  this.httpBusy = true;
+  var done = false;
+  function fin(error) {
+    if (done) return;
+    done = true;
+    self.httpBusy = false;
+    if (error) self.note("http: " + String((error && error.message) || error));
+    if (self.httpWaiting && !self.closed) { var next = self.httpWaiting; self.httpWaiting = null; self.sendHttp(next); }
+  }
+  try {
+    var path = "/cm?cmnd=" + encodeURIComponent("SM16703P_SetRaw 1 0 " + payload.toString("hex"));
+    var request = require("http").get({ host: this.ip, port: this.webPort, path: path, agent: false }, function (response) {
+      response.resume();
+      response.on("end", function () { fin(response.statusCode === 200 ? null : new Error("HTTP " + response.statusCode)); });
+    });
+    request.setTimeout(2000, function () { request.abort(); fin(new Error("timeout")); });
+    request.on("error", fin);
+  } catch (error) {
+    fin(error);
+  }
+};
+
 // UDP can drop a packet: say "off" a few times.
 Strip.prototype.close = function () {
   var self = this, black = buildPayload([[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]]);
-  if (!this.socket) return;
+  clearInterval(this.healthTimer);
+  if (this.closed) return;
+  if (this.currentMethod() === "http") {
+    this.httpWaiting = null;
+    this.send(black, true);
+    setTimeout(function () { self.closed = true; }, 600);
+    return;
+  }
   [0, 40, 80].forEach(function (delay) { setTimeout(function () { self.send(black, true); }, delay); });
-  setTimeout(function () { try { self.socket.close(); } catch (_) {} self.socket = null; }, 200);
+  setTimeout(function () { self.closed = true; self.closeSocket(); }, 200);
 };
 
 function median(list) {
@@ -189,6 +334,9 @@ Strip.prototype.describe = function () {
     sent: this.sent,
     unchanged: this.skipped,
     errors: this.errors,
+    method: this.currentMethod(),
+    health: this.health ? { counter: this.health.counter, moved: this.health.moved, available: this.health.available,
+      error: this.health.error, switches: this.health.switches } : null,
     analyseMs: Math.round(median(this.analyseMs) * 10) / 10, // picture -> 8 zone goals, on the TV
     sendMs: Math.round(median(this.sendMs) * 10) / 10,
     segments: this.colours.map(function (c) { return [Math.round(c[0]), Math.round(c[1]), Math.round(c[2])]; })

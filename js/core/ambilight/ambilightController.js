@@ -89,6 +89,21 @@ export const AmbilightController = {
     return AmbilightSettingsStore.setBulbs(Array.isArray(body?.bulbs) ? body.bulbs : []).bulbs;
   },
 
+  // One line about the strip for the settings screen, from the TV service's own state.
+  async describeStrip() {
+    const baseUrl = await ensureService();
+    const body = await request(baseUrl, "/ambilight/state");
+    const strip = body?.state?.strip;
+    if (!body?.active || !strip) {
+      return "Not running. Play a video with the strip switched on, then check again.";
+    }
+    const counted = strip.health?.available
+      ? `strip counted ${strip.health.moved ?? "?"} packets in the last check`
+      : strip.health?.error || "no packet count from the strip yet";
+    const problem = strip.errors?.length ? ` Last problem: ${strip.errors[strip.errors.length - 1]}` : "";
+    return `Sending ${strip.method} to ${strip.ip}: ${strip.sent} frames, ${counted}.${problem}`;
+  },
+
   // Called whenever the player reports real playback; repeated calls are cheap.
   async start() {
     const settings = AmbilightSettingsStore.get();
