@@ -152,7 +152,9 @@ Strip.prototype.send = function (payload, force) {
   var begun = Date.now(), self = this;
   this.sequence = this.sequence % 15 + 1;
   try {
-    this.socket.send(buildPacket(payload, this.sequence), DDP_PORT, this.ip, function (error) {
+    // Node 4 (the TV) only knows send(buffer, offset, length, port, address, callback)
+    var packet = buildPacket(payload, this.sequence);
+    this.socket.send(packet, 0, packet.length, DDP_PORT, this.ip, function (error) {
       if (error) self.note(String(error.message || error));
     });
   } catch (error) {
