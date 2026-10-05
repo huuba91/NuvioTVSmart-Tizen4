@@ -136,6 +136,96 @@ test("routes list bulbs without their keys and answer pings without a session", 
   }
 });
 
+// A fake Tuya bulb on 127.0.0.1:6668 that records what it is sent and can answer or hang up.
+function fakeBulb(options) {
+  var net = require("node:net");
+  var bulb = { received: [], sockets: [], answer: options && options.answer };
+  bulb.server = net.createServer(function (socket) {
+    var rx = Buffer.alloc(0);
+    bulb.sockets.push(socket);
+    socket.on("error", function () {});
+    socket.on("data", function (chunk) {
+      rx = Buffer.concat([rx, chunk]);
+      while (rx.length >= 24 && rx.length >= 16 + rx.readUInt32BE(12)) {
+        var total = 16 + rx.readUInt32BE(12), command = rx.readUInt32BE(8), data = rx.slice(16, total - 8);
+        rx = rx.slice(total);
+        if (data.slice(0, 3).toString() === "3.3") data = data.slice(15);
+        bulb.received.push({ command: command, dps: JSON.parse(internals.aes(KEY, data, true).toString()).dps });
+        if (bulb.answer) socket.write(internals.tuyaFrame(1, command, Buffer.alloc(4)));
+      }
+    });
+  });
+  bulb.listen = function () { return new Promise(function (resolve) { bulb.server.listen(6668, "127.0.0.1", resolve); }); };
+  bulb.close = function () {
+    bulb.sockets.forEach(function (socket) { socket.destroy(); });
+    return new Promise(function (resolve) { bulb.server.close(resolve); });
+  };
+  return bulb;
+}
+
+function wait(ms) {
+  return new Promise(function (resolve) { setTimeout(resolve, ms); });
+}
+
+function colourState(h) {
+  return { mode: "colour", hsv: [h, 1, 1] };
+}
+
+test("a bulb is not sent a new colour before it answered the last one", async function () {
+  var fake = fakeBulb({ answer: false });
+  await fake.listen();
+  var bulb = new internals.Bulb({ id: "a", name: "Desk left", key: KEY, ip: "127.0.0.1", pos: "center", max: 100 });
+  try {
+    await new Promise(function (resolve) { bulb.connect(resolve); });
+    bulb.show(colourState(0), 100);
+    bulb.show(colourState(0.3), 100); // at once: too soon
+    await wait(200);
+    bulb.show(colourState(0.3), 100); // 200 ms on, but the first one is still unanswered
+    await wait(50);
+    assert.equal(fake.received.length, 1);
+    assert.equal(fake.received[0].dps["2"], "colour");
+    fake.answer = true;
+    await wait(350); // past the answer timeout: the bulb is given the newest colour
+    bulb.show(colourState(0.6), 100);
+    await wait(150); // answered this time, so the next one may follow after the minimum gap
+    bulb.show(colourState(0.9), 100);
+    await wait(50);
+    assert.equal(fake.received.length, 3);
+    assert.deepEqual(Object.keys(fake.received[2].dps), ["5"]);
+  } finally {
+    bulb.close();
+    await fake.close();
+  }
+});
+
+test("a bulb that drops the connection is taken again and put back in colour mode", async function () {
+  var fake = fakeBulb({ answer: true });
+  await fake.listen();
+  var bulb = new internals.Bulb({ id: "a", name: "Desk left", key: KEY, ip: "127.0.0.1", pos: "center", max: 100 });
+  try {
+    await new Promise(function (resolve) { bulb.connect(resolve); });
+    bulb.autoReconnect = true;
+    bulb.show(colourState(0), 100);
+    await wait(100);
+    fake.sockets[0].destroy(); // what the real bulbs did after ~70 colours
+    await wait(300);
+    assert.equal(bulb.connected, false);
+    bulb.show(colourState(0.3), 100); // nowhere to send it
+    await wait(2300);
+    assert.equal(bulb.connected, true);
+    assert.equal(bulb.reconnects, 1);
+    bulb.show(colourState(0.6), 100);
+    await wait(100);
+    var last = fake.received[fake.received.length - 1];
+    assert.equal(fake.received.length, 2);
+    assert.equal(last.dps["1"], true);
+    assert.equal(last.dps["2"], "colour");
+  } finally {
+    bulb.close();
+    await fake.close();
+  }
+});
+
 // End to end on Linux: a stand-in for Samsung's capture service (a fake `gdbus` on PATH that
 // writes a half red, half blue PNG) and a fake Tuya bulb on 127.0.0.1:6668.
 test("a session colours the bulb from its zone, follows live brightness and restores it on stop", { skip: process.platform !== "linux" || !fs.existsSync("/dev/shm") }, async function () {

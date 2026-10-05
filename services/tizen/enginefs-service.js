@@ -237,6 +237,16 @@ function startEngineFsRuntime() {
         ambilight.handleRequest(request, response);
         return;
       }
+      if (requestUrl === "/netcheck") {
+        // Network self-test; a failure to load or run it is reported, never thrown.
+        try {
+          require("./runtime/netcheck.cjs").handle(response);
+        } catch (error) {
+          response.writeHead(500, { "Content-Type": "text/plain" });
+          response.end(String((error && error.stack) || error));
+        }
+        return;
+      }
       if (requestUrl === "/health" || requestUrl.indexOf("/media?") === 0) {
         mediaBridge.handleRequest(request, response);
         return;
@@ -274,6 +284,12 @@ function requestRemoveAll() {
 }
 
 module.exports.onStart = function () {
+  // Faster name lookups for everything this service fetches; the service starts without it too.
+  try {
+    require("./runtime/fast-dns.cjs").install();
+  } catch (error) {
+    warn("fast DNS not installed", error && error.message);
+  }
   diagnostic("onStart", { service: "EngineFsService" });
   try {
     startEngineFsRuntime();

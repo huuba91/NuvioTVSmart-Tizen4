@@ -225,12 +225,20 @@ function colourHex(c) {
   return hex(r, 2) + hex(g, 2) + hex(b, 2) + hex(h, 4) + hex(max ? (d * 255) / max : 0, 2) + hex(max, 2);
 }
 
+// Sending faster than a bulb answers makes it reset the connection (seen on the target: all three
+// dropped after ~70 colours at 20 a second), and it also drops a connection that stays silent.
+var MIN_SEND_MS = 100;     // at most 10 colours a second per bulb, the rate the first version proved...
+var ACK_TIMEOUT_MS = 500;  // ...and none while the answer to the previous one is still outstanding
+var HEARTBEAT_MS = 8000;   // keeps the connection open through a long still scene
+var RECONNECT_MS = 2000;   // a dropped bulb is taken again after this pause, for as long as the session runs
+
 function Bulb(config) {
   this.id = config.id; this.name = config.name; this.key = config.key; this.ip = config.ip;
   this.pos = config.pos; this.max = normalizeMax(config.max); this.format = normalizeFormat(config.format);
   this.mode = ""; this.lastHex = ""; this.prevHex = ""; this.hexTime = 0;
   this.seq = 1; this.socket = null; this.rx = new Buffer(0); this.connected = false;
   this.dps = null; this.original = null; this.sent = 0; this.errors = []; this.inColour = false;
+  this.lastSend = 0; this.waiting = false; this.autoReconnect = false; this.reconnecting = false; this.reconnects = 0;
 }
 
 Bulb.prototype.connect = function (done) {
@@ -243,16 +251,60 @@ Bulb.prototype.connect = function (done) {
   }
   this.socket = socket;
   socket.setNoDelay(true);
-  socket.on("connect", function () { self.connected = true; fin(null); });
-  socket.on("error", function (error) { self.note(describeError(error)); self.connected = false; fin(describeError(error)); });
-  socket.on("close", function () { self.connected = false; });
-  socket.on("data", function (chunk) { self.rx = Buffer.concat([self.rx, chunk]); self.parse(); });
+  // A socket that has been replaced by a reconnect must not touch the bulb's state any more.
+  socket.on("connect", function () {
+    if (self.socket !== socket) return;
+    self.connected = true; self.waiting = false; self.rx = new Buffer(0);
+    fin(null);
+  });
+  socket.on("error", function (error) {
+    if (self.socket === socket) { self.note(describeError(error)); self.connected = false; }
+    fin(describeError(error));
+  });
+  socket.on("close", function () {
+    if (self.socket !== socket) return;
+    self.connected = false;
+    if (self.autoReconnect) self.reconnectLater();
+  });
+  socket.on("data", function (chunk) {
+    if (self.socket !== socket) return;
+    self.waiting = false; // any answer means the bulb has dealt with the last message
+    self.rx = Buffer.concat([self.rx, chunk]); self.parse();
+  });
   setTimeout(function () {
-    if (self.connected) return;
+    if (self.connected || self.socket !== socket) return;
     try { socket.destroy(); } catch (_) {}
     self.note("connect timeout");
     fin("timeout");
   }, 4000);
+};
+
+// Takes a dropped bulb again; it then re-enters colour mode with the next colour.
+Bulb.prototype.reconnectLater = function () {
+  var self = this;
+  if (this.reconnecting) return;
+  this.reconnecting = true;
+  setTimeout(function () {
+    self.reconnecting = false;
+    if (!self.autoReconnect || self.connected) return;
+    self.connect(function (error) {
+      if (error) return; // the failed socket's close event schedules the next attempt
+      if (!self.autoReconnect) { self.close(); return; }
+      self.reconnects++;
+      self.mode = ""; self.lastHex = ""; self.prevHex = "";
+    });
+  }, RECONNECT_MS);
+};
+
+// True when the bulb can take another message without falling behind.
+Bulb.prototype.ready = function (now) {
+  if (!this.connected || now - this.lastSend < MIN_SEND_MS) return false;
+  return !this.waiting || now - this.lastSend > ACK_TIMEOUT_MS;
+};
+
+Bulb.prototype.heartbeat = function (now) {
+  if (!this.connected || now - this.lastSend < HEARTBEAT_MS) return;
+  if (this.write(9, { gwId: this.id, devId: this.id }, false)) { this.lastSend = now; this.waiting = true; }
 };
 
 Bulb.prototype.note = function (text) {
@@ -311,13 +363,15 @@ Bulb.prototype.queryByControl = function () {
 
 Bulb.prototype.set = function (dps) {
   var ok = this.write(7, { devId: this.id, uid: this.id, t: String(Math.floor(Date.now() / 1000)), dps: dps }, true);
-  if (ok) this.sent++;
+  if (ok) { this.sent++; this.lastSend = Date.now(); this.waiting = true; }
   return ok;
 };
 
 // state: { mode: "colour", hsv: [h, s, v] 0..1 } or { mode: "white" }; level: overall cap 0..100.
 Bulb.prototype.show = function (state, level) {
   var f = (Math.max(0, Math.min(100, level)) / 100) * (this.max / 100), now = Date.now(), value;
+  // Not ready: skip this step. Nothing is remembered as sent, so the next tick sends the newest colour.
+  if (!this.ready(now)) return;
   var v2 = (this.format || formatFromDps(this.original || this.dps)) === "hsv16";
   if (state.mode === "white") {
     // the bulb's own white LEDs look far better than white mixed from colour; warmest, dimmest end
@@ -353,6 +407,7 @@ Bulb.prototype.restore = function () {
 };
 
 Bulb.prototype.close = function () {
+  this.autoReconnect = false;
   try { if (this.socket) this.socket.destroy(); } catch (_) {}
   this.connected = false;
 };
@@ -498,6 +553,10 @@ Session.prototype.begin = function () {
         if (self.stopped) return;
         self.bulbs.forEach(function (x) { if (x.dps) x.original = JSON.parse(JSON.stringify(x.dps)); });
         self.running = true;
+        self.bulbs.forEach(function (x) {
+          x.autoReconnect = true;
+          if (!x.connected) x.reconnectLater(); // not reachable at the start: keep trying
+        });
         self.lastTick = Date.now();
         self.ticker = setInterval(function () { self.tick(); }, TICK_MS);
         for (var w = 0; w < CAPTURE_WORKERS; w++) {
@@ -548,6 +607,7 @@ Session.prototype.tick = function () {
   POSITIONS.forEach(function (pos) { states[pos] = regions[pos].step(dt); });
   this.bulbs.forEach(function (b) {
     if (b.pos !== "off" && states[b.pos]) b.show(states[b.pos], level);
+    b.heartbeat(now);
   });
 };
 
@@ -570,7 +630,7 @@ Session.prototype.stop = function (reason) {
   for (var w = 0; w < CAPTURE_WORKERS; w++) {
     try { fs.unlinkSync(CAPTURE_DIR + "/" + CAPTURE_PREFIX + w + ".png"); } catch (_) {}
   }
-  bulbs.forEach(function (b) { b.restore(); });
+  bulbs.forEach(function (b) { b.autoReconnect = false; b.restore(); });
   setTimeout(function () { bulbs.forEach(function (b) { b.close(); }); }, 1200);
   if (session === this) session = null;
 };
@@ -586,7 +646,8 @@ Session.prototype.describe = function () {
       // no keys here; DP values are only on/mode/brightness/colour and help diagnose a bulb
       var reported = b.original || b.dps || {};
       return {
-        id: b.id, name: b.name, pos: b.pos, max: b.max, connected: b.connected, sent: b.sent, errors: b.errors,
+        id: b.id, name: b.name, pos: b.pos, max: b.max, connected: b.connected, sent: b.sent,
+        reconnects: b.reconnects, errors: b.errors,
         format: b.format || formatFromDps(reported) || "rgb8 (assumed)", last: b.lastHex,
         reported: { 2: reported["2"], 3: reported["3"], 5: reported["5"] }
       };
@@ -687,6 +748,7 @@ module.exports = {
     colourHex: colourHex,
     hsv16Hex: hsv16Hex,
     formatFromDps: formatFromDps,
+    Bulb: Bulb,
     crc32: crc32,
     tuyaFrame: tuyaFrame,
     aes: aes,
