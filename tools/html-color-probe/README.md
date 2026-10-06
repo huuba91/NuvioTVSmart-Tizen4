@@ -1,6 +1,6 @@
 # HTML colour probe (Tizen 4 test widget)
 
-A small standalone widget (separate app id `HtmlProbe01.ColorProbe`, it never touches Nuvio) that
+A small standalone widget (separate app id `HtmlProbe1.ColorProbe`, it never touches Nuvio) that
 answers one question on the UE49NU7100: **can the page read the colours of an HTML `<video>`?**
 If yes, Nuvio could play through HTML video and drive the ambilight from the page itself, without the
 signed filesystem/system build that the `dcapture` service capture needs.
@@ -46,7 +46,7 @@ Then sign and install exactly like the Nuvio WGT (profile/device names from `dep
 $tz = "C:\tizen-studio\tools\ide\bin\tizen.bat"
 & $tz package -t wgt -s NU7100-Nuvio -o .cache\html-color-probe\signed -- .cache\html-color-probe\HtmlColorProbe.wgt
 & $tz install -n HtmlColorProbe.wgt -s 192.168.129.0:26101 -- .cache\html-color-probe\signed
-& $tz run -p HtmlProbe01.ColorProbe -s 192.168.129.0:26101
+& $tz run -p HtmlProbe1.ColorProbe -s 192.168.129.0:26101
 ```
 
 It runs all tests on launch (about 2 minutes) and shows a green/amber/red verdict.
