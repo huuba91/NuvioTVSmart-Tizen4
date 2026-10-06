@@ -26,6 +26,8 @@
 //   GET /ambilight/stop                          stop and restore the bulbs
 //   GET /ambilight/state                         diagnostics (incl. capture timing, CPU, eco mode)
 //   GET /ambilight/eco?mode=on|off               slow captures down on still pictures (default on)
+//   GET /ambilight/capture-sweep?w=64&h=36&modes=0,1,2,3,4&comps=0,1,2,3   try dcapture modes/formats
+//   GET /ambilight/periodic-probe?ms=300&seconds=2   does StartPeriodicCapture write files, and where
 //   GET /ambilight/introspect                    what samsung.tizen.dcapture offers (also written to /dev/shm)
 
 var BULBS_FILE = "ambilight-bulbs.json";
@@ -846,6 +848,114 @@ function introspectCapture(done) {
     });
 }
 
+// ---- capture experiments ---------------------------------------------------------------------------
+// samsung.tizen.dcapture.RequestCaptureToFileSync(app_type, capture_mode, comp_type, width, height,
+// jpeg_quality, dir_path, file_name) -> (retVal, ret_width, ret_height, ret_path). The service uses
+// (0, 2, 0, w, h, 80). These routes try the other values and report what comes back, so a rawer or
+// cheaper format, or a mode without Nuvio's own controls, can be found. Nothing here is used by a session.
+function sniffFormat(buffer) {
+  if (buffer.length >= 4 && buffer.readUInt32BE(0) === 0x89504e47) return "PNG";
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return "JPEG";
+  if (buffer.length >= 2 && buffer[0] === 0x42 && buffer[1] === 0x4d) return "BMP";
+  if (buffer.length >= 4 && buffer.toString("ascii", 0, 4) === "GIF8") return "GIF";
+  if (buffer.length >= 12 && buffer.toString("ascii", 0, 4) === "RIFF") return "RIFF/WebP";
+  if (buffer.length >= 8 && buffer.readUInt32BE(4) === 7) return "XWD?";
+  return "unknown";
+}
+
+function parseCaptureReply(text) {
+  var match = /\(\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*'([^']*)'\s*,?\s*\)/.exec(String(text));
+  return match ? { ret: Number(match[1]), w: Number(match[2]), h: Number(match[3]), path: match[4] } : null;
+}
+
+function intList(value, fallback, max) {
+  var out = String(value === undefined ? fallback : value).split(",").map(Number).filter(function (n) { return isFinite(n) && n >= 0 && n < 100; });
+  return out.slice(0, max);
+}
+
+function captureSweep(query, done) {
+  var cp = require("child_process"), fs = require("fs");
+  var modes = intList(query.modes, "0,1,2,3,4", 8), comps = intList(query.comps, "0,1,2,3", 8);
+  var w = Math.max(1, Math.min(1920, Number(query.w) || 64)), h = Math.max(1, Math.min(1080, Number(query.h) || 36));
+  var jobs = [], rows = [];
+  modes.forEach(function (m) { comps.forEach(function (c) { jobs.push({ mode: m, comp: c }); }); });
+  (function next() {
+    var job = jobs.shift();
+    if (!job) { done({ ok: true, requested: { w: w, h: h }, rows: rows }); return; }
+    var name = "nuvio-sweep-m" + job.mode + "c" + job.comp, began = Date.now();
+    cp.execFile("gdbus", ["call", "--system", "--timeout", "4", "--dest", "samsung.tizen.dcapture", "--object-path", "/samsung/tizen/dcapture",
+      "--method", "samsung.tizen.dcapture.RequestCaptureToFileSync", "0", String(job.mode), String(job.comp), String(w), String(h), "80", CAPTURE_DIR, name],
+      { timeout: 5000 }, function (error, stdout, stderr) {
+        var row = { mode: job.mode, comp: job.comp, ms: Date.now() - began };
+        if (error) row.error = describeError(error) + " " + String(stderr || "").slice(0, 120);
+        else {
+          row.reply = String(stdout).trim().slice(0, 120);
+          var parsed = parseCaptureReply(stdout);
+          if (parsed) { row.ret = parsed.ret; row.w = parsed.w; row.h = parsed.h; row.path = parsed.path; }
+          var file = parsed && parsed.path ? parsed.path : CAPTURE_DIR + "/" + name + ".png";
+          try {
+            var data = fs.readFileSync(file);
+            row.bytes = data.length;
+            row.format = sniffFormat(data);
+            if (row.format === "PNG") {
+              var image = decodePng(data), sum = [0, 0, 0], n = 0, i;
+              for (i = 0; i + 2 < image.data.length; i += image.bpp * 7) { sum[0] += image.data[i]; sum[1] += image.data[i + 1]; sum[2] += image.data[i + 2]; n++; }
+              row.mean = n ? sum.map(function (v) { return Math.round(v / n); }) : null;
+              row.size = image.w + "x" + image.h + "x" + image.bpp;
+            } else if (row.w && row.h) {
+              row.bytesPerPixel = Math.round(data.length / (row.w * row.h) * 100) / 100;
+            }
+            fs.unlinkSync(file);
+          } catch (problem) { row.fileError = describeError(problem); }
+        }
+        rows.push(row);
+        next();
+      });
+  })();
+}
+
+// Does StartPeriodicCapture produce files on its own, and where? Starts it for a moment, compares a few
+// directories before and after, and always ends it again.
+var PERIODIC_DIRS = ["/dev/shm", "/tmp", "/var/tmp", "/home/owner/share/tmp", "/opt/usr/media", "/opt/usr/home/owner/share/tmp"];
+
+function periodicProbe(query, done) {
+  var cp = require("child_process"), fs = require("fs");
+  var interval = Math.max(100, Math.min(2000, Number(query.ms) || 300)), seconds = Math.max(1, Math.min(5, Number(query.seconds) || 2));
+  var id = "nuvio-probe", out = { ok: true, intervalMs: interval, seconds: seconds, replies: {}, newFiles: [] };
+  function list() {
+    var map = {};
+    PERIODIC_DIRS.forEach(function (dir) {
+      try { fs.readdirSync(dir).forEach(function (f) { try { map[dir + "/" + f] = fs.statSync(dir + "/" + f).mtime.getTime(); } catch (_) {} }); } catch (_) {}
+    });
+    return map;
+  }
+  function call(method, args, cb) {
+    cp.execFile("gdbus", ["call", "--system", "--timeout", "4", "--dest", "samsung.tizen.dcapture", "--object-path", "/samsung/tizen/dcapture",
+      "--method", "samsung.tizen.dcapture." + method].concat(args), { timeout: 5000 }, function (error, stdout, stderr) {
+      cb(error ? "error " + describeError(error) + " " + String(stderr || "").slice(0, 120) : String(stdout).trim().slice(0, 160));
+    });
+  }
+  var before = list();
+  call("StartPeriodicCaptureWithoutAppInfo", ["0", "2", "64", "36", id, String(interval)], function (started) {
+    out.replies.start = started;
+    setTimeout(function () {
+      var after = list();
+      Object.keys(after).forEach(function (f) {
+        if (before[f] === undefined || before[f] !== after[f]) {
+          var size = null;
+          try { size = fs.statSync(f).size; } catch (_) {}
+          out.newFiles.push({ file: f, bytes: size });
+        }
+      });
+      out.newFiles = out.newFiles.slice(0, 40);
+      call("EndPeriodicCapture", ["0", id, "0"], function (ended) {
+        out.replies.end = ended;
+        done(out);
+      });
+    }, seconds * 1000);
+  });
+}
+
 function isAmbilightRequest(requestUrl) {
   return String(requestUrl || "").indexOf("/ambilight/") === 0;
 }
@@ -890,6 +1000,12 @@ function handleRequest(request, response) {
       case "/ambilight/introspect":
         introspectCapture(function (result) { sendJson(response, 200, result); });
         return;
+      case "/ambilight/capture-sweep":
+        captureSweep(query, function (result) { sendJson(response, 200, result); });
+        return;
+      case "/ambilight/periodic-probe":
+        periodicProbe(query, function (result) { sendJson(response, 200, result); });
+        return;
       case "/ambilight/state":
         sendJson(response, 200, { ok: true, active: !!session, state: session ? session.describe() : null, last: lastSession });
         return;
@@ -912,6 +1028,8 @@ module.exports = {
     parseStrip: parseStrip,
     decodePng: decodePng,
     pictureChange: pictureChange,
+    sniffFormat: sniffFormat,
+    parseCaptureReply: parseCaptureReply,
     modeForActivity: modeForActivity,
     ECO: ECO,
     hsvToRgb255: hsvToRgb255,

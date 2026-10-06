@@ -27,11 +27,32 @@ or unavailable, and AVPlay exposes no pixels.
 Reading of 2-8: HTML video on this TV is drawn on a hardware plane. The page cannot read it by canvas,
 WebGL or ImageBitmap, whichever source or size is used.
 
+## What `samsung.tizen.dcapture` offers (introspected on the TV)
+
+Interface `samsung.tizen.dcapture` at `/samsung/tizen/dcapture`:
+
+- `RequestCaptureToFileSync(i app_type, i capture_mode, i comp_type, i width, i height, i jpeg_quality, s dir_path, s file_name)`
+  returns `(i retVal, i ret_width, i ret_height, s ret_path)`. This is the call in use, with
+  `0, 2, 0, w, h, 80`: so `capture_mode` is 2 and `comp_type` is 0 (which produces PNG; `jpeg_quality` is
+  presumably only used for another `comp_type`). Other modes and compression types are not yet tried.
+- `StartPeriodicCapture(... , i interval_msec)` / `StartPeriodicCaptureWithoutAppInfo` and
+  `EndPeriodicCapture(i app_type, s app_id, i flush_mode)`: continuous capture driven by the service
+  instead of one `gdbus` process per picture. Where the pictures go is unknown.
+- `RequestCapture`, `RequestCapture_SYNC` (+ `WithoutAppInfo`): other capture entry points, output target unknown.
+- `*_XWD` variants and `PrepXwdCapture` / `CompleteXwdCapture`: capture of an X11 window by handle.
+
+Experiments (run them while a video is playing; they change nothing and are not used by a session):
+
+- `/ambilight/capture-sweep?w=64&h=36&modes=0,1,2,3,4&comps=0,1,2,3` tries every mode x comp_type and reports
+  the reply, returned size, file size, detected format (PNG/JPEG/BMP/...), time, and for PNGs the mean colour
+  (all zero would mean that mode leaves out the video).
+- `/ambilight/periodic-probe?ms=300&seconds=2` starts a periodic capture, lists new files in a few
+  likely directories, and ends it again.
+
 ## Ideas not yet tried
 
-- `gdbus introspect` of `samsung.tizen.dcapture` (route `/ambilight/introspect`, written to
-  `/dev/shm/nuvio-dcapture-introspect.txt`) to learn the real meaning of the call's arguments
-  (`0 2 0 <w> <h> 80 <dir> <name>`) and whether a raw/BMP format exists that skips the PNG inflate.
+- Reading the sweep and periodic-probe results to find a raw/BMP format that skips the PNG inflate, a mode that
+  excludes Nuvio's own controls, or a periodic capture that removes the per-picture `gdbus` process.
 - Eco pacing (shipped in 1.2.66): fewer captures on still pictures; effect on CPU not yet measured on the TV.
 - Offload: a PC/Pi/Home Assistant helper decodes the same stream at low resolution and sends DDP, kept in
   sync by position pings from the TV. Near-zero TV load; needs an always-on machine and a second read of the stream.

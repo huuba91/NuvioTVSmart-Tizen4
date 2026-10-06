@@ -346,3 +346,40 @@ test("eco route toggles pacing and introspect works without a session", async fu
     fs.rmSync(fake, { recursive: true, force: true });
   }
 });
+
+test("capture experiments: reply parsing, format sniffing and the sweep route", async function () {
+  assert.deepEqual(internals.parseCaptureReply("(0, 320, 180, '/dev/shm/x.png')\n"), { ret: 0, w: 320, h: 180, path: "/dev/shm/x.png" });
+  assert.equal(internals.parseCaptureReply("garbage"), null);
+  assert.equal(internals.sniffFormat(Buffer.from([0xff, 0xd8, 0xff, 0xe0])), "JPEG");
+  assert.equal(internals.sniffFormat(Buffer.from("BM123456", "ascii")), "BMP");
+  assert.equal(internals.sniffFormat(Buffer.from([0, 0, 0, 100, 0, 0, 0, 7])), "XWD?");
+  assert.equal(internals.sniffFormat(Buffer.from([1, 2, 3, 4, 5, 6, 7, 8])), "unknown");
+
+  var originalPath = process.env.PATH;
+  var fake = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "gdbus-"));
+  // comp 1 writes a JPEG-looking file, anything else a BMP-looking one; mode 9 fails
+  fs.writeFileSync(path.join(fake, "gdbus"),
+    "#!/bin/sh\n" +
+    "mode=${12}; comp=${13}; dir=${17}; name=${18}\n" +
+    "if [ \"$mode\" = 9 ]; then echo boom >&2; exit 1; fi\n" +
+    "if [ \"$comp\" = 1 ]; then printf '\\377\\330\\377\\340abcd' > \"$dir/$name.jpg\"; echo \"(0, 64, 36, '$dir/$name.jpg')\";\n" +
+    "else printf 'BMxxxxxx' > \"$dir/$name.bmp\"; echo \"(0, 64, 36, '$dir/$name.bmp')\"; fi\n", { mode: 493 });
+  process.env.PATH = fake + path.delimiter + originalPath;
+  try {
+    var result = await new Promise(function (resolve) {
+      ambilight.handleRequest({ url: "/ambilight/capture-sweep?modes=2,9&comps=0,1" }, {
+        writeHead: function () {}, end: function (text) { resolve(JSON.parse(text)); }
+      });
+    });
+    assert.equal(result.rows.length, 4);
+    var byKey = {};
+    result.rows.forEach(function (r) { byKey[r.mode + "/" + r.comp] = r; });
+    assert.equal(byKey["2/0"].format, "BMP");
+    assert.equal(byKey["2/1"].format, "JPEG");
+    assert.equal(byKey["2/1"].w, 64);
+    assert.ok(byKey["9/0"].error);
+  } finally {
+    process.env.PATH = originalPath;
+    fs.rmSync(fake, { recursive: true, force: true });
+  }
+});
