@@ -36,6 +36,7 @@
   }
   function showReport() {
     $("fingerprint").textContent = R.fingerprint().join("\n");
+    $("findings").textContent = JSON.stringify(R.findings(), null, 1);
     $("report").value = JSON.stringify(R.report(), null, 1);
   }
   function summary(c) {
@@ -65,7 +66,7 @@
     R.results = {}; R.order = []; R.log = []; R.manualProbes = [];
     build(); counts();
     $("summary").textContent = ""; $("fingerprint").textContent = "(run the tests)"; $("report").value = ""; $("exported").textContent = "";
-    $("probe-out").textContent = ""; $("dc-out").textContent = "";
+    $("probe-out").textContent = ""; $("dc-out").textContent = ""; $("shm-out").textContent = ""; $("findings").textContent = "(run the tests)";
   };
 
   function formatProbe(info) {
@@ -79,16 +80,29 @@
     $("probe-out").textContent = "probing...";
     R.probePath(path, { nameLimit: 60 }, function (info) { R.manualProbes.push(info); $("probe-out").textContent = formatProbe(info); });
   };
-  $("b-dc").onclick = function () {
-    R.inputs.dcapturePath = $("dc-path").value.replace(/^\s+|\s+$/g, "");
-    $("dc-out").textContent = "probing (about 3 s)...";
-    var ids = ["dcapture.known_path", "dcapture.watch"], i = 0, text = [];
+  // Runs one or more tests by id outside a full group run and prints each result into outElement.
+  function runNamed(ids, outElement, busyText) {
+    outElement.textContent = busyText || "running...";
+    var i = 0, text = [];
     (function next() {
-      if (i >= ids.length) { $("dc-out").textContent = text.join("\n\n"); showReport(); return; }
+      if (i >= ids.length) { outElement.textContent = text.join("\n\n"); showReport(); return; }
       var id = ids[i++], test = null, j;
       for (j = 0; j < R.tests.length; j++) if (R.tests[j].id === id) test = R.tests[j];
-      R.runTest(test, function (r) { paint(r); text.push(r.name + ": " + r.status + (r.error ? " (" + r.error + ")" : "") + "\n" + R.short(r.value, 700)); counts(); next(); });
+      if (!test) { text.push(id + ": no such test"); next(); return; }
+      R.runTest(test, function (r) { paint(r); text.push(r.name + ": " + r.status + (r.error ? " (" + r.error + ")" : "") + "\n" + R.short(r.value, 900)); counts(); next(); });
     })();
+  }
+  $("b-dc-read").onclick = function () {
+    R.inputs.dcapturePath = $("dc-path").value.replace(/^\s+|\s+$/g, "");
+    runNamed(["dcapture.known_path"], $("dc-out"), "reading...");
+  };
+  $("b-dc-watch").onclick = function () {
+    R.inputs.dcapturePath = $("dc-path").value.replace(/^\s+|\s+$/g, "");
+    runNamed(["dcapture.watch"], $("dc-out"), "watching for 5 s...");
+  };
+  $("b-shm-watch").onclick = function () {
+    R.inputs.shmWatchPath = $("shm-path").value.replace(/^\s+|\s+$/g, "");
+    runNamed(["sharedmem.watch"], $("shm-out"), "watching for 5 s...");
   };
 
   function stampName() {

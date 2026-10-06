@@ -31,6 +31,34 @@
     for (i = 0; i < bytes.length && i < count; i++) { c = bytes[i]; out += c >= 32 && c < 127 ? String.fromCharCode(c) : "."; }
     return out;
   }
+  R.hex = hex;
+  R.text = text;
+
+  // offset/hex/printable dump, 16 bytes per line, capped at 256 lines (4096 bytes) so a report never carries a megabyte of text.
+  R.hexDump = function (bytes, max) {
+    var lines = [], i, j, limit = Math.min(bytes.length, max || 4096), hexPart, textPart, b;
+    for (i = 0; i < limit; i += 16) {
+      hexPart = []; textPart = "";
+      for (j = i; j < Math.min(i + 16, limit); j++) { b = bytes[j] & 255; hexPart.push((b < 16 ? "0" : "") + b.toString(16)); textPart += b >= 32 && b < 127 ? String.fromCharCode(b) : "."; }
+      lines.push(pad6(i) + "  " + hexPart.join(" ") + "  " + textPart);
+    }
+    return lines.join("\n");
+  };
+  function pad6(n) { var s = n.toString(16); while (s.length < 6) s = "0" + s; return s; }
+
+  // Common file signatures and printable/zero ratios, from whatever bytes were already read.
+  R.classifyBytes = function (bytes) {
+    var n = bytes.length, printable = 0, zero = 0, i, b, out = { byteCount: n, printableRatio: 0, zeroByteRatio: 0, likelyJPEG: false, likelyPNG: false, likelyGZIP: false, likelyELF: false, likelyText: false, likelyBinary: false };
+    for (i = 0; i < n; i++) { b = bytes[i] & 255; if (b === 0) zero++; if ((b >= 32 && b < 127) || b === 9 || b === 10 || b === 13) printable++; }
+    if (n) { out.printableRatio = Math.round(printable / n * 1000) / 1000; out.zeroByteRatio = Math.round(zero / n * 1000) / 1000; }
+    out.likelyJPEG = n > 2 && (bytes[0] & 255) === 0xff && (bytes[1] & 255) === 0xd8 && (bytes[2] & 255) === 0xff;
+    out.likelyPNG = n > 3 && (bytes[0] & 255) === 0x89 && (bytes[1] & 255) === 0x50 && (bytes[2] & 255) === 0x4e && (bytes[3] & 255) === 0x47;
+    out.likelyGZIP = n > 1 && (bytes[0] & 255) === 0x1f && (bytes[1] & 255) === 0x8b;
+    out.likelyELF = n > 3 && (bytes[0] & 255) === 0x7f && (bytes[1] & 255) === 0x45 && (bytes[2] & 255) === 0x4c && (bytes[3] & 255) === 0x46;
+    out.likelyText = !out.likelyJPEG && !out.likelyPNG && !out.likelyGZIP && !out.likelyELF && out.printableRatio >= 0.85;
+    out.likelyBinary = !out.likelyText && !out.likelyJPEG && !out.likelyPNG && !out.likelyGZIP && !out.likelyELF;
+    return out;
+  };
 
   // The result of probing one path. opts: { nameLimit }
   function probePath(path, opts, cb) {
@@ -85,9 +113,58 @@
   }
   R.probePath = probePath;
 
-  // Create, verify and delete a file with a unique name of our own. cb({ ok, steps, error, created, deleted })
+  // Raw bytes of one file, up to maxBytes. cb({ exists, isFile, isDirectory, fileSize, modified, readable, bytesRead, bytes, error })
+  R.readFile = function (path, maxBytes, cb) {
+    var out = { path: path, exists: false, isFile: false, isDirectory: false, fileSize: null, modified: null, readable: false, bytesRead: 0, bytes: null, error: null };
+    resolveAny(path.charAt(0) === "/" ? ["file://" + path, path] : [path], "r", function (error, file) {
+      if (error) { out.error = error; cb(out); return; }
+      out.exists = true;
+      try { out.isDirectory = !!file.isDirectory; out.isFile = !!file.isFile; out.fileSize = file.isFile ? file.fileSize : null; out.modified = R.safe(function () { return file.modified ? new Date(file.modified).toISOString() : null; }, null); }
+      catch (e) { out.error = "stat: " + R.errText(e); cb(out); return; }
+      if (!out.isFile) { cb(out); return; }
+      if (!out.fileSize) { out.readable = true; out.bytes = []; cb(out); return; }
+      try {
+        file.openStream("r", function (stream) {
+          try { out.bytes = stream.readBytes(Math.min(out.fileSize, maxBytes || 4096)); out.bytesRead = out.bytes.length; out.readable = true; }
+          catch (e2) { out.error = "read: " + R.errText(e2); }
+          try { stream.close(); } catch (e3) { /* ignore */ }
+          cb(out);
+        }, function (e4) { out.error = "open: " + R.errText(e4); cb(out); }, "r");
+      } catch (e5) { out.error = "open: " + R.errText(e5); cb(out); }
+    });
+  };
+
+  // Polls one path's size/mtime/content fingerprint for durationMs, no faster than every minGapMs (default 100 ms = 10 Hz).
+  // cb({ path, samples, changes: { mtime, size, content } })
+  R.watchPath = function (path, durationMs, minGapMs, cb) {
+    var out = { path: path, samples: [] }, began = Date.now();
+    (function next() {
+      R.readFile(path, 16, function (info) {
+        out.samples.push({ at: Date.now() - began, size: info.fileSize, modified: info.modified, error: info.error,
+          first16Hex: info.bytes && info.bytes.length ? R.hex(info.bytes, 16) : null });
+        if (Date.now() - began >= durationMs) { finish(); return; }
+        setTimeout(next, minGapMs || 100);
+      });
+    })();
+    function finish() {
+      var sizes = {}, mods = {}, hexes = {};
+      out.samples.forEach(function (s) { sizes[s.size] = 1; mods[s.modified] = 1; hexes[s.first16Hex] = 1; });
+      out.changes = { size: Object.keys(sizes).length - 1, mtime: Object.keys(mods).length - 1, content: Object.keys(hexes).length - 1 };
+      out.changes.total = Math.max(out.changes.size, out.changes.mtime, out.changes.content, 0);
+      cb(out);
+    }
+  };
+
+  var WRITE_PAYLOAD = "NU7100_RECON_TEST";
+
+  // Create, write, close, reopen, read back, verify and delete a file with a unique name of our own.
+  // cb({ ok, steps: { resolve, create, write, read, verify, delete }, error, created, deleted })
+  // The v0.1 bug: openStream's 4th argument is the ENCODING, not the mode ("w" there is not a valid encoding
+  // and threw TypeMismatchError before a single byte was written) - openStream(mode, onSuccess, onError, encoding).
   function writeTest(dirLocation, cb) {
-    var name = "nu7100-recon-test-" + Date.now(), out = { dir: dirLocation, name: name, ok: false, steps: [], error: null, created: false, deleted: false };
+    var name = "nu7100-recon-write-test-" + Date.now(), encoding = "UTF-8";
+    var out = { dir: dirLocation, name: name, ok: false, created: false, deleted: false, error: null,
+      steps: { resolve: null, create: null, write: null, read: null, verify: null, delete: null } };
     function end(error) { if (error) out.error = error; cb(out); }
     function cleanup(dir, file, error) {
       var candidates = [];
@@ -97,30 +174,41 @@
       var i = 0;
       (function tryDelete() {
         while (i < candidates.length && candidates[i].slice(-name.length) !== name) i++; // only ever our own file
-        if (i >= candidates.length) { end(error ? error : "created but could not delete " + name + " (tried " + candidates.join(", ") + ")"); return; }
+        if (i >= candidates.length) { out.steps.delete = "could not delete " + name + " (tried " + candidates.join(", ") + ")"; end(error || out.steps.delete); return; }
         var candidate = candidates[i++];
         try {
-          dir.deleteFile(candidate, function () { out.deleted = true; out.steps.push("deleted via " + candidate); end(error); }, function () { tryDelete(); });
-        } catch (e2) { tryDelete(); }
+          dir.deleteFile(candidate, function () { out.deleted = true; out.steps.delete = "ok via " + candidate; end(error); },
+            function (e3) { out.steps.delete = R.errText(e3); tryDelete(); });
+        } catch (e2) { out.steps.delete = R.errText(e2); tryDelete(); }
       })();
     }
     resolveAny(dirLocation.charAt(0) === "/" ? ["file://" + dirLocation, dirLocation] : [dirLocation], "rw", function (error, dir) {
-      if (error) { out.steps.push("resolve rw failed"); end("resolve rw: " + error); return; }
-      out.steps.push("resolved rw");
+      if (error) { out.steps.resolve = error; end("resolve rw: " + error); return; }
+      out.steps.resolve = "ok";
       var file;
-      try { file = dir.createFile(name); out.created = true; out.steps.push("created"); } catch (e) { end("createFile: " + R.errText(e)); return; }
+      try { file = dir.createFile(name); out.created = true; out.steps.create = "ok"; } catch (e) { out.steps.create = R.errText(e); end("createFile: " + R.errText(e)); return; }
       try {
-        file.openStream("w", function (stream) {
-          try { stream.write("nu7100-recon"); stream.close(); out.steps.push("wrote 12 bytes"); } catch (e2) { cleanup(dir, file, "write: " + R.errText(e2)); return; }
-          dir.listFiles(function (files) {
-            var seen = false, i;
-            for (i = 0; i < files.length; i++) if (files[i].name === name) { seen = true; out.sizeSeen = files[i].fileSize; }
-            out.steps.push(seen ? "visible in listing" : "NOT in listing");
-            out.ok = seen && out.sizeSeen === 12;
-            cleanup(dir, file, out.ok ? null : "written file not seen with the right size");
-          }, function (e3) { out.ok = true; out.steps.push("listing failed: " + R.errText(e3)); cleanup(dir, file, null); });
-        }, function (e4) { cleanup(dir, file, "openStream w: " + R.errText(e4)); }, "w");
-      } catch (e5) { cleanup(dir, file, "openStream w: " + R.errText(e5)); }
+        file.openStream("w", function (writeStream) {
+          try { writeStream.write(WRITE_PAYLOAD); writeStream.close(); out.steps.write = "ok (" + WRITE_PAYLOAD.length + " bytes)"; }
+          catch (e2) { out.steps.write = R.errText(e2); cleanup(dir, file, "write: " + R.errText(e2)); return; }
+          // Reopen (not the same handle) so this is a genuine readback, not the writer's own buffer.
+          resolveAny([dirLocation.replace(/\/$/, "") + "/" + name], "r", function (reErr, reread) {
+            if (reErr) { out.steps.read = reErr; cleanup(dir, file, "reopen for read: " + reErr); return; }
+            try {
+              reread.openStream("r", function (readStream) {
+                var back;
+                try { back = readStream.read(WRITE_PAYLOAD.length); out.steps.read = "ok (" + back.length + " chars)"; }
+                catch (e3) { out.steps.read = R.errText(e3); cleanup(dir, file, "read: " + R.errText(e3)); return; }
+                try { readStream.close(); } catch (e4) { /* ignore */ }
+                out.readBack = back;
+                out.steps.verify = back === WRITE_PAYLOAD ? "exact match" : "MISMATCH: wrote " + JSON.stringify(WRITE_PAYLOAD) + ", read " + JSON.stringify(back);
+                out.ok = back === WRITE_PAYLOAD;
+                cleanup(dir, file, out.ok ? null : out.steps.verify);
+              }, function (e5) { out.steps.read = R.errText(e5); cleanup(dir, file, "openStream r: " + R.errText(e5)); }, encoding);
+            } catch (e6) { out.steps.read = R.errText(e6); cleanup(dir, file, "openStream r: " + R.errText(e6)); }
+          });
+        }, function (e7) { out.steps.write = R.errText(e7); cleanup(dir, file, "openStream w: " + R.errText(e7)); }, encoding);
+      } catch (e8) { out.steps.write = R.errText(e8); cleanup(dir, file, "openStream w: " + R.errText(e8)); }
     });
   }
   R.writeTest = writeTest;

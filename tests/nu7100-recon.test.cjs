@@ -8,7 +8,7 @@ var test = require("node:test");
 var acorn = require("acorn");
 
 var DIR = path.join(__dirname, "..", "tools", "nu7100-recon");
-var FILES = ["js/core.js", "js/tests/system.js", "js/tests/filesystem.js", "js/tests/dcapture.js", "js/tests/process.js", "js/tests/network.js", "js/tests/ipc.js", "js/app.js"];
+var FILES = ["js/core.js", "js/tests/system.js", "js/tests/filesystem.js", "js/tests/sharedmem.js", "js/tests/dcapture.js", "js/tests/process.js", "js/tests/network.js", "js/tests/ipc.js", "js/app.js"];
 
 test("the recon app is plain ES5 (Chromium M56 on the TV)", function () {
   FILES.forEach(function (file) {
@@ -21,7 +21,7 @@ test("the recon app is plain ES5 (Chromium M56 on the TV)", function () {
 
 // A small in-memory tizen.filesystem: two writable directories and one that refuses.
 function fakeTizen() {
-  var store = { "/tmp": {}, "/dev/shm": { "nuvio-series.jpg": "\xff\xd8\xff\xe0abc" } };
+  var store = { "/tmp": {}, "/dev/shm": { "nuvio-series.jpg": "\xff\xd8\xff\xe0abc", "shm_ave": "not a signature, plain ascii text", "WK2SharedMemory.inspector.port": "37011" } };
   function dirObject(p) {
     return {
       isDirectory: true, isFile: false, readOnly: false, fullPath: p, name: p.split("/").pop(), toURI: function () { return "file://" + p; },
@@ -34,7 +34,8 @@ function fakeTizen() {
     return {
       isDirectory: false, isFile: true, readOnly: false, name: n, fullPath: p + "/" + n, fileSize: store[p][n].length, modified: new Date(1e12), toURI: function () { return "file://" + p + "/" + n; },
       openStream: function (mode, ok) {
-        ok({ readBytes: function (c) { return store[p][n].split("").slice(0, c).map(function (ch) { return ch.charCodeAt(0); }); }, write: function (s) { store[p][n] = s; }, close: function () {} });
+        ok({ readBytes: function (c) { return store[p][n].split("").slice(0, c).map(function (ch) { return ch.charCodeAt(0); }); },
+          read: function (c) { return store[p][n].slice(0, c); }, write: function (s) { store[p][n] = s; }, close: function () {} });
       }
     };
   }
@@ -63,7 +64,7 @@ function load() {
   window.XMLHttpRequest = function () { var self = this; this.open = function () {}; this.send = function () { setTimeout(function () { self.onerror(); }, 1); }; };
   window.WebSocket = function () { var self = this; setTimeout(function () { self.onerror(); }, 1); this.close = function () {}; };
   var context = vm.createContext(window);
-  FILES.slice(0, 7).forEach(function (file) { vm.runInContext(fs.readFileSync(path.join(DIR, file), "utf8"), context, { filename: file }); });
+  FILES.slice(0, 8).forEach(function (file) { vm.runInContext(fs.readFileSync(path.join(DIR, file), "utf8"), context, { filename: file }); });
   return context;
 }
 
@@ -80,6 +81,30 @@ test("every recon test finishes with a structured result, and refusals are not c
       ["id", "category", "name", "status", "value", "error", "timestamp"].forEach(function (k) { assert.ok(k in r, tt.id + " has " + k); });
     });
     var status = function (id) { return R.results[id].status; };
+    // the openStream encoding-argument bug (v0.1): writeTest must now actually write, reopen and verify the exact bytes
+    var w1 = R.results["filesystem.write./dev/shm"].value;
+    assert.equal(w1.steps.write.indexOf("ok") , 0, "write step: " + w1.steps.write);
+    assert.equal(w1.steps.verify, "exact match");
+    assert.equal(w1.readBack, "NU7100_RECON_TEST");
+    assert.equal(status("filesystem.write./dev/shm"), "PASS");
+    // sharedmem: signature detection on the fake shm_ave (plain text) and the inspector port file (a small numeric string)
+    assert.equal(status("sharedmem.object.shm_ave"), "PASS");
+    assert.equal(R.results["sharedmem.object.shm_ave"].value.likelyText, true);
+    assert.equal(status("sharedmem.inspector_port"), "PASS");
+    assert.equal(R.results["sharedmem.inspector_port"].value.asText, "37011");
+    assert.equal(R.results["sharedmem.inspector_port"].value.looksNumeric, true);
+    // dcapture.known_path must classify the fake JPEG bytes via the shared classifyBytes helper
+    assert.equal(status("dcapture.known_path"), "PASS");
+    assert.equal(R.results["dcapture.known_path"].value.looksLikeJpeg, true);
+    var findings = R.findings();
+    assert.equal(findings.sharedMemory.shm_ave.likelyJPEG, false);
+    assert.equal(findings.inspector.value, "37011");
+    assert.equal(findings.dcapture.knownPathRead, "PASS");
+    var report2 = R.report();
+    assert.equal(report2.reconVersion, "0.2.0");
+    assert.equal(report2.device.model, "UE49NU7100");
+    assert.ok(report2.findings);
+    assert.ok(report2.sharedmem["sharedmem.object.shm_ave"]);
     assert.equal(status("filesystem.path./dev/shm"), "PASS");
     assert.equal(R.results["filesystem.path./dev/shm"].value.entries[0].indexOf("nuvio-series.jpg") >= 0, true);
     assert.equal(status("filesystem.path./proc"), "BLOCKED", "a permission error is BLOCKED, not a crash");

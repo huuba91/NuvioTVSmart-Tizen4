@@ -7,7 +7,7 @@ import JSZip from "jszip";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const outDir = path.resolve(here, "../../.cache/nu7100-recon");
-const files = ["config.xml", "index.html", "css/style.css", "js/core.js", "js/app.js", "js/tests/system.js", "js/tests/filesystem.js", "js/tests/dcapture.js",
+const files = ["config.xml", "index.html", "css/style.css", "js/core.js", "js/app.js", "js/tests/system.js", "js/tests/filesystem.js", "js/tests/sharedmem.js", "js/tests/dcapture.js",
   "js/tests/process.js", "js/tests/network.js", "js/tests/ipc.js", "assets/icon.png"];
 const pcIndex = process.argv.indexOf("--pc");
 const pc = pcIndex > 0 ? process.argv[pcIndex + 1].replace(/\/$/, "") : "";

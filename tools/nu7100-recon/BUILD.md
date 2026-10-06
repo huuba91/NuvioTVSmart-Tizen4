@@ -62,3 +62,22 @@ it with `& $sdb pull <path-from-the-uri> .` (if sdb is allowed to read that fold
 - A web page can only reach files through `tizen.filesystem`, so "can the WGT see /proc" means "can tizen.filesystem resolve it".
 - `window.require`, `process` and `Buffer` almost certainly do not exist in a page; that is exactly what the report will confirm. Node only
   exists inside the packaged web service (which is where Nuvio's capture runs), not in this page.
+
+## v0.2 changes
+
+- Fixed the write test: `openStream`'s 4th argument is the **encoding**, not the mode (v0.1 passed `"w"` there, which is not a
+  valid encoding and threw `TypeMismatchError` before anything was written - so the old PASS/PARTIAL verdicts never proved a real
+  write). It now writes `NU7100_RECON_TEST`, closes, reopens with a fresh handle, reads it back and checks the bytes match exactly,
+  for `/dev/shm`, `/tmp` and `wgt-private-tmp`.
+- New **SHARED MEMORY** tests: every non-semaphore `/dev/shm` object found in v0.1 (`shm_ave`, `shm_ave_tddg`, `shm_socpq`,
+  `shm_tvsystem`) is read and classified (JPEG/PNG/GZIP/ELF signature, printable/zero-byte ratio). `WK2SharedMemory.inspector.port`
+  gets its own probe (hex + text, never interpreted). `sem.DevToolsPort.lock*` gets metadata only, never opened. A **WATCH SHM** field
+  polls any one path at 10 Hz for 5 s and reports size/mtime/content changes.
+- **Known dcapture path** now has separate READ and WATCH 5 SEC buttons (was one combined probe).
+- New `/tmp` one-level inventory of socket/inspector/WebKit-looking names, and a dedicated resolve/stat/open probe for
+  `/tmp/fcgi_plugin_0.socket` (never a connection attempt).
+- `FINDINGS` block added above the full report: short PASS/FAIL per headline question.
+- Deliberately **not** built: raw device-node probing (`/dev/mem`, `/dev/kmem`, `/dev/RAW-mmap`, video device nodes), reading
+  `/etc/passwd` or other general system files, `/proc`/`/sys` one-level enumeration, and the API member-recursion scan. None of these
+  bear on the ambilight project (the goal of this app), and several (`/dev/mem`, `/dev/kmem`) are exactly the kind of kernel-memory
+  access this scanner is meant to stay away from. Ask if you want any of these added back.

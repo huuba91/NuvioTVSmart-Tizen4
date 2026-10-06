@@ -28,7 +28,9 @@
 <div id="probes" class="box">
   Probe path: <input class="nav" id="probe-path" value="/dev/shm"> <button class="nav" id="b-probe">PROBE</button>
   <pre id="probe-out"></pre>
-  Known dcapture path: <input class="nav" id="dc-path" value=""> <button class="nav" id="b-dc">PROBE</button>
+  WATCH SHM path: <input class="nav" id="shm-path" value="/dev/shm/shm_ave"> <button class="nav" id="b-shm-watch">WATCH 5 SEC</button>
+  <pre id="shm-out"></pre>
+  Known dcapture path: <input class="nav" id="dc-path" value=""> <button class="nav" id="b-dc-read">READ</button> <button class="nav" id="b-dc-watch">WATCH 5 SEC</button>
   <pre id="dc-out"></pre>
 </div>
 <div id="progress"><div id="bar"></div></div>
@@ -36,10 +38,12 @@
 <div id="summary"></div>
 <table id="results"><thead><tr><th>TEST NAME</th><th>STATUS</th><th>RESULT</th></tr></thead><tbody></tbody></table>
 <h2>FINGERPRINT</h2><pre id="fingerprint">(run the tests)</pre>
+<h2>FINDINGS</h2><pre id="findings">(run the tests)</pre>
 <h2>REPORT</h2><textarea id="report" class="nav" readonly rows="14"></textarea>
 <script src="js/core.js"></script>
 <script src="js/tests/system.js"></script>
 <script src="js/tests/filesystem.js"></script>
+<script src="js/tests/sharedmem.js"></script>
 <script src="js/tests/dcapture.js"></script>
 <script src="js/tests/process.js"></script>
 <script src="js/tests/network.js"></script>

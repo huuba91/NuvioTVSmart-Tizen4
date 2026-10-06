@@ -2,8 +2,8 @@
 (function (g) {
   "use strict";
   var STATUSES = ["PASS", "FAIL", "BLOCKED", "NOT_AVAILABLE", "PARTIAL", "ERROR"];
-  var GROUP_OF = { system: "system", api: "system", filesystem: "filesystem", dcapture: "filesystem", process: "process", network: "ipc", ipc: "ipc" };
-  var Recon = { STATUSES: STATUSES, tests: [], results: {}, order: [], log: [], manualProbes: [], inputs: { dcapturePath: "" }, TIMEOUT_MS: 12000 };
+  var GROUP_OF = { system: "system", api: "system", filesystem: "filesystem", dcapture: "filesystem", sharedmem: "filesystem", process: "process", network: "ipc", ipc: "ipc" };
+  var Recon = { STATUSES: STATUSES, VERSION: "0.2.0", tests: [], results: {}, order: [], log: [], manualProbes: [], inputs: { dcapturePath: "", shmWatchPath: "" }, TIMEOUT_MS: 12000 };
 
   function pad(n) { return n < 10 ? "0" + n : String(n); }
   Recon.clock = function () { var d = new Date(); return pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds()); };
@@ -133,14 +133,39 @@
     return f;
   };
 
+  // Short answers to the headline questions, visible without opening the full report.
+  Recon.findings = function () {
+    var v = Recon.value, s = Recon.status, out = { filesystemWrite: {}, sharedMemory: {}, inspector: {}, dcapture: {} };
+    ["filesystem.write./dev/shm", "filesystem.write./tmp", "filesystem.write.wgt-private-tmp"].forEach(function (id) {
+      var r = Recon.results[id]; if (r) out.filesystemWrite[id.replace("filesystem.write.", "")] = r.status + (r.value && r.value.steps ? " (" + JSON.stringify(r.value.steps) + ")" : "");
+    });
+    ["shm_ave", "shm_ave_tddg", "shm_socpq", "shm_tvsystem"].forEach(function (name) {
+      var r = Recon.results["sharedmem.object." + name];
+      out.sharedMemory[name] = r ? { status: r.status, size: r.value && r.value.size, likelyJPEG: r.value && r.value.likelyJPEG, likelyBinary: r.value && r.value.likelyBinary } : "NOT_RUN";
+    });
+    var watch = v("sharedmem.watch");
+    out.sharedMemory.watchedPathChanges = watch ? watch.changes : "NOT_RUN";
+    var insp = v("sharedmem.inspector_port");
+    out.inspector.port = s("sharedmem.inspector_port") || "NOT_RUN";
+    out.inspector.value = insp ? insp.asText : null;
+    out.inspector.devToolsSemaphores = v("sharedmem.devtools_sem") || "NOT_RUN";
+    out.dcapture.knownPathRead = s("dcapture.known_path") || "NOT_RUN";
+    out.dcapture.knownPathWatch = v("dcapture.watch") ? v("dcapture.watch").changes : "NOT_RUN";
+    out.dcapture.tmpSockets = v("dcapture.tmp_sockets") || "NOT_RUN";
+    return out;
+  };
+
   Recon.report = function () {
-    var out = { application: { name: "NU-7100-Recon", version: "0.1.0", generated: Recon.stamp() }, device: {}, apis: {}, filesystem: {}, process: {}, network: {}, ipc: {}, dcapture: {}, manualProbes: Recon.manualProbes, fingerprint: Recon.fingerprint(), tests: [], log: Recon.log };
+    var out = { reconVersion: Recon.VERSION, device: { model: "UE49NU7100", firmware: "T-KTM2LDEUC-1360.0", platform: "Tizen 4.0", architecture: "armv7" },
+      application: { name: "NU-7100-Recon", version: Recon.VERSION, generated: Recon.stamp() }, apis: {}, filesystem: {}, sharedmem: {}, process: {}, network: {}, ipc: {}, dcapture: {},
+      manualProbes: Recon.manualProbes, fingerprint: Recon.fingerprint(), findings: Recon.findings(), tests: [], log: Recon.log };
     var i, r, bucket;
     for (i = 0; i < Recon.order.length; i++) {
       r = Recon.results[Recon.order[i]];
       out.tests.push(r);
       bucket = r.category === "system" ? "device" : r.category === "api" ? "apis" : r.category;
-      if (out[bucket]) out[bucket][r.id] = { status: r.status, value: r.value, error: r.error };
+      if (!out[bucket]) out[bucket] = {};
+      out[bucket][r.id] = { status: r.status, value: r.value, error: r.error };
     }
     return out;
   };
