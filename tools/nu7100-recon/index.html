@@ -23,6 +23,7 @@
   <button class="nav" id="b-export">EXPORT REPORT</button>
   <button class="nav" id="b-clear">CLEAR</button>
 </div>
+<pre id="exported"></pre>
 <div id="probes" class="box">
   Probe path: <input class="nav" id="probe-path" value="/dev/shm"> <button class="nav" id="b-probe">PROBE</button>
   <pre id="probe-out"></pre>
@@ -35,7 +36,6 @@
 <table id="results"><thead><tr><th>TEST NAME</th><th>STATUS</th><th>RESULT</th></tr></thead><tbody></tbody></table>
 <h2>FINGERPRINT</h2><pre id="fingerprint">(run the tests)</pre>
 <h2>REPORT</h2><textarea id="report" class="nav" readonly rows="14"></textarea>
-<div id="exported"></div>
 <script src="js/core.js"></script>
 <script src="js/tests/system.js"></script>
 <script src="js/tests/filesystem.js"></script>

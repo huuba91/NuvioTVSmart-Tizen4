@@ -94,20 +94,33 @@
     var d = new Date();
     return "nu7100-recon-" + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + "-" + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds()) + ".json";
   }
-  $("b-export").onclick = function () {
-    showReport();
-    var name = stampName(), body = $("report").value;
-    $("exported").textContent = "saving " + name + " ...";
-    R.resolveAny(["documents"], "rw", function (error, dir) {
-      if (error) { $("exported").textContent = "Could not save a file (" + error + "). Copy the REPORT text below instead."; return; }
+  // Writes the report into one virtual root; cb(message) always fires (9 s guard).
+  function saveTo(root, name, body, cb) {
+    var finished = false, timer = setTimeout(function () { end(root + ": no answer in 9 s"); }, 9000);
+    function end(msg) { if (finished) return; finished = true; clearTimeout(timer); cb(msg); }
+    R.resolveAny([root], "rw", function (error, dir) {
+      if (error) { end(root + ": cannot open (" + error + ")"); return; }
       try {
         var file = dir.createFile(name);
         file.openStream("w", function (stream) {
-          try { stream.write(body); stream.close(); $("exported").textContent = "Saved " + name + " in documents: " + (R.safe(function () { return file.toURI(); }) || file.fullPath); }
-          catch (e) { $("exported").textContent = "Write failed (" + R.errText(e) + "). Copy the REPORT text below instead."; }
-        }, function (e2) { $("exported").textContent = "Open failed (" + R.errText(e2) + "). Copy the REPORT text below instead."; }, "w");
-      } catch (e3) { $("exported").textContent = "Create failed (" + R.errText(e3) + "). Copy the REPORT text below instead."; }
+          try { stream.write(body); stream.close(); end(root + ": SAVED as " + (R.safe(function () { return file.toURI(); }) || file.fullPath) + "  (virtual path " + file.fullPath + ")"); }
+          catch (e) { end(root + ": write failed (" + R.errText(e) + ")"); }
+        }, function (e2) { end(root + ": open failed (" + R.errText(e2) + ")"); }, "w");
+      } catch (e3) { end(root + ": create failed (" + R.errText(e3) + ")"); }
     });
+  }
+  $("b-export").onclick = function () {
+    showReport();
+    var name = stampName(), body = $("report").value, lines = ["EXPORT " + name + " (" + body.length + " bytes)"], roots = ["documents", "wgt-private"], i = 0;
+    $("exported").textContent = lines.join("\n") + "\nsaving...";
+    (function next() {
+      if (i >= roots.length) {
+        lines.push("The same JSON is in the REPORT box at the bottom of the page (press the DOWN arrow to reach it).");
+        $("exported").textContent = lines.join("\n");
+        return;
+      }
+      saveTo(roots[i++], name, body, function (msg) { lines.push(msg); $("exported").textContent = lines.join("\n") + "\nsaving..."; next(); });
+    })();
   };
 
   // remote control: arrows move the focus, BACK exits
