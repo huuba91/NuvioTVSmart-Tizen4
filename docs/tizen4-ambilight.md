@@ -241,3 +241,12 @@ mode. Every combination gave the same result:
 So mode 3's "twice as fast" was the service answering success with an unchanging picture, which is also the frozen blue/green blocks seen in a
 movie. Mode 2 is the default again (~14 pictures/s). Mode 1 sometimes answers `-5` on 10-bit HEVC and its first picture can be black. Mode 3
 stays selectable (`/ambilight/capture-mode?mode=3`) for experiments only.
+
+### Strip update rate and timing breakdown
+
+- The colours were already decoupled from the picture rate: a critically damped spring (`Glide`) steps every tick and the strip only sends when
+  the colour changed. The strip now has its own timer, default 20/s, changeable live: `/ambilight/strip-rate?hz=40` (5-60). It only helps if
+  the strip itself takes more than ~25 packets/s, so test that first (see the strip ceiling test).
+- `capture-series` (and the lab matrix) now report `timing`: median / 90th percentile of the capture call, file read and JPEG decode in ms per
+  mode, to show whether the ~38 ms capture is service, IPC or our JavaScript. The lab's `series` asks for up to 40 pictures/s, so a long run
+  works: `node tools/capture-lab/lab-cli.mjs matrix --tv 192.168.129.0 --clips h264-1080p.mp4 --engines html --modes 1,2 --seconds 60`.

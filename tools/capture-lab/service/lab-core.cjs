@@ -38,6 +38,7 @@ function scoreSeries(series, clipStartEpoch) {
   });
   var keys = Object.keys(distinct), top = 0;
   keys.forEach(function (k) { if (distinct[k] > top) top = distinct[k]; });
+  out.timing = series.timing || null; // median / 90th percentile ms: capture call, file read, decode
   out.distinctPictures = keys.length;
   out.sizeRange = [sizeMin, sizeMax];
   out.classCounts = classCounts;

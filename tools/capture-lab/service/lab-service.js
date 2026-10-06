@@ -38,7 +38,7 @@ function readBody(request, cb) {
 // One capture series through the ambilight routes of this same service.
 function series(mode, seconds) {
   return new Promise(function (resolve, reject) {
-    var request = http.get({ host: "127.0.0.1", port: port, path: "/ambilight/capture-series?mode=" + mode + "&seconds=" + seconds }, function (response) {
+    var request = http.get({ host: "127.0.0.1", port: port, path: "/ambilight/capture-series?mode=" + mode + "&seconds=" + seconds + "&max=" + Math.min(300, Math.ceil(seconds * 40)) }, function (response) {
       var text = "";
       response.setEncoding("utf8");
       response.on("data", function (c) { text += c; });

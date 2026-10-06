@@ -1381,8 +1381,18 @@ test("capture-series records zone colours, size and checksum of each picture", {
     var s1 = real.samples[0];
     assert.ok(s1.L[0] > 150 && s1.R[2] > 70 && s1.R[0] < 40, "mode 1 gives the half red, half blue screen: " + JSON.stringify(s1));
     assert.ok(real.perSecond > 0);
+    assert.ok(real.timing && real.timing.callMs.median >= 0 && real.timing.decodeMs.p90 >= 0, "timing breakdown: " + JSON.stringify(real.timing));
+    assert.ok(typeof first.callMs === "number" && typeof first.readMs === "number" && typeof first.decodeMs === "number");
   } finally {
     process.env.PATH = originalPath;
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("strip-rate sets how often the strip is updated, within 5-60 per second", async function () {
+  assert.equal((await call("/ambilight/strip-rate")).body.stripHz, 20, "20/s by default");
+  assert.equal((await call("/ambilight/strip-rate?hz=40")).body.stripHz, 40);
+  assert.equal((await call("/ambilight/strip-rate?hz=500")).body.stripHz, 40, "out of range is ignored");
+  assert.equal((await call("/ambilight/strip-rate?hz=2.5")).body.stripHz, 40);
+  assert.equal((await call("/ambilight/strip-rate?hz=20")).body.stripHz, 20);
 });

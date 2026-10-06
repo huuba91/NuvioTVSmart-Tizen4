@@ -45,6 +45,7 @@
 //   GET /ambilight/periodic-probe?ms=300&seconds=2   does StartPeriodicCapture write files, and where
 //   GET /ambilight/capture-format?mode=png|jpeg&quality=60   capture as small JPEG (default) or PNG
 //   GET /ambilight/capture-rate?max=15               cap on pictures per second, all loops together (0 = no cap)
+//   GET /ambilight/strip-rate?hz=40                 colour updates per second to the strip (5-60, default 20), live
 //   GET /ambilight/capture-workers?count=3           overlapped capture loops (1-8), live; more = higher picture rate, more CPU
 //   GET /ambilight/capture-mode?mode=0|1|2|3         which dcapture mode the ambilight captures (3 = video only, default)
 //   GET /ambilight/capture-tool?mode=busctl-sh|busctl|gdbus   how the capture call is made (busctl-sh default, falls back down the list)
@@ -96,6 +97,7 @@ var toolFailures = 0;
 var serviceErrorsInARow = 0; // captures the service itself refused (reply code other than 0), counted for the mode fallback
 var shellRunners = []; // live capture shells, for CPU accounting and clean-up
 var TICK_MS = 50; // colour updates per bulb between pictures: 20/s (the PC sync sends up to 30/s)
+var stripHz = 20; // colour updates per second to the strip between pictures; /ambilight/strip-rate?hz=40 changes it live
 var FLIP_BACK_AFTER = 500; // anti-flicker: no straight return to the colour just left within this time
 
 var jpegDc = require("./jpeg-dc.cjs");
@@ -858,6 +860,8 @@ Session.prototype.begin = function () {
     self.running = true;
     self.lastTick = Date.now();
     self.ticker = setInterval(function () { self.tick(); }, TICK_MS);
+    self.lastStripTick = Date.now();
+    self.scheduleStrip();
     self.takeSample(Date.now());
     self.ensureWorkers();
   }
@@ -1104,8 +1108,20 @@ Session.prototype.tick = function () {
     if (b.armed && b.pos !== "off" && states[b.pos]) b.show(states[b.pos], level);
     b.heartbeat(now);
   });
-  if (this.strip) this.strip.tick(dt, level);
   this.busy.tick += hr() - busyStart;
+};
+
+// The strip has its own, faster timer: it only takes the smoothed colours, and the same picture rate looks smoother at 40/s.
+Session.prototype.scheduleStrip = function () {
+  var self = this;
+  clearInterval(this.stripTicker);
+  this.stripTicker = setInterval(function () {
+    if (!self.strip || self.stopped) return;
+    var busyStart = hr(), now = Date.now(), dt = Math.max(0.001, Math.min(0.25, (now - self.lastStripTick) / 1000));
+    self.lastStripTick = now;
+    self.strip.tick(dt, self.level);
+    self.busy.tick += hr() - busyStart;
+  }, Math.round(1000 / stripHz));
 };
 
 Session.prototype.update = function (assignments, level, stripConfig) {
@@ -1132,6 +1148,7 @@ Session.prototype.stop = function (reason) {
   } catch (_) { /* diagnostics only */ }
   clearInterval(this.watchdog);
   clearInterval(this.ticker);
+  clearInterval(this.stripTicker);
   var fs = require("fs"), bulbs = this.bulbs;
   Object.keys(this.shells).forEach(function (k) { try { this.shells[k].kill(); } catch (_) { /* ignore */ } }, this);
   for (var w = 0; w < MAX_WORKERS; w++) {
@@ -1220,6 +1237,7 @@ Session.prototype.describe = function () {
     },
     errors: this.errors,
     strip: this.strip ? this.strip.describe() : null,
+    stripHz: stripHz,
     bulbs: this.bulbs.map(function (b) {
       // no keys here; DP values are only on/mode/brightness/colour and help diagnose a bulb
       var reported = b.original || b.dps || {};
@@ -1914,21 +1932,27 @@ function captureSeries(query, done) {
     try { runner.kill(); } catch (_) {}
     try { fs.unlinkSync(file); } catch (_) {}
     out.perSecond = Math.round(out.samples.length / ((Date.now() - began) / 1000) * 10) / 10;
+    out.timing = {};
+    ["callMs", "readMs", "decodeMs"].forEach(function (key) {
+      var values = out.samples.map(function (x) { return x[key]; }).sort(function (a, b) { return a - b; });
+      if (values.length) out.timing[key] = { median: values[Math.floor(values.length / 2)], p90: values[Math.min(values.length - 1, Math.floor(values.length * 0.9))] };
+    });
     done(out);
   }
   (function next() {
     if (Date.now() - began >= seconds * 1000 || out.samples.length >= max) { finish(); return; }
     try { fs.unlinkSync(file); } catch (_) {}
-    var t = Date.now() - began;
+    var t = Date.now() - began, asked = hr();
     runner.run(1, jpegQuality, name, function (error, stdout) {
+      var replied = hr();
       if (error) { if (out.errors.length < 5) out.errors.push(String(error.message || error).slice(0, 120)); setTimeout(next, 50); return; }
       var reply = parseAnyCaptureReply(stdout);
       if (reply && reply.ret !== 0) { if (out.errors.length < 5) out.errors.push("service returned " + reply.ret); setTimeout(next, 50); return; }
       try {
         var bytes = fs.readFileSync(reply && reply.path && !fs.existsSync(file) ? reply.path : file), sum = 0, i;
         for (i = 0; i < bytes.length; i++) sum = (sum + bytes[i] * ((i % 251) + 1)) % 65521;
-        var image = decodeJpegChecked(bytes), w = image.w;
-        out.samples.push({ t: t, L: zoneMean(image, 0, Math.max(1, Math.floor(w * 0.2))), C: zoneMean(image, Math.floor(w * 0.3), Math.max(Math.floor(w * 0.3) + 1, Math.ceil(w * 0.7))),
+        var read = hr(), image = decodeJpegChecked(bytes), w = image.w, decoded = hr();
+        out.samples.push({ t: t, callMs: Math.round((replied - asked) * 10) / 10, readMs: Math.round((read - replied) * 10) / 10, decodeMs: Math.round((decoded - read) * 10) / 10, L: zoneMean(image, 0, Math.max(1, Math.floor(w * 0.2))), C: zoneMean(image, Math.floor(w * 0.3), Math.max(Math.floor(w * 0.3) + 1, Math.ceil(w * 0.7))),
           R: zoneMean(image, Math.min(w - 1, Math.floor(w * 0.8)), w), bytes: bytes.length, sum: sum });
       } catch (problem) { if (out.errors.length < 5) out.errors.push("decode " + describeError(problem)); }
       next();
@@ -2345,6 +2369,15 @@ function handleRequest(request, response) {
         var cap = Number(query.max);
         if (query.max !== undefined && isFinite(cap) && cap >= 0 && cap <= 60 && cap === Math.round(cap)) maxPerSecond = cap;
         sendJson(response, 200, { ok: true, maxPerSecond: maxPerSecond });
+        return;
+      }
+      case "/ambilight/strip-rate": {
+        var hz = Number(query.hz);
+        if (query.hz !== undefined && isFinite(hz) && hz >= 5 && hz <= 60 && hz === Math.round(hz)) {
+          stripHz = hz;
+          if (session && !session.stopped && session.running) session.scheduleStrip();
+        }
+        sendJson(response, 200, { ok: true, stripHz: stripHz });
         return;
       }
       case "/ambilight/capture-workers": {

@@ -41,6 +41,7 @@ function table(results) {
     r.perSecond === undefined ? "" : `${r.perSecond}/s`,
     r.distinctPictures === undefined ? "" : `${r.distinctPictures} distinct`,
     r.startupMs === undefined ? "" : `start ${r.startupMs} ms`,
+    r.timing && r.timing.callMs ? `call ${r.timing.callMs.median}/${r.timing.callMs.p90} ms, decode ${r.timing.decodeMs.median} ms` : "",
     r.error || ""
   ]);
   const widths = rows[0] ? rows[0].map((_, c) => Math.max(...rows.map((row) => String(row[c]).length))) : [];
