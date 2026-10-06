@@ -569,10 +569,10 @@ test("capture-tools benchmarks the tools that exist and reports the missing ones
   var dir = fs.mkdtempSync(path.join(os.tmpdir(), "tools-"));
   var jpeg = path.join(JPEG_DIR, "420.jpg");
   // gdbus and dbus-send exist and write the capture; busctl does not exist on this "TV"
-  fs.writeFileSync(path.join(dir, "gdbus"), '#!/bin/sh\ncp "' + jpeg + '" /dev/shm/nuvio-tool-probe.jpg\necho "(0, 480, 270, \'x\')"\n', { mode: 493 });
-  fs.writeFileSync(path.join(dir, "dbus-send"), '#!/bin/sh\ncp "' + jpeg + '" /dev/shm/nuvio-tool-probe.jpg\n', { mode: 493 });
+  fs.writeFileSync(path.join(dir, "gdbus"), '#!/bin/sh\n/bin/cp "' + jpeg + '" /dev/shm/nuvio-tool-probe.jpg\necho "(0, 480, 270, \'x\')"\n', { mode: 493 });
+  fs.writeFileSync(path.join(dir, "dbus-send"), '#!/bin/sh\n/bin/cp "' + jpeg + '" /dev/shm/nuvio-tool-probe.jpg\n', { mode: 493 });
   var originalPath = process.env.PATH;
-  process.env.PATH = dir + path.delimiter + "/nonexistent-bin";
+  process.env.PATH = dir; // only the fake tools: busctl must be missing
   try {
     var result = (await call("/ambilight/capture-tools?count=3")).body;
     var byName = {};
