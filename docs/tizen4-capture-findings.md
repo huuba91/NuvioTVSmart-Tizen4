@@ -103,6 +103,13 @@ service is only on the system bus.
   on a desktop, ~14-20x slower on the TV), i.e. ~20-25% of a core, so ~40% of a core of Node's load is other work in the same
   process (for example serving the video). The status line now reports the ambilight's JS share separately.
 
+## What each capture mode contains (paused frame with the player controls on screen)
+
+- **mode 0:** everything on screen, including Nuvio's controls (and the screen's letterbox bars); ~67 ms per capture.
+- **mode 1:** the picture with the screen's letterbox bars, no controls; ~67 ms.
+- **modes 2 and 3:** the video picture only, full-frame, no controls and no screen bars; identical to each other; ~31 ms.
+Mode 2 is what the ambilight uses, so it already follows only the video, and it is also the fast one.
+
 ## Ideas not yet tried
 
 - A periodic capture that removes the per-picture `gdbus` process (output location unknown; a wider file search

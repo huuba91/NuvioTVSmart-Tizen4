@@ -165,8 +165,11 @@ format exists, would let us skip the PNG inflate.
 
 ## Known limits
 
-- The capture shows what is on screen, so Nuvio's own player controls and subtitles count
-  towards the colours while they are visible.
+- Capture mode 2 (the one in use) is the video picture only: on a paused frame with the player controls on screen, modes 2 and 3
+  showed the picture full-frame without controls and without the screen's letterbox bars, while mode 0 includes the controls
+  and mode 1 the letterbox bars (`/ambilight/capture-compare`, UE49NU7100). So Nuvio's controls do not count towards the colours.
+  (Whether subtitles drawn by Nuvio are excluded too was not checked separately; bars baked into the video file itself still
+  show up and are handled by the black-bar detection.)
 - Picture-to-light delay is estimated at 0.2-0.35 s (research, not measured).
 - Sources: Philips patent US12062220 (dominant colour per zone), Hyperion configuration wiki
   (black borders, smoothing, saturation gain), HyperHDR v22 release notes (linear-light pipeline).
