@@ -952,3 +952,24 @@ test("the capture mode is switchable and reaches both the shell and the command 
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("jpeg-dc decodes noisy, high-entropy pictures (long Huffman codes, restart markers) to the true block averages", function () {
+  var data = fs.readFileSync(path.join(JPEG_DIR, "noisy.jpg"));
+  var expected = JSON.parse(fs.readFileSync(path.join(JPEG_DIR, "noisy.blocks.json"), "utf8")); // block means from an independent decoder
+  var image = jpegDc.decodeJpegDc(data);
+  assert.equal(image.w, 30);
+  assert.equal(image.h, 17);
+  var sum = 0, worst = 0, n = 0;
+  for (var y = 0; y < 17; y++) {
+    for (var x = 0; x < 30; x++) {
+      for (var k = 0; k < 3; k++) {
+        var error = Math.abs(image.data[(y * 30 + x) * 3 + k] - expected[y][x][k]);
+        sum += error; n++;
+        if (error > worst) worst = error;
+      }
+    }
+  }
+  // the independent decoder clips pixel values to 0-255 before averaging, a block average does not: small extra differences
+  assert.ok(sum / n < 1.5, "mean error " + (sum / n));
+  assert.ok(worst < 16, "worst error " + worst);
+});

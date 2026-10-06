@@ -12,17 +12,27 @@
 // default), any chroma subsampling, restart intervals and greyscale. Anything else (progressive, multiple
 // scans, 12-bit, arithmetic coding) throws, and the caller falls back to PNG.
 
+// Canonical Huffman table with a 9-bit lookahead: lookup[next 9 bits] = (code length << 8) | symbol for codes of up to 9 bits
+// (almost all of them), -1 when the code is longer (then mincode/maxcode/valptr decode it bit by bit from 10 bits on).
 function buildHuffman(counts, symbols) {
-  var mincode = [], maxcode = [], valptr = [], code = 0, k = 0, l;
+  var mincode = [], maxcode = [], valptr = [], code = 0, k = 0, l, i, j;
+  var lookup = new Int16Array(512);
+  for (i = 0; i < 512; i++) lookup[i] = -1;
   for (l = 1; l <= 16; l++) {
     valptr[l] = k;
     mincode[l] = code;
-    code += counts[l - 1];
-    k += counts[l - 1];
+    for (i = 0; i < counts[l - 1]; i++) {
+      if (l <= 9) {
+        var base = code << (9 - l), span = 1 << (9 - l);
+        for (j = 0; j < span; j++) lookup[base + j] = (l << 8) | symbols[k];
+      }
+      code++;
+      k++;
+    }
     maxcode[l] = counts[l - 1] ? code - 1 : -1;
     code <<= 1;
   }
-  return { mincode: mincode, maxcode: maxcode, valptr: valptr, symbols: symbols };
+  return { mincode: mincode, maxcode: maxcode, valptr: valptr, symbols: symbols, lookup: lookup };
 }
 
 function clamp(v) {
@@ -105,42 +115,49 @@ function decodeJpegDc(data) {
   }
 
   // ---- entropy-coded data ----
-  var bitBuf = 0, bitCnt = 0, rp = scanStart;
-  function readBit() {
-    if (bitCnt === 0) {
-      if (rp >= len) throw new Error("truncated JPEG data");
-      var b = data[rp++];
-      if (b === 0xff) {
-        var b2 = data[rp];
-        if (b2 === 0) rp++;
-        else if (b2 >= 0xd0 && b2 <= 0xd7) { rp--; b = 0; } // a restart marker where bits were expected: feed zeros
-        else throw new Error("unexpected JPEG marker in data");
-      }
-      bitBuf = b;
-      bitCnt = 8;
+  // bitBuf holds bitCnt valid bits in its low end (up to 32; always read through >>> and a mask). fill() tops it up to more
+  // than 24 bits. At a marker (restart, end of image) or the end of the data zeros are fed instead; a few are normal because of
+  // the look-ahead, many mean the file is cut off.
+  var bitBuf = 0, bitCnt = 0, rp = scanStart, pad = 0;
+  function fill() {
+    while (bitCnt <= 24) {
+      var b = 0;
+      if (rp < len) {
+        b = data[rp];
+        if (b === 0xff) {
+          if (data[rp + 1] === 0) rp += 2;
+          else { b = 0; if (++pad > 8) throw new Error("truncated JPEG data"); } // a marker: leave rp on it
+        } else rp++;
+      } else if (++pad > 8) throw new Error("truncated JPEG data");
+      bitBuf = (bitBuf << 8) | b;
+      bitCnt += 8;
     }
-    bitCnt--;
-    return (bitBuf >> bitCnt) & 1;
   }
   function receive(n) {
-    var v = 0;
-    while (n-- > 0) v = (v << 1) | readBit();
-    return v;
+    if (bitCnt < n) fill();
+    bitCnt -= n;
+    return (bitBuf >>> bitCnt) & ((1 << n) - 1);
   }
   function huff(t) {
-    var code = 0;
-    for (var l = 1; l <= 16; l++) {
-      code = (code << 1) | readBit();
+    if (bitCnt < 16) fill();
+    var look = t.lookup[(bitBuf >>> (bitCnt - 9)) & 511];
+    if (look >= 0) {
+      bitCnt -= look >> 8;
+      return look & 255;
+    }
+    for (var l = 10; l <= 16; l++) {
+      var code = (bitBuf >>> (bitCnt - l)) & ((1 << l) - 1);
       if (t.maxcode[l] !== -1 && code <= t.maxcode[l]) {
         var s = t.symbols[t.valptr[l] + code - t.mincode[l]];
         if (s === undefined) break;
+        bitCnt -= l;
         return s;
       }
     }
     throw new Error("bad JPEG Huffman code");
   }
   function restart() {
-    bitCnt = 0;
+    bitCnt = 0; bitBuf = 0; pad = 0;
     while (rp + 1 < len && !(data[rp] === 0xff && data[rp + 1] >= 0xd0 && data[rp + 1] <= 0xd7)) rp++;
     rp += 2;
     for (var q = 0; q < comps.length; q++) comps[q].pred = 0;
@@ -153,16 +170,17 @@ function decodeJpegDc(data) {
     }
     c.pred += diff;
     c.dc[index] = c.pred;
-    var k = 1, rs, s, r;
-    while (k < 64) { // skip the AC coefficients
-      rs = huff(c.acTable);
+    var k = 1, rs, s, r, acTable = c.acTable;
+    while (k < 64) { // skip the AC coefficients: only their lengths matter, to find the next block
+      rs = huff(acTable);
       s = rs & 15; r = rs >> 4;
       if (s === 0) {
         if (r === 15) { k += 16; continue; }
         break;
       }
       k += r + 1;
-      receive(s);
+      if (bitCnt < s) fill();
+      bitCnt -= s;
     }
   }
 

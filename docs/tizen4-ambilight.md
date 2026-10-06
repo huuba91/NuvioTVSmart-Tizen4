@@ -155,6 +155,15 @@ proxy and bus (not against kdbus, and on a newer Node than the TV's 4.4.3). Othe
 - **JPEG DC coefficients.** Already in use (`jpeg-dc.cjs`), see Capture format.
 - The status line now splits CPU into Node and the capture shells.
 
+### Where the CPU goes now (TV, paused/still picture, 3.6 pictures/s)
+
+Status line: 45.4% CPU = Node 36% (ambilight JS 9.6%: decode 6, analyse 2.5, tick 1.1) + shells 8.7%. About 26% of a core of
+Node's load is not the ambilight (the same process hosts the media service), and per picture the ambilight needs ~24 ms of
+JavaScript (~17 decode, ~7 analysis) plus ~24 ms in the shell. Node runs it on one thread, so decoding was the biggest piece.
+`jpeg-dc.cjs` now decodes the Huffman codes through a 9-bit lookup table instead of bit by bit: identical output on 106 test
+JPEGs (qualities 10-95, 4:4:4/4:2:2/4:2:0, restart markers, noisy content, odd sizes) and ~2.5x faster on a desktop. The colour
+analysis was profiled too (68% of it is the per-region loops); precomputing hue cos/sin gave only 6%, so it was left alone.
+
 ## Finding out what the capture service can do
 
 `GET /ambilight/introspect` (any time Nuvio's service is running) lists the methods and arguments of
