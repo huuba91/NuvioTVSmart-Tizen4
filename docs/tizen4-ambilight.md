@@ -74,8 +74,8 @@ left edge, the right edge or the whole picture (center), or stays off.
 ## Capture format
 
 `RequestCaptureToFileSync(app_type, capture_mode, comp_type, width, height, jpeg_quality, dir, name)`: the
-service uses `0, 2, comp_type, 64, 36, quality`. The size is ignored (always 480x270). `comp_type` 0 is PNG
-(default), 1 is JPEG (~10x smaller, captured faster). JPEG is decoded by `runtime/jpeg-dc.cjs`, which reads
+service uses `0, 2, comp_type, 64, 36, quality`. The size is ignored (always 480x270). `comp_type` 0 is PNG, 1 is JPEG (default since the TV measurements: capture 250 vs 696 ms, decode 23 vs 188 ms,
+analysis 10 vs 47 ms; ~10x smaller files). All capture files live in `/dev/shm`, which is RAM, not flash. JPEG is decoded by `runtime/jpeg-dc.cjs`, which reads
 only each 8x8 block's DC coefficient (60x34 picture). Switch with `/ambilight/capture-format?mode=jpeg|png&quality=60`
 (reset when the service restarts); three decode failures switch back to PNG on their own. The Strip status line
 shows the format and picture size in use. Any three JPEG failures in a row (the service refusing it, or a file

@@ -261,6 +261,7 @@ test("a session colours the bulb from its zone, follows live brightness and rest
   await new Promise(function (resolve) { server.listen(6668, "127.0.0.1", resolve); });
   fs.writeFileSync(BULBS_FILE, JSON.stringify([{ id: "a", name: "Desk left", key: KEY, ip: "127.0.0.1", pos: "center" }]));
   try {
+    await call("/ambilight/capture-format?mode=png");
     var started = await call("/ambilight/start?level=100&assign=a:left:50");
     assert.equal(started.body.ok, true);
     await new Promise(function (resolve) { setTimeout(resolve, 2600); });
@@ -287,6 +288,7 @@ test("a session colours the bulb from its zone, follows live brightness and rest
     assert.deepEqual((await call("/ambilight/ping")).body, { ok: true, active: false });
   } finally {
     ambilight.stop("test");
+    await call("/ambilight/capture-format?mode=jpeg");
     process.env.PATH = originalPath;
     fs.unlinkSync(BULBS_FILE);
     await new Promise(function (resolve) { setTimeout(resolve, 1300); });
@@ -433,12 +435,13 @@ test("capture-format route switches between png and jpeg and clamps the quality"
     });
   }
   try {
-    assert.equal((await call("/ambilight/capture-format")).format, "png");
+    assert.equal((await call("/ambilight/capture-format")).format, "jpeg");
+    assert.equal((await call("/ambilight/capture-format?mode=png")).format, "png");
     assert.equal((await call("/ambilight/capture-format?mode=jpeg&quality=45")).format, "jpeg");
     assert.equal((await call("/ambilight/capture-format?quality=500")).jpegQuality, 45);
     assert.equal((await call("/ambilight/capture-format?mode=bogus")).format, "jpeg");
   } finally {
-    await call("/ambilight/capture-format?mode=png&quality=60");
+    await call("/ambilight/capture-format?mode=jpeg&quality=60");
   }
 });
 
@@ -491,7 +494,7 @@ test("a session on JPEG capture colours the bulb and reports its format", { skip
     assert.equal(capture.jpegFailures, 0);
   } finally {
     await call("/ambilight/stop");
-    await call("/ambilight/capture-format?mode=png&quality=60");
+    await call("/ambilight/capture-format?mode=jpeg&quality=60");
     process.env.PATH = originalPath;
     try { fs.unlinkSync(BULBS_FILE); } catch (_) {}
     await new Promise(function (resolve) { setTimeout(resolve, 1500); });
@@ -553,7 +556,7 @@ test("a failing JPEG capture falls back to PNG after three failures in a row", {
     assert.ok(snapshot.captures > 0, "pictures keep arriving on PNG");
   } finally {
     await call("/ambilight/stop");
-    await call("/ambilight/capture-format?mode=png");
+    await call("/ambilight/capture-format?mode=jpeg");
     process.env.PATH = originalPath;
     try { fs.unlinkSync(BULBS_FILE); } catch (_) {}
     await new Promise(function (resolve) { setTimeout(resolve, 1500); });

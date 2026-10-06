@@ -29,7 +29,7 @@
 //   GET /ambilight/capture-sweep?w=64&h=36&modes=0,1,2,3,4&comps=0,1,2,3   try dcapture modes/formats
 //   GET /ambilight/jpeg-sample?quality=60            one JPEG capture: structure, decode result and timing
 //   GET /ambilight/periodic-probe?ms=300&seconds=2   does StartPeriodicCapture write files, and where
-//   GET /ambilight/capture-format?mode=png|jpeg&quality=60   capture as PNG (default) or small JPEG
+//   GET /ambilight/capture-format?mode=png|jpeg&quality=60   capture as small JPEG (default) or PNG
 //   GET /ambilight/introspect                    what samsung.tizen.dcapture offers (also written to /dev/shm)
 
 var BULBS_FILE = "ambilight-bulbs.json";
@@ -48,10 +48,11 @@ var MAX_FAILED_CAPTURES = 6;
 var ECO = { staticBelow: 0.6, calmBelow: 2.5, staticRate: 3, calmRate: 6, decay: 0.85 };
 var ecoEnabled = true;
 // dcapture comp_type: 0 = PNG (~100 KB, what the research used), 1 = JPEG (~10 KB, captured in roughly half the
-// time). JPEG is read by jpeg-dc.cjs (one pixel per 8x8 block, 60x34). It is opt-in until measured on the
-// TV (/ambilight/capture-format?mode=jpeg) and drops back to PNG by itself when it cannot be decoded.
+// time). JPEG is read by jpeg-dc.cjs (one pixel per 8x8 block, 60x34). Measured on the UE49NU7100 against
+// PNG: capture 250 vs 696 ms, decode 23 vs 188 ms, analysis 10 vs 47 ms. Three failures in a row drop back to
+// PNG by themselves; /ambilight/capture-format?mode=png forces PNG until the service restarts.
 var CAPTURE_FORMATS = { png: { comp: 0, ext: "png" }, jpeg: { comp: 1, ext: "jpg" } };
-var captureFormat = "png";
+var captureFormat = "jpeg";
 var jpegQuality = 60;
 var jpegFailures = 0;
 var TICK_MS = 50; // colour updates per bulb between pictures: 20/s (the PC sync sends up to 30/s)
