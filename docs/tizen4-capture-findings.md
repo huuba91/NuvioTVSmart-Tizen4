@@ -75,6 +75,15 @@ The TV's system bus is kdbus, so Node cannot talk to it directly; a command-line
 Per capture (idle): `gdbus` 105 ms / 199 ms CPU, `dbus-send` 97 / 184, **`busctl` 57 / 99**. busctl is now the default
 capture tool with automatic fallback to gdbus. Roughly 170 ms of the old 200 ms CPU was starting gdbus itself.
 
+Result of the long-lived capture shells (`busctl-sh`, 29 s session on the TV, JPEG): **9.3 pictures/s at 112% CPU,
+capture call 119 ms, decode 14 ms**, against 5.2 pictures/s at ~270% CPU, 250 ms and 23 ms with `gdbus` (about 4x less
+CPU per picture; different videos, so indicative). Starting any program from Node costs ~56 ms CPU on this TV; busctl
+inside one small shell costs ~30 ms per capture in total.
+
+Direct bus access is not possible from Node on this TV: the system bus and the session bus are both kdbus (no unix socket
+exists for either: `/run/user/5001/dbus/user_bus_socket` is missing, no bus proxy under `/run/systemd`), and the capture
+service is only on the system bus.
+
 ## Ideas not yet tried
 
 - A periodic capture that removes the per-picture `gdbus` process (output location unknown; a wider file search
