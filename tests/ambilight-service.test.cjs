@@ -934,11 +934,10 @@ test("the capture mode is switchable and reaches both the shell and the command 
   var originalPath = process.env.PATH;
   process.env.PATH = dir + path.delimiter + originalPath;
   try {
-    assert.equal((await call("/ambilight/capture-mode")).body.captureMode, 3, "3 is the default");
-    assert.equal((await call("/ambilight/capture-mode?mode=2")).body.captureMode, 2);
-    assert.equal((await call("/ambilight/capture-mode?mode=9")).body.captureMode, 2, "out of range is ignored");
-    assert.equal((await call("/ambilight/capture-mode?mode=1.5")).body.captureMode, 2);
+    assert.equal((await call("/ambilight/capture-mode")).body.captureMode, 2, "2 is the validated default");
     assert.equal((await call("/ambilight/capture-mode?mode=3")).body.captureMode, 3);
+    assert.equal((await call("/ambilight/capture-mode?mode=9")).body.captureMode, 3, "out of range is ignored");
+    assert.equal((await call("/ambilight/capture-mode?mode=1.5")).body.captureMode, 3);
     // through a long-lived shell
     var shell = new internals.CaptureShell();
     var viaShell = await new Promise(function (resolve) { shell.run(1, 40, "mode-test", function (error, text) { resolve({ error: error, text: text }); }); });
@@ -946,7 +945,7 @@ test("the capture mode is switchable and reaches both the shell and the command 
     assert.equal(viaShell.error, null);
     assert.match(fs.readFileSync(log, "utf8"), /mode=3/);
   } finally {
-    await call("/ambilight/capture-mode?mode=3");
+    await call("/ambilight/capture-mode?mode=2");
     process.env.PATH = originalPath;
     try { fs.unlinkSync("/dev/shm/mode-test.jpg"); } catch (_) {}
     fs.rmSync(dir, { recursive: true, force: true });
@@ -972,4 +971,77 @@ test("jpeg-dc decodes noisy, high-entropy pictures (long Huffman codes, restart 
   // the independent decoder clips pixel values to 0-255 before averaging, a block average does not: small extra differences
   assert.ok(sum / n < 1.5, "mean error " + (sum / n));
   assert.ok(worst < 16, "worst error " + worst);
+});
+
+
+test("the checked JPEG decoder compares fast and reference on the first pictures and falls back for good on a disagreement", function () {
+  var bytes = fs.readFileSync(path.join(JPEG_DIR, "420.jpg"));
+  var state = internals.jpegDecoder;
+  var original = jpegDc.decodeJpegDc;
+  function reset() { state.useReference = false; state.checked = 0; state.mismatch = null; }
+  try {
+    // healthy: the fast decoder is used and checked against the reference
+    reset();
+    var good = internals.decodeJpegChecked(bytes);
+    assert.equal(state.useReference, false);
+    assert.equal(state.checked, 1);
+    assert.equal(good.w, 60);
+
+    // a fast decoder that returns wrong pixels is caught and replaced by the reference for good
+    reset();
+    jpegDc.decodeJpegDc = function (data) { var image = original(data); image.data[10] = (image.data[10] + 50) & 255; return image; };
+    var corrected = internals.decodeJpegChecked(bytes);
+    assert.equal(state.useReference, true);
+    assert.match(state.mismatch, /disagree/);
+    assert.deepEqual(Array.from(corrected.data), Array.from(good.data), "the reference result is returned");
+    jpegDc.decodeJpegDc = original;
+    assert.deepEqual(Array.from(internals.decodeJpegChecked(bytes).data), Array.from(good.data), "and it stays on the reference");
+
+    // a fast decoder that throws on a file the reference can read
+    reset();
+    jpegDc.decodeJpegDc = function () { throw new Error("boom"); };
+    var viaReference = internals.decodeJpegChecked(bytes);
+    assert.equal(state.useReference, true);
+    assert.match(state.mismatch, /threw: .*boom/);
+    assert.equal(viaReference.w, 60);
+
+    // a file that is bad for both decoders is an error, not a reason to blame the optimisation
+    reset();
+    jpegDc.decodeJpegDc = original;
+    assert.throws(function () { internals.decodeJpegChecked(Buffer.from("not a jpeg at all")); });
+    assert.equal(state.useReference, false);
+  } finally {
+    jpegDc.decodeJpegDc = original;
+    reset();
+  }
+});
+
+test("state reports the decoder in use and the mean colour of the last picture", { skip: process.platform !== "linux" || !fs.existsSync("/dev/shm") }, async function () {
+  var os = require("node:os");
+  var dir = fs.mkdtempSync(path.join(os.tmpdir(), "ambilight-"));
+  fs.writeFileSync(path.join(dir, "gdbus"),
+    '#!/bin/sh\nfor last; do :; done\neval "dir=\\${$(($# - 1))}"\n/bin/cp "' + path.join(JPEG_DIR, "halves.jpg") + '" "$dir/$last.jpg"\necho "(0, 480, 270, \'$dir/$last.jpg\')"\n', { mode: 493 });
+  var originalPath = process.env.PATH;
+  process.env.PATH = dir + path.delimiter + originalPath;
+  var bulb = await startFakeBulb();
+  fs.writeFileSync(BULBS_FILE, JSON.stringify([{ id: "a", name: "Desk left", key: KEY, ip: "127.0.0.1", pos: "center" }]));
+  try {
+    await call("/ambilight/capture-format?mode=jpeg");
+    await call("/ambilight/capture-tool?mode=gdbus");
+    await call("/ambilight/start?level=100&assign=a:left:100");
+    await new Promise(function (resolve) { setTimeout(resolve, 2600); });
+    var capture = (await call("/ambilight/state")).body.state.capture;
+    assert.equal(capture.jpegDecoder.decoder, "fast");
+    assert.ok(capture.jpegDecoder.checked >= 1);
+    // half red (200,0,0), half blue (0,0,100): the mean is about (100, 0, 50)
+    assert.ok(Math.abs(capture.meanColour[0] - 100) < 15 && capture.meanColour[1] < 10 && Math.abs(capture.meanColour[2] - 50) < 15, "mean " + capture.meanColour);
+  } finally {
+    await call("/ambilight/stop");
+    await call("/ambilight/capture-tool?mode=busctl-sh");
+    process.env.PATH = originalPath;
+    try { fs.unlinkSync(BULBS_FILE); } catch (_) {}
+    await new Promise(function (resolve) { setTimeout(resolve, 1500); });
+    bulb.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

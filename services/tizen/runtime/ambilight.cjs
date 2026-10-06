@@ -66,10 +66,10 @@ var captureFormat = "jpeg";
 var jpegQuality = 40; // the DC-only decoder never reconstructs detail; 40 keeps the block averages within ~1.3 levels
 var jpegFailures = 0;
 // dcapture capture_mode (see docs): 0 = everything on screen incl. Nuvio's controls, 1 = picture with the screen's letterbox
-// bars, 2 and 3 = the video picture only (~31 ms; 0 and 1 take ~67 ms). 3 is the default: it looked the same as 2 on the TV
-// and is believed to leave out subtitles too (/ambilight/capture-mode?mode=2 switches live, /ambilight/capture-compare
-// shows the modes side by side).
-var captureMode = 3;
+// bars, 2 and 3 = the video picture only (~31 ms; 0 and 1 take ~67 ms). 2 is the validated one. 3 looked identical on a paused
+// frame and was tried as the default, but the lights stopped working in that same build (cause not yet separated from the
+// decoder change), so 2 is back until 3 is tested on its own: /ambilight/capture-mode?mode=3 switches live.
+var captureMode = 2;
 // How the capture call is made. The TV's system bus is kdbus (kernel), which Node cannot speak, so a command-line tool
 // is started for every capture. Measured on the UE49NU7100 (10 captures, idle): gdbus 105 ms / 199 ms CPU,
 // dbus-send 97 / 184, busctl 57 / 99. busctl is used first; three failures in a row (or no busctl) fall back to gdbus.
@@ -84,6 +84,7 @@ var TICK_MS = 50; // colour updates per bulb between pictures: 20/s (the PC sync
 var FLIP_BACK_AFTER = 500; // anti-flicker: no straight return to the colour just left within this time
 
 var jpegDc = require("./jpeg-dc.cjs");
+var jpegReference = require("./jpeg-dc-reference.cjs");
 var dbusLite = require("./dbus-lite.cjs");
 var colourEngine = require("./ambilight-colour.cjs");
 var stripOutput = require("./ambilight-strip.cjs");
@@ -643,6 +644,39 @@ CaptureShell.prototype.kill = function () {
   this.fail(error);
 };
 
+// JPEG decoding with a safety net: the first pictures of a run are decoded by the fast decoder and by the simple reference
+// one and compared; any difference, or the fast decoder throwing, switches to the reference decoder for good.
+var jpegDecoder = { useReference: false, checked: 0, mismatch: null };
+
+function sameImage(a, b) {
+  if (!a || !b || a.w !== b.w || a.h !== b.h || a.bpp !== b.bpp || a.data.length !== b.data.length) return false;
+  for (var i = 0; i < a.data.length; i++) if (a.data[i] !== b.data[i]) return false;
+  return true;
+}
+
+function decodeJpegChecked(bytes) {
+  if (jpegDecoder.useReference) return jpegReference.decodeJpegDc(bytes);
+  var image;
+  try {
+    image = jpegDc.decodeJpegDc(bytes);
+  } catch (error) {
+    var fallback = jpegReference.decodeJpegDc(bytes); // throws too when the file itself is bad: then it is not the optimisation
+    jpegDecoder.useReference = true;
+    jpegDecoder.mismatch = "fast decoder threw: " + describeError(error);
+    return fallback;
+  }
+  if (jpegDecoder.checked < 6) {
+    jpegDecoder.checked++;
+    var reference = jpegReference.decodeJpegDc(bytes);
+    if (!sameImage(image, reference)) {
+      jpegDecoder.useReference = true;
+      jpegDecoder.mismatch = "fast and reference decoders disagree (" + image.w + "x" + image.h + " vs " + reference.w + "x" + reference.h + ")";
+      return reference;
+    }
+  }
+  return image;
+}
+
 var CAPTURE_DEST = "samsung.tizen.dcapture", CAPTURE_PATH = "/samsung/tizen/dcapture", CAPTURE_METHOD = "RequestCaptureToFileSync";
 
 // { cmd, args } for one RequestCaptureToFileSync(0, 2, comp_type, w, h, quality, dir, name) call with the given tool.
@@ -678,7 +712,7 @@ function captureOnce(name, runner, done) {
       // The file we asked for; if the service wrote it elsewhere (its reply names the real path), use that.
       if (reply && reply.path && !fs.existsSync(file)) file = reply.path;
       var bytes = fs.readFileSync(file);
-      image = formatName === "jpeg" ? jpegDc.decodeJpegDc(bytes) : decodePng(bytes);
+      image = formatName === "jpeg" ? decodeJpegChecked(bytes) : decodePng(bytes);
     } catch (problem) {
       done((formatName === "jpeg" ? "decode jpeg " : "decode ") + describeError(problem));
       return;
@@ -963,6 +997,17 @@ Session.prototype.jsBusy = function () {
   return { decode: pct(this.busy.decode), analyse: pct(this.busy.analyse), tick: pct(this.busy.tick), total: pct(total) };
 };
 
+// Average colour of the last analysed picture, to see what the capture really shows when the lights look wrong.
+Session.prototype.meanColour = function () {
+  var image = this.prevImage;
+  if (!image || !image.data.length) return null;
+  var sum = [0, 0, 0], n = 0, i, bpp = image.bpp;
+  for (i = 0; i + bpp <= image.data.length; i += bpp) {
+    sum[0] += image.data[i]; sum[1] += image.data[bpp >= 3 ? i + 1 : i]; sum[2] += image.data[bpp >= 3 ? i + 2 : i]; n++;
+  }
+  return n ? [Math.round(sum[0] / n), Math.round(sum[1] / n), Math.round(sum[2] / n)] : null;
+};
+
 Session.prototype.modePercent = function () {
   var m = this.modeSeconds, total = m.static + m.calm + m.active;
   if (!total) return { static: 0, calm: 0, active: 0 };
@@ -988,6 +1033,8 @@ Session.prototype.describe = function () {
       eco: ecoEnabled,
       tool: captureTool,
       mode: captureMode,
+      jpegDecoder: { decoder: jpegDecoder.useReference ? "reference" : "fast", checked: jpegDecoder.checked, mismatch: jpegDecoder.mismatch },
+      meanColour: this.meanColour(),
       format: captureFormat,
       jpegQuality: jpegQuality,
       jpegFailures: jpegFailures,
@@ -1166,6 +1213,8 @@ function jpegSample(query, done) {
       try {
         var image = jpegDc.decodeJpegDc(data);
         out.decodeMs = Date.now() - t0;
+        var t1 = Date.now(), reference = jpegReference.decodeJpegDc(data);
+        out.reference = { ms: Date.now() - t1, identical: sameImage(image, reference) };
         var sum = [0, 0, 0], n = 0, i;
         for (i = 0; i + 2 < image.data.length; i += image.bpp) { sum[0] += image.data[i]; sum[1] += image.data[i + 1]; sum[2] += image.data[i + 2]; n++; }
         out.decoded = { w: image.w, h: image.h, bpp: image.bpp, mean: n ? sum.map(function (v) { return Math.round(v / n); }) : null,
@@ -1848,6 +1897,8 @@ module.exports = {
     parseCaptureReply: parseCaptureReply,
     parseBusctlReply: parseBusctlReply,
     CaptureShell: CaptureShell,
+    decodeJpegChecked: decodeJpegChecked,
+    jpegDecoder: jpegDecoder,
     setProxyCandidates: function (list) { proxyCandidateOverride = list; },
     modeForActivity: modeForActivity,
     ECO: ECO,

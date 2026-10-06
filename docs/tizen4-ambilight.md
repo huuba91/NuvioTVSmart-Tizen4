@@ -155,6 +155,15 @@ proxy and bus (not against kdbus, and on a newer Node than the TV's 4.4.3). Othe
 - **JPEG DC coefficients.** Already in use (`jpeg-dc.cjs`), see Capture format.
 - The status line now splits CPU into Node and the capture shells.
 
+### Regression report (mode 3 default + faster decoder shipped together)
+
+After that deploy the lights lit while the movie loaded and then stopped (status: session of 10 s, ended by watchdog, 1 frame sent to
+the strip, 71% still pictures), and a second run stayed on one solid purple (97% still). The two changes were not separated, and the
+watchdog ending suggests the app itself may have closed or hung (the service stops after 10 s without a ping). Safeguards added:
+mode 2 is the default again (3 stays one URL away); the first pictures of every run are decoded by the fast decoder and by the
+original simple one (`jpeg-dc-reference.cjs`) and compared, and any difference or exception switches to the reference decoder for
+good; the status line shows the decoder in use, the average colour of the last picture and why the session ended.
+
 ### Where the CPU goes now (TV, paused/still picture, 3.6 pictures/s)
 
 Status line: 45.4% CPU = Node 36% (ambilight JS 9.6%: decode 6, analyse 2.5, tick 1.1) + shells 8.7%. About 26% of a core of
