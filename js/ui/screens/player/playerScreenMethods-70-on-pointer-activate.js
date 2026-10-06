@@ -183,6 +183,7 @@ export function createPlayerScreenMethods70() {
         this.subtitleDialogVisible ||
         this.audioDialogVisible ||
         this.speedDialogVisible ||
+        this.lightsDialogVisible ||
         this.episodePanelVisible ||
         this.moreActionsVisible ||
         this.pauseOverlayVisible ||
@@ -270,6 +271,11 @@ export function createPlayerScreenMethods70() {
 
       if (this.speedDialogVisible) {
         this.closeSpeedDialog();
+        return true;
+      }
+
+      if (this.lightsDialogVisible) {
+        this.closeLightsDialog();
         return true;
       }
 

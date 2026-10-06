@@ -137,6 +137,12 @@ export function createPlayerScreenMethods71() {
         }
       }
 
+      if (this.lightsDialogVisible) {
+        if (this.handleLightsDialogKey(event)) {
+          return;
+        }
+      }
+
       if (keyCode === 83) {
         if (this.subtitleDialogVisible) {
           this.closeSubtitleDialog();

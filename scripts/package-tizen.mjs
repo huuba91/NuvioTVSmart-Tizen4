@@ -30,6 +30,11 @@ const tizenPluginServiceSourceRelativePath = "services/plugin-http.cjs";
 const tizenEngineFsServicePort = 2710;
 const tizenPluginServicePort = 2711;
 const tizen4ForkBuildLabel = "NU7100-T4 M1 · QR VERIFIED";
+// Bulb list for the ambilight (names, ids, LAN addresses and Tuya local keys),
+// written by scripts/make-ambilight-bulbs.py. It is git-ignored and packaged
+// next to the EngineFS service only for development builds.
+const defaultAmbilightBulbsPath = path.join(rootDir, "ambilight-bulbs.json");
+const tizenAmbilightBulbsRelativePath = "services/tizen/ambilight-bulbs.json";
 
 function buildTizenServiceBridgeMarkup(enabled) {
   if (!enabled) return "";
@@ -107,6 +112,7 @@ function buildConfigXml({
   contentSrc = "index.html",
   includeEngineFsService,
   includePluginService,
+  includeAmbilight = false,
   serviceMetadataXml = ""
 }) {
   const engineFsServiceId = `${packageId}.EngineFsService`;
@@ -119,6 +125,17 @@ function buildConfigXml({
     ? '  <tizen:privilege name="http://tizen.org/privilege/application.launch"/>\n'
     : "";
   const serviceMetadata = serviceMetadataXml ? `\n    ${serviceMetadataXml}` : "";
+  // The ambilight research app reached the TV's capture service (gdbus) and
+  // /dev/shm from its web service with these privileges declared.
+  const ambilightPrivileges = includeAmbilight
+    ? [
+        "http://tizen.org/privilege/filesystem.read",
+        "http://tizen.org/privilege/filesystem.write",
+        "http://tizen.org/privilege/system"
+      ]
+        .map((name) => `  <tizen:privilege name="${name}"/>\n`)
+        .join("")
+    : "";
   const engineFsService = includeEngineFsService
     ? `  <tizen:service id="${engineFsServiceId}" type="ui" auto-restart="false" on-boot="false">
     <tizen:content src="${tizenEngineFsServiceRelativePath}"/>${serviceMetadata}
@@ -150,7 +167,7 @@ ${serviceFeature}  <icon src="icon.png"/>
   <name>${appName}</name>
   <tizen:privilege name="http://tizen.org/privilege/internet"/>
   <tizen:privilege name="http://tizen.org/privilege/unlimitedstorage"/>
-${applicationLaunchPrivilege}  <tizen:privilege name="http://developer.samsung.com/privilege/network.public"/>
+${applicationLaunchPrivilege}${ambilightPrivileges}  <tizen:privilege name="http://developer.samsung.com/privilege/network.public"/>
   <tizen:privilege name="http://tizen.org/privilege/tv.inputdevice"/>
 ${engineFsService}${pluginService}  <tizen:profile name="tv-samsung"/>
   <tizen:setting screen-orientation="landscape" context-menu="enable" background-support="disable" encryption="disable" install-location="auto"/>
@@ -310,7 +327,7 @@ if (window.NuvioBootGuard && typeof window.NuvioBootGuard.runCompatibilityGate =
 `;
 }
 
-async function stageTizenEngineFsService() {
+async function stageTizenEngineFsService({ ambilightBulbsPath = "" } = {}) {
   const serviceDir = path.join(stagingDir, "services", "tizen");
   await mkdir(serviceDir, { recursive: true });
   await Promise.all([
@@ -334,6 +351,9 @@ async function stageTizenEngineFsService() {
       `${tizenEngineFsRuntimeDirRelativePath}/embedded-text-subtitle-parser.cjs`
     )
   );
+  if (ambilightBulbsPath) {
+    await cp(ambilightBulbsPath, path.join(stagingDir, tizenAmbilightBulbsRelativePath));
+  }
 }
 
 async function stageTizenPluginService() {
@@ -378,8 +398,10 @@ async function stagePackage({
   envSourcePath,
   includeEngineFsService,
   includePluginService,
+  ambilightBulbsPath,
   serviceMetadataXml
 }) {
+  const includeAmbilight = Boolean(includeEngineFsService && ambilightBulbsPath);
   const appBundleSourcePath = path.join(distDir, "app.bundle.js");
   const appBundleBytes = await readFile(appBundleSourcePath);
   const appBundleHash = createHash("sha256").update(appBundleBytes).digest("hex").slice(0, 16);
@@ -422,6 +444,7 @@ async function stagePackage({
         contentSrc: indexEntryFileName,
         includeEngineFsService,
         includePluginService,
+        includeAmbilight,
         serviceMetadataXml
       }),
       "utf8"
@@ -445,7 +468,7 @@ async function stagePackage({
     )
   ]);
   if (includeEngineFsService) {
-    await stageTizenEngineFsService();
+    await stageTizenEngineFsService({ ambilightBulbsPath: includeAmbilight ? ambilightBulbsPath : "" });
   }
   if (includePluginService) {
     await stageTizenPluginService();
@@ -490,7 +513,8 @@ function parseArgs(argv) {
       configuredIncludePluginService == null ? true : isTruthy(configuredIncludePluginService),
     signingProfile: process.env.TIZEN_SECURITY_PROFILE || "",
     tizenCli: process.env.TIZEN_CLI || "tizen",
-    serviceMetadataXml: String(process.env.TIZEN_SERVICE_METADATA_XML || "").trim()
+    serviceMetadataXml: String(process.env.TIZEN_SERVICE_METADATA_XML || "").trim(),
+    ambilightBulbsPath: process.env.NUVIO_AMBILIGHT_BULBS ? path.resolve(process.env.NUVIO_AMBILIGHT_BULBS) : ""
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -523,6 +547,9 @@ function parseArgs(argv) {
     } else if (arg === "--tizen-cli") {
       options.tizenCli = argv[index + 1] || "";
       index += 1;
+    } else if (arg === "--ambilight-bulbs") {
+      options.ambilightBulbsPath = path.resolve(argv[index + 1] || "");
+      index += 1;
     } else if (arg === "--service-metadata") {
       options.serviceMetadataXml = String(argv[index + 1] || "").trim();
       index += 1;
@@ -543,6 +570,10 @@ function parseArgs(argv) {
   }
 
   validateStoreServiceOptions(options);
+
+  if (options.storeBuild && options.ambilightBulbsPath) {
+    throw new Error("Store packages must not contain ambilight-bulbs.json: it holds the bulbs' local keys.");
+  }
 
   return options;
 }
@@ -944,6 +975,12 @@ async function packageTizen() {
 
   const { version: rawVersion } = await readAppMetadata();
   const version = normalizeVersion(rawVersion);
+  if (!options.storeBuild && !options.ambilightBulbsPath && (await pathExists(defaultAmbilightBulbsPath))) {
+    options.ambilightBulbsPath = defaultAmbilightBulbsPath;
+  }
+  if (options.ambilightBulbsPath && !(await pathExists(options.ambilightBulbsPath))) {
+    throw new Error(`Ambilight bulb list not found at ${options.ambilightBulbsPath}.`);
+  }
   await stagePackage({ ...options, version });
 
   await mkdir(options.outDir, { recursive: true });
@@ -984,6 +1021,9 @@ async function packageTizen() {
   );
   console.log(`Tizen EngineFS service packaged: ${options.includeEngineFsService ? "yes" : "no"}`);
   console.log(`Tizen Plugin service packaged: ${options.includePluginService ? "yes" : "no"}`);
+  console.log(
+    `Ambilight bulb list packaged: ${options.includeEngineFsService && options.ambilightBulbsPath ? options.ambilightBulbsPath : "no"}`
+  );
   console.log(
     `Runtime env bundled from: ${options.envSourcePath || path.join(distDir, "nuvio.env.js")}`
   );

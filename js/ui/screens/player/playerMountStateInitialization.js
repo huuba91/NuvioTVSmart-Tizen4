@@ -131,6 +131,7 @@ export function initializePlayerMountState(params, initialStreamUrl) {
   this.aspectModeIndex = aspectModeIndex(DeviceLocalPlayerPreferences.getAspectMode());
   this.aspectToastTimer = null;
   this.speedDialogVisible = false;
+  this.lightsDialogVisible = false;
   this.speedDialogIndex = Math.max(0, PLAYER_SPEEDS.indexOf(1));
 
   this.postPlayEpisodeMetadataProvided = Array.isArray(params.episodes);

@@ -138,6 +138,7 @@ export function createPlayerScreenMethods02() {
         this.subtitleDialogVisible ||
         this.audioDialogVisible ||
         this.speedDialogVisible ||
+        this.lightsDialogVisible ||
         this.moreActionsVisible ||
         this.stillWatchingPromptVisible ||
         this.parentalGuideVisible

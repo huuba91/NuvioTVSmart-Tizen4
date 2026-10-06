@@ -30,6 +30,44 @@ $SignedDirectory = Join-Path $DeployDirectory "signed"
 $SignedWgt = Join-Path $SignedDirectory "NuvioTV001_$PackageVersion.wgt"
 $ApplicationId = "NuvioTV001.NuvioTV"
 $RuntimeEnvVerifier = Join-Path $ProjectRoot "scripts\verify-tizen-runtime-env.mjs"
+# Every Tizen CLI install leaves its WGT here and the TV never deletes it; this
+# firmware has no usable shell, so the only way to free the space is to push an
+# empty file over each copy. Once enough accumulate, WAS rejects every install
+# with download error 116 (seen 2026-10-04: 84 stale uploads).
+$TvUploadDirectory = "/home/owner/share/tmp/sdk_tools/tmp"
+
+# Empties leftover Nuvio uploads on the TV: every NuvioTV001_<major>.<minor>.<patch>
+# from .0 up to the current version, plus the WGT name about to be installed.
+function Clear-TizenUploads {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Target,
+    [Parameter(Mandatory = $true)]
+    [string]$SdbPath,
+    [Parameter(Mandatory = $true)]
+    [string]$Version
+  )
+
+  $Parts = $Version.Split(".")
+  if ($Parts.Count -lt 3) { return }
+  $Prefix = "$($Parts[0]).$($Parts[1])"
+  $Empty = Join-Path ([System.IO.Path]::GetTempPath()) "nuvio-empty-upload.wgt"
+  [System.IO.File]::WriteAllBytes($Empty, [byte[]]@())
+  $Cleared = 0
+  try {
+    for ($Patch = 0; $Patch -le [int]$Parts[2]; $Patch++) {
+      try {
+        & $SdbPath -s $Target push $Empty "$TvUploadDirectory/NuvioTV001_$Prefix.$Patch.wgt" 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) { $Cleared += 1 }
+      } catch {
+        # a copy that cannot be emptied only costs its space
+      }
+    }
+  } finally {
+    Remove-Item -LiteralPath $Empty -ErrorAction SilentlyContinue
+  }
+  Write-Host "Emptied $Cleared leftover Nuvio upload(s) on the TV."
+}
 
 function Wait-TizenDevice {
   param(
@@ -148,6 +186,7 @@ try {
   Wait-TizenDevice -Target $Device -SdbPath $Sdb -TimeoutSeconds $ConnectTimeoutSeconds
 
   if (-not $SkipInstall) {
+    Clear-TizenUploads -Target $Device -SdbPath $Sdb -Version $PackageVersion
     # Samsung clears this temporary permission across some cold boots even
     # while SDB reconnects successfully. Without it WAS reports misleading
     # download error 116 before package validation.
@@ -168,6 +207,8 @@ try {
       $InstallExitCode = $LASTEXITCODE
       $InstallOutput | ForEach-Object { Write-Host $_ }
       if ($InstallExitCode -eq 0) {
+        # The installed copy lives elsewhere; the upload is only dead weight now.
+        Clear-TizenUploads -Target $Device -SdbPath $Sdb -Version $PackageVersion
         break
       }
 
@@ -186,7 +227,7 @@ try {
         throw @"
 Tizen CLI installation failed with Samsung WAS download error 116.
 The package transferred, SDB is connected, and developer install permission was refreshed, but the TV rejected all $InstallAttempt attempt(s) before validation.
-Cold-boot the TV, confirm Developer Mode is still enabled for this PC, and retry. The installed Nuvio app and its data were not changed.
+Leftover uploads in $TvUploadDirectory from other apps or version lines can still fill the TV: empty them with sdb push of an empty file. Otherwise cold-boot the TV, confirm Developer Mode is still enabled for this PC, and retry. The installed Nuvio app and its data were not changed.
 "@
       }
       throw "Tizen CLI installation failed with exit code $InstallExitCode"

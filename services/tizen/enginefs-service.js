@@ -229,9 +229,24 @@ function startEngineFsRuntime() {
   var http = require("http");
   var originalCreateServer = http.createServer;
   var mediaBridge = require("./runtime/tizen-media-bridge.cjs");
+  var ambilight = require("./runtime/ambilight.cjs");
   http.createServer = function (listener) {
     return originalCreateServer.call(http, function (request, response) {
       var requestUrl = String(request && request.url ? request.url : "");
+      if (ambilight.isAmbilightRequest(requestUrl)) {
+        ambilight.handleRequest(request, response);
+        return;
+      }
+      if (requestUrl === "/netcheck") {
+        // Network self-test; a failure to load or run it is reported, never thrown.
+        try {
+          require("./runtime/netcheck.cjs").handle(response);
+        } catch (error) {
+          response.writeHead(500, { "Content-Type": "text/plain" });
+          response.end(String((error && error.stack) || error));
+        }
+        return;
+      }
       if (requestUrl === "/health" || requestUrl.indexOf("/media?") === 0) {
         mediaBridge.handleRequest(request, response);
         return;
@@ -269,6 +284,12 @@ function requestRemoveAll() {
 }
 
 module.exports.onStart = function () {
+  // Faster name lookups for everything this service fetches; the service starts without it too.
+  try {
+    require("./runtime/fast-dns.cjs").install();
+  } catch (error) {
+    warn("fast DNS not installed", error && error.message);
+  }
   diagnostic("onStart", { service: "EngineFsService" });
   try {
     startEngineFsRuntime();
@@ -283,6 +304,10 @@ function stopEngineFsRuntime() {
   diagnostic("onExit", { service: "EngineFsService", port: process.env.PORT || "2710" });
   try {
     require("./runtime/tx3g-subtitle-service.cjs").stop();
+  } catch (_) {}
+  try {
+    // Puts the bulbs back to how they were before the ambilight took them.
+    require("./runtime/ambilight.cjs").stop("service-exit");
   } catch (_) {}
   requestRemoveAll();
 }

@@ -1,5 +1,6 @@
 /* eslint-disable no-unused-vars */
 import * as internals from "./playerScreenContext.js";
+import { AmbilightSettingsStore } from "../../../data/local/ambilightSettingsStore.js";
 
 export function createPlayerScreenMethods28() {
   const { t, clamp, escapeHtml } = internals;
@@ -83,6 +84,15 @@ export function createPlayerScreenMethods28() {
                 action: "speed",
                 label: `${playbackSpeed.toFixed(playbackSpeed % 1 ? 2 : 0)}x`,
                 title: t("player_playback_speed", {}, "Playback speed")
+              }
+            ]
+          : []),
+        ...(this.isLightsControlAvailable()
+          ? [
+              {
+                action: "lights",
+                label: `${AmbilightSettingsStore.get().level}%`,
+                title: t("player_lights_title", {}, "Lights")
               }
             ]
           : []),
@@ -257,7 +267,8 @@ export function createPlayerScreenMethods28() {
         this.audioDialogVisible ||
         this.sourcesPanelVisible ||
         this.episodePanelVisible ||
-        this.speedDialogVisible
+        this.speedDialogVisible ||
+        this.lightsDialogVisible
       );
     },
     syncPlayerOverlayLayoutState() {
