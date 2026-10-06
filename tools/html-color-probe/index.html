@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>HTML Colour Probe</title>
+<meta name="viewport" content="width=1920, height=1080">
+<link rel="stylesheet" href="probe.css">
+</head>
+<body>
+<div id="stage"></div>
+<div id="ui">
+  <header>
+    <h1>HTML colour probe <small>can the web app read video colours on this TV?</small></h1>
+    <div id="keys"><b class="k r">RED</b> run all &nbsp; <b class="k g">GREEN</b> live ambilight preview &nbsp; <b class="k y">YELLOW</b> env info &nbsp; <b class="k b">BLUE</b> send report &nbsp; <b class="k">RETURN</b> exit</div>
+  </header>
+  <div id="verdict">starting…</div>
+  <table id="results"><thead><tr><th>#</th><th>test</th><th>result</th><th>match</th><th>ms/grab</th><th>detail</th></tr></thead><tbody></tbody></table>
+  <pre id="env"></pre>
+  <pre id="log"></pre>
+</div>
+<div id="live" hidden>
+  <div id="live-zones"></div>
+  <div id="live-hud"></div>
+</div>
+<script src="config.js"></script>
+<script src="probe.js"></script>
+</body>
+</html>
