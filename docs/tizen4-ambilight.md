@@ -164,6 +164,18 @@ mode 2 is the default again (3 stays one URL away); the first pictures of every 
 original simple one (`jpeg-dc-reference.cjs`) and compared, and any difference or exception switches to the reference decoder for
 good; the status line shows the decoder in use, the average colour of the last picture and why the session ended.
 
+### Mode 3 and the live dials
+
+Mode 3 works too (verified live: lights followed the movie, no errors) and looks identical to mode 2; mode 2 stays the default.
+In `/ambilight/capture-compare` on a moving scene modes 2 and 3 show the picture stretched to the full frame without the
+screen's letterbox bars (so the strip's edge zones are the real picture edges), modes 0 and 1 show the bars. State of a movie at
+mode 2: 10.1 pictures/s, CPU 96.9% = Node 73.1% (ambilight JS 24.2%: decode 13.5, analyse 9.2, tick 1.4) + shells 23.7%, so ~49% of
+Node's one thread is other work and only ~27% is left: roughly 14-15 pictures/s is where this thread saturates. The faster
+JPEG decoder did not give the desktop's 2.5x on the TV (decode is still ~13 ms per picture), so measure on the TV, not the desktop.
+Live dials (all reset when the service restarts), and `capture.recent` in `/ambilight/state` reports the last ~10 s (rate, CPU, Node,
+shells, ambilight JS) so a change can be judged within seconds:
+`/ambilight/eco?mode=on|off`, `/ambilight/capture-workers?count=1..8`, `/ambilight/capture-mode?mode=0..3`.
+
 ### Where the CPU goes now (TV, paused/still picture, 3.6 pictures/s)
 
 Status line: 45.4% CPU = Node 36% (ambilight JS 9.6%: decode 6, analyse 2.5, tick 1.1) + shells 8.7%. About 26% of a core of

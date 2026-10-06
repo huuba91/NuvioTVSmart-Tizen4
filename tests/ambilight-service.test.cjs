@@ -1045,3 +1045,49 @@ test("state reports the decoder in use and the mean colour of the last picture",
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("the capture worker count can be changed live and the state reports the last seconds", { skip: process.platform !== "linux" || !fs.existsSync("/dev/shm") }, async function () {
+  var os = require("node:os");
+  var dir = fs.mkdtempSync(path.join(os.tmpdir(), "ambilight-"));
+  fs.writeFileSync(path.join(dir, "gdbus"),
+    '#!/bin/sh\nfor last; do :; done\neval "dir=\\${$(($# - 1))}"\n/bin/cp "' + path.join(JPEG_DIR, "halves.jpg") + '" "$dir/$last.jpg"\necho "(0, 480, 270, \'$dir/$last.jpg\')"\n', { mode: 493 });
+  var originalPath = process.env.PATH;
+  process.env.PATH = dir + path.delimiter + originalPath;
+  var bulb = await startFakeBulb();
+  fs.writeFileSync(BULBS_FILE, JSON.stringify([{ id: "a", name: "Desk left", key: KEY, ip: "127.0.0.1", pos: "center" }]));
+  try {
+    assert.equal((await call("/ambilight/capture-workers")).body.workers, 3);
+    assert.equal((await call("/ambilight/capture-workers?count=99")).body.workers, 3, "out of range is ignored");
+    assert.equal((await call("/ambilight/capture-workers?count=2.5")).body.workers, 3);
+    await call("/ambilight/capture-format?mode=jpeg");
+    await call("/ambilight/capture-tool?mode=gdbus");
+    await call("/ambilight/eco?mode=off");
+    await call("/ambilight/start?level=100&assign=a:left:100");
+    await new Promise(function (resolve) { setTimeout(resolve, 2600); });
+    var before = (await call("/ambilight/state")).body.state;
+    assert.equal(before.capture.workers, 3);
+    assert.ok(before.capture.recent, "recent figures after a few seconds");
+    assert.ok(before.capture.recent.perSecond > 0);
+    assert.ok(before.capture.recent.cpuPercent >= 0);
+    // raise the count live: the extra loops start without a restart
+    assert.equal((await call("/ambilight/capture-workers?count=6")).body.workers, 6);
+    await new Promise(function (resolve) { setTimeout(resolve, 1000); });
+    var raised = (await call("/ambilight/state")).body.state;
+    assert.equal(raised.capture.workers, 6);
+    assert.equal(Object.keys(ambilight._internals.activeLoopsForTest()).length, 6);
+    // lower it: surplus loops end by themselves
+    assert.equal((await call("/ambilight/capture-workers?count=2")).body.workers, 2);
+    await new Promise(function (resolve) { setTimeout(resolve, 1200); });
+    assert.equal(Object.keys(ambilight._internals.activeLoopsForTest()).length, 2);
+  } finally {
+    await call("/ambilight/stop");
+    await call("/ambilight/capture-workers?count=3");
+    await call("/ambilight/eco?mode=on");
+    await call("/ambilight/capture-tool?mode=busctl-sh");
+    process.env.PATH = originalPath;
+    try { fs.unlinkSync(BULBS_FILE); } catch (_) {}
+    await new Promise(function (resolve) { setTimeout(resolve, 1500); });
+    bulb.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

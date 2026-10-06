@@ -38,6 +38,7 @@
 //   GET /ambilight/jpeg-sample?quality=60            one JPEG capture: structure, decode result and timing
 //   GET /ambilight/periodic-probe?ms=300&seconds=2   does StartPeriodicCapture write files, and where
 //   GET /ambilight/capture-format?mode=png|jpeg&quality=60   capture as small JPEG (default) or PNG
+//   GET /ambilight/capture-workers?count=3           overlapped capture loops (1-8), live; more = higher picture rate, more CPU
 //   GET /ambilight/capture-mode?mode=0|1|2|3         which dcapture mode the ambilight captures (3 = video only, default)
 //   GET /ambilight/capture-tool?mode=busctl-sh|busctl|gdbus   how the capture call is made (busctl-sh default, falls back down the list)
 //   GET /ambilight/introspect                    what samsung.tizen.dcapture offers (also written to /dev/shm)
@@ -49,7 +50,8 @@ var NEVER_CONTROL = [/groei/i];
 var CAPTURE_DIR = "/dev/shm";
 var CAPTURE_PREFIX = "nuvio-ambilight-";
 var CAPTURE_SIZE = [64, 36]; // capture mode 2 returns at least 320x180
-var CAPTURE_WORKERS = 3; // overlapped captures, no fade; 2 gave only ~2.8 pictures/s on the TV while a video played, so one more
+var captureWorkers = 3; // overlapped captures, no fade; 2 gave only ~2.8 pictures/s on the TV while a video played, so one more
+var MAX_WORKERS = 8; // /ambilight/capture-workers?count=N changes it live
 var WATCHDOG_MS = 10000; // stop when the app stops pinging (player gone, app killed)
 var MAX_FAILED_CAPTURES = 6;
 // Eco pacing: the colours glide between pictures anyway, so a still or slowly changing picture does not
@@ -754,6 +756,9 @@ function Session(bulbs, level, stripConfig) {
   this.lastPicture = 0;
   this.lastTick = 0;
   this.shells = {};
+  this.active = {}; // capture loops running, by worker index
+  this.samples = []; // once-a-second snapshots, to report the last seconds and not only the whole session
+  this.lastSample = 0;
   this.busy = { decode: 0, analyse: 0, tick: 0 }; // ms of synchronous ambilight JavaScript, to tell it from other Node work
   this.prevImage = null;
   this.activity = 255; // the first pictures count as moving
@@ -788,9 +793,8 @@ Session.prototype.begin = function () {
     self.running = true;
     self.lastTick = Date.now();
     self.ticker = setInterval(function () { self.tick(); }, TICK_MS);
-    for (var w = 0; w < CAPTURE_WORKERS; w++) {
-      (function (index) { setTimeout(function () { self.loop(index); }, index * 60); })(w);
-    }
+    self.takeSample(Date.now());
+    self.ensureWorkers();
   }
   if (!waiting && !this.strip) { this.stop("no-bulbs"); return; }
   startCapture();
@@ -844,9 +848,21 @@ Session.prototype.begin = function () {
 
 // Overlapped captures, each with its own file, so a new picture arrives more often than one call
 // takes. A result that started before the one already shown is dropped.
+// Starts the capture loops that are not running yet (also after the worker count was raised live).
+Session.prototype.ensureWorkers = function () {
+  var self = this;
+  for (var w = 0; w < captureWorkers; w++) {
+    if (!this.active[w]) {
+      this.active[w] = true;
+      (function (index) { setTimeout(function () { self.loop(index); }, index * 60); })(w);
+    }
+  }
+};
+
 Session.prototype.loop = function (worker) {
   var self = this;
   if (this.stopped) return;
+  if (worker >= captureWorkers) { delete this.active[worker]; return; } // the worker count was lowered
   var begun = Date.now();
   captureOnce(CAPTURE_PREFIX + worker, this.shellFor(worker), function (error, image, timing) {
     if (self.stopped) return;
@@ -906,7 +922,7 @@ Session.prototype.loop = function (worker) {
 Session.prototype.paceDelay = function (elapsed) {
   if (!ecoEnabled) return 0;
   var rate = this.mode === "static" ? ECO.staticRate : this.mode === "calm" ? ECO.calmRate : 0;
-  return rate ? Math.max(0, Math.round(CAPTURE_WORKERS / rate * 1000 - elapsed)) : 0;
+  return rate ? Math.max(0, Math.round(captureWorkers / rate * 1000 - elapsed)) : 0;
 };
 
 // A new picture only moves the goal; tick() glides the bulbs towards it.
@@ -930,10 +946,37 @@ Session.prototype.analyse = function (image) {
 };
 
 // Runs between pictures too, so every bulb fades through intermediate colours instead of stepping.
+Session.prototype.takeSample = function (now) {
+  var parts = cpuParts();
+  this.lastSample = now;
+  this.samples.push({ t: now, captures: this.captures, node: parts ? parts.node : null, shells: parts ? parts.shells : null,
+    decode: this.busy.decode, analyse: this.busy.analyse, tick: this.busy.tick });
+  if (this.samples.length > 24) this.samples.shift();
+};
+
+// Figures for roughly the last 10 seconds (the whole-session figures lag behind any change made mid-playback).
+Session.prototype.recent = function () {
+  var now = Date.now(), base = null, i, parts = cpuParts();
+  for (i = this.samples.length - 1; i >= 0; i--) { if (now - this.samples[i].t >= 10000) { base = this.samples[i]; break; } }
+  if (!base) base = this.samples[0];
+  if (!base || now - base.t < 2000 || !parts || base.node === null) return null;
+  var seconds = (now - base.t) / 1000;
+  function pct(v) { return Math.round(v / seconds * 1000) / 10; }
+  var js = (this.busy.decode - base.decode) + (this.busy.analyse - base.analyse) + (this.busy.tick - base.tick);
+  var nodeCpu = parts.node - base.node, shellCpu = parts.shells - base.shells;
+  return {
+    seconds: Math.round(seconds), perSecond: Math.round((this.captures - base.captures) / seconds * 10) / 10,
+    cpuPercent: pct((nodeCpu + shellCpu) * 1000), nodePercent: pct(nodeCpu * 1000), shellsPercent: pct(shellCpu * 1000),
+    ambilightJsPercent: pct(js),
+    decodePercent: pct(this.busy.decode - base.decode), analysePercent: pct(this.busy.analyse - base.analyse), tickPercent: pct(this.busy.tick - base.tick)
+  };
+};
+
 Session.prototype.tick = function () {
   var busyStart = hr();
   var now = Date.now(), dt = Math.max(0.001, Math.min(0.25, (now - this.lastTick) / 1000)), states = {}, level = this.level;
   this.lastTick = now;
+  if (now - this.lastSample >= 1000) this.takeSample(now);
   var regions = this.regions;
   POSITIONS.forEach(function (pos) { states[pos] = regions[pos].step(dt); });
   this.bulbs.forEach(function (b) {
@@ -970,7 +1013,7 @@ Session.prototype.stop = function (reason) {
   clearInterval(this.ticker);
   var fs = require("fs"), bulbs = this.bulbs;
   Object.keys(this.shells).forEach(function (k) { try { this.shells[k].kill(); } catch (_) { /* ignore */ } }, this);
-  for (var w = 0; w < CAPTURE_WORKERS; w++) {
+  for (var w = 0; w < MAX_WORKERS; w++) {
     try { fs.unlinkSync(CAPTURE_DIR + "/" + CAPTURE_PREFIX + w + ".png"); } catch (_) {}
     try { fs.unlinkSync(CAPTURE_DIR + "/" + CAPTURE_PREFIX + w + ".jpg"); } catch (_) {}
   }
@@ -1029,7 +1072,8 @@ Session.prototype.describe = function () {
     perSecond: this.captures ? Math.round((this.captures * 10000) / (Date.now() - this.startedAt)) / 10 : 0,
     capture: {
       size: CAPTURE_SIZE.join("x"),
-      workers: CAPTURE_WORKERS,
+      workers: captureWorkers,
+      recent: this.recent(),
       eco: ecoEnabled,
       tool: captureTool,
       mode: captureMode,
@@ -1824,6 +1868,15 @@ function handleRequest(request, response) {
         sendJson(response, 200, { ok: true, format: captureFormat, jpegQuality: jpegQuality });
         return;
       }
+      case "/ambilight/capture-workers": {
+        var count = Number(query.count);
+        if (query.count !== undefined && isFinite(count) && count >= 1 && count <= MAX_WORKERS && count === Math.round(count)) {
+          captureWorkers = count;
+          if (session && !session.stopped) session.ensureWorkers();
+        }
+        sendJson(response, 200, { ok: true, workers: captureWorkers, max: MAX_WORKERS, eco: ecoEnabled });
+        return;
+      }
       case "/ambilight/capture-mode": {
         var wanted = Number(query.mode);
         if (query.mode !== undefined && isFinite(wanted) && wanted >= 0 && wanted <= 3 && wanted === Math.round(wanted)) captureMode = wanted;
@@ -1899,6 +1952,7 @@ module.exports = {
     CaptureShell: CaptureShell,
     decodeJpegChecked: decodeJpegChecked,
     jpegDecoder: jpegDecoder,
+    activeLoopsForTest: function () { return session ? session.active : {}; },
     setProxyCandidates: function (list) { proxyCandidateOverride = list; },
     modeForActivity: modeForActivity,
     ECO: ECO,
