@@ -910,3 +910,16 @@ test("a session reports how much of Node's CPU is its own JavaScript", { skip: p
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("capture-compare serves a page with the four modes side by side", async function () {
+  var page = await new Promise(function (resolve) {
+    var headers = {};
+    ambilight.handleRequest({ url: "/ambilight/capture-compare?quality=80" }, {
+      writeHead: function (status, h) { headers.status = status; headers.type = h["Content-Type"]; },
+      end: function (html) { resolve({ headers: headers, html: String(html) }); }
+    });
+  });
+  assert.equal(page.headers.status, 200);
+  assert.match(page.headers.type, /text\/html/);
+  [0, 1, 2, 3].forEach(function (m) { assert.ok(page.html.indexOf("capture-image?mode=" + m + "&quality=80") > 0, "mode " + m); });
+});

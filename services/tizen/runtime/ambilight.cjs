@@ -29,6 +29,7 @@
 //   GET /ambilight/capture-sweep?w=64&h=36&modes=0,1,2,3,4&comps=0,1,2,3   try dcapture modes/formats
 //   GET /ambilight/capture-tools?count=10            gdbus vs dbus-send vs busctl: time and CPU per capture
 //   GET /ambilight/dbus-where                        how the system bus is reached (paths, sockets, kdbus)
+//   GET /ambilight/capture-compare                   a page with modes 0-3 side by side, for a paused picture
 //   GET /ambilight/capture-image?mode=0&app=0&size=480x270&quality=60   one capture as an image to view in a browser
 //   GET /ambilight/capture-bench?group=sizes|quality|modes|all&count=8   cost and result of other sizes, qualities, modes, app types
 //   GET /ambilight/fb-check                          can the service read /dev/fb0 or /dev/dri directly
@@ -61,7 +62,7 @@ var ecoEnabled = true;
 // PNG by themselves; /ambilight/capture-format?mode=png forces PNG until the service restarts.
 var CAPTURE_FORMATS = { png: { comp: 0, ext: "png" }, jpeg: { comp: 1, ext: "jpg" } };
 var captureFormat = "jpeg";
-var jpegQuality = 60;
+var jpegQuality = 40; // the DC-only decoder never reconstructs detail; 40 keeps the block averages within ~1.3 levels
 var jpegFailures = 0;
 // How the capture call is made. The TV's system bus is kdbus (kernel), which Node cannot speak, so a command-line tool
 // is started for every capture. Measured on the UE49NU7100 (10 captures, idle): gdbus 105 ms / 199 ms CPU,
@@ -1346,6 +1347,22 @@ function captureImage(query, response) {
   });
 }
 
+// A page that shows the same moment through every capture mode side by side (the four images are requested at once by the
+// browser), so what each mode includes - Nuvio's controls, subtitles, the video - can be compared on a paused picture.
+function captureCompare(query, response) {
+  var modes = [0, 1, 2, 3], stamp = Date.now();
+  var extra = "";
+  ["app", "size", "quality", "format"].forEach(function (k) { if (query[k] !== undefined) extra += "&" + k + "=" + encodeURIComponent(String(query[k])).slice(0, 20); });
+  var cells = modes.map(function (m) {
+    return '<figure><figcaption>mode ' + m + '</figcaption><img src="/ambilight/capture-image?mode=' + m + extra + '&t=' + stamp + '" width="480"></figure>';
+  }).join("");
+  var html = '<!doctype html><meta charset="utf-8"><title>capture modes</title>' +
+    '<style>body{font:16px sans-serif;background:#111;color:#ddd;margin:16px}figure{display:inline-block;margin:6px}img{display:block;background:#000}</style>' +
+    '<h3>The same moment through each capture mode (pause the video with the controls and subtitles visible first)</h3>' + cells;
+  response.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+  response.end(html);
+}
+
 // ---- capture parameter bench ------------------------------------------------------------------------
 // RequestCaptureToFileSync(app_type, capture_mode, comp_type, width, height, quality, dir, name). What do sizes bigger or
 // smaller than 480x270, other qualities, modes and app types cost, and what comes back? Each setting is called `count`
@@ -1767,6 +1784,9 @@ function handleRequest(request, response) {
         return;
       case "/ambilight/dbus-where":
         dbusWhere(function (result) { sendJson(response, 200, result); });
+        return;
+      case "/ambilight/capture-compare":
+        captureCompare(query, response);
         return;
       case "/ambilight/capture-image":
         captureImage(query, response);
