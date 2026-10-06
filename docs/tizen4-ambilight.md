@@ -93,14 +93,27 @@ sandbox may open the system bus socket. `GET /ambilight/dbus-probe?count=10` ans
 files, whether connecting and authenticating works, and time and CPU per capture for the direct path against `gdbus`
 (run it with no session active so the figures are not mixed with a session's own captures). Nothing uses the client yet.
 
-### First TV result of the probe
+### TV results: the system bus is kdbus, so busctl is used
 
-No unix socket exists at `/var/run/dbus/system_bus_socket` or `/run/dbus/system_bus_socket` and no
-`DBUS_SYSTEM_BUS_ADDRESS` is set, yet `gdbus --system` works, so the bus is reached some other way (another path,
-an abstract socket or kdbus), and the direct client cannot connect yet. Idle, a `gdbus` capture took ~109 ms wall
-and ~200 ms CPU (read + 25 ms decode included), so roughly 170 ms of CPU per capture is the cost of starting `gdbus`.
-`/ambilight/dbus-where` shows how the bus is reached; `/ambilight/capture-tools?count=10` compares `gdbus`, a
-`gdbus` with a lean GIO environment, `dbus-send` and `busctl` (on a desktop `dbus-send` used ~22% of the CPU of `gdbus`).
+`/ambilight/dbus-where` on the UE49NU7100: the system bus is **kdbus** (`/sys/fs/kdbus/0-system/bus`, `kdbusfs` mounted;
+`DBUS_SESSION_BUS_ADDRESS=kernel:path=/sys/fs/kdbus/5001-user/bus;unix:path=/run/user/5001/dbus/user_bus_socket`). kdbus
+is spoken through kernel calls that Node cannot make, which is why no unix socket exists and why the direct client
+(`dbus-lite.cjs`) cannot connect on this TV. It is kept for TVs with a classic bus, nothing uses it.
+
+`/ambilight/capture-tools` (10 captures, idle, read + decode included):
+
+| tool | ms per capture | CPU ms per capture |
+| --- | --- | --- |
+| gdbus (was used) | 105 | 199 |
+| gdbus, lean GIO environment | 102 | 193 |
+| dbus-send | 97 | 184 |
+| **busctl** | **57** | **99** |
+
+Captures are now made with `busctl` (`busctl --system call samsung.tizen.dcapture ... iiiiiiss ...`); `gdbus` is the
+fallback when there is no busctl or three calls in a row fail (`/ambilight/capture-tool?mode=busctl|gdbus` forces one).
+The same route also reports the bare cost of starting a program and of busctl run from a small shell, to judge whether a
+long-running shell that starts busctl would be cheaper than Node doing it. `/ambilight/periodic-probe` looks for a
+periodic capture that pushes pictures by itself (which would remove the per-capture launch altogether).
 
 ## Finding out what the capture service can do
 

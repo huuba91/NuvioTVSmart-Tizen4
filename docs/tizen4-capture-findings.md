@@ -69,6 +69,12 @@ Experiments (run them while a video is playing; they change nothing and are not 
 - `/ambilight/periodic-probe?ms=300&seconds=2` starts a periodic capture, lists new files in a few
   likely directories, and ends it again.
 
+## Making the capture call cheaper (TV measurements)
+
+The TV's system bus is kdbus, so Node cannot talk to it directly; a command-line tool is started per capture.
+Per capture (idle): `gdbus` 105 ms / 199 ms CPU, `dbus-send` 97 / 184, **`busctl` 57 / 99**. busctl is now the default
+capture tool with automatic fallback to gdbus. Roughly 170 ms of the old 200 ms CPU was starting gdbus itself.
+
 ## Ideas not yet tried
 
 - A periodic capture that removes the per-picture `gdbus` process (output location unknown; a wider file search
