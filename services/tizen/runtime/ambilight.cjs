@@ -50,6 +50,8 @@
 //   GET /ambilight/capture-mode?mode=0|1|2|3         which dcapture mode the ambilight captures (3 = video only, default)
 //   GET /ambilight/capture-tool?mode=busctl-sh|busctl|gdbus   how the capture call is made (busctl-sh default, falls back down the list)
 //   GET /ambilight/introspect                    what samsung.tizen.dcapture offers (also written to /dev/shm)
+//   GET /ambilight/mode3-research-start?clipStartEpoch=...   runs the mode 3 async/filename/overlap research battery in the background
+//   GET /ambilight/mode3-research-result            progress and results of the above, plus a final summary with explicit answers
 
 var BULBS_FILE = "ambilight-bulbs.json";
 var POSITIONS = ["left", "center", "right"];
@@ -1960,6 +1962,426 @@ function captureSeries(query, done) {
   })();
 }
 
+// ---- mode 3 research: is it actually asynchronous, and is the frozen picture a filename/cache issue? -------------------
+// Everything here is a standalone busctl call (never the shared long-lived shell, so this never collides with a live
+// ambilight session, and several calls can be fired without waiting for each other). Research only: not used by the
+// ambilight loop itself.
+
+// The capture-lab test clip (tools/capture-lab/service/lab-core.cjs): left/middle/right thirds rotate RGB/GBR/BRG every
+// 2 s, 12 s cycle. Mirrored here (not required) so a capture can be scored against the middle third's expected colour
+// without this file depending on the lab. Keep in sync with lab-core.cjs's SETS/CLIP_SECONDS if that clip ever changes.
+var MODE3_TEST_SETS = ["RGB", "GBR", "BRG"], MODE3_CLIP_SECONDS = 12;
+function expectedMiddleColourAt(secondsSinceClipStart) {
+  var t = ((secondsSinceClipStart % MODE3_CLIP_SECONDS) + MODE3_CLIP_SECONDS) % MODE3_CLIP_SECONDS, d = t - 2 * Math.floor(t / 2);
+  if (d < 0.45 || d > 1.55) return null; // too close to a colour change to judge
+  return MODE3_TEST_SETS[Math.floor(t / 2) % 3].charAt(1);
+}
+function classifyMiddleColour(mean) {
+  if (!mean) return null;
+  var r = mean[0], g = mean[1], b = mean[2], max = Math.max(r, g, b), min = Math.min(r, g, b);
+  if (max < 40) return "K";
+  if (max - min < 60) return max > 200 ? "W" : "?";
+  return r === max ? "R" : (g === max ? "G" : "B");
+}
+
+// One standalone RequestCaptureToFileSync call, independent of the shared capture shells. cb({ ok, callMs, reply, raw, error })
+function rawCaptureCall(mode, name, cb) {
+  var cp = require("child_process"), t0 = hr();
+  var args = ["--system", "call", CAPTURE_DEST, CAPTURE_PATH, CAPTURE_DEST, CAPTURE_METHOD, "iiiiiiss",
+    "0", String(mode), "1", String(CAPTURE_SIZE[0]), String(CAPTURE_SIZE[1]), String(jpegQuality), CAPTURE_DIR, name];
+  cp.execFile("busctl", args, { timeout: 5000 }, function (error, stdout) {
+    var callMs = Math.round((hr() - t0) * 10) / 10;
+    if (error) { cb({ ok: false, callMs: callMs, error: describeError(error) }); return; }
+    var reply = parseAnyCaptureReply(stdout);
+    cb({ ok: true, callMs: callMs, reply: reply, ret: reply ? reply.ret : null, raw: String(stdout).trim().slice(0, 200) });
+  });
+}
+
+// Stat + read one capture file as it stands right now. opts: { clipStartEpoch } (optional, for the colour check).
+// cb({ exists, size, modified, soi, eoi, validJpeg, firstBytesHex, hash, dominantMiddle, expectedMiddle, matchesExpected, error })
+function fileSnapshot(path, opts, cb) {
+  var fs = require("fs");
+  fs.stat(path, function (statError, stat) {
+    if (statError) { cb({ exists: false, error: describeError(statError) }); return; }
+    fs.readFile(path, function (readError, buf) {
+      if (readError) { cb({ exists: true, size: stat.size, modified: stat.mtimeMs, error: "read: " + describeError(readError) }); return; }
+      var soi = buf.length > 2 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
+      var eoi = buf.length > 1 && buf[buf.length - 2] === 0xff && buf[buf.length - 1] === 0xd9;
+      var out = { exists: true, size: stat.size, modified: stat.mtimeMs, bytesRead: buf.length, soi: soi, eoi: eoi, validJpeg: soi && eoi,
+        firstBytesHex: buf.slice(0, Math.min(16, buf.length)).toString("hex"), hash: crc32(buf).toString(16) };
+      if (out.validJpeg) {
+        try {
+          var image = decodeJpegChecked(buf), mean = centreMean(image);
+          out.dominantMiddle = classifyMiddleColour(mean);
+          if (opts && opts.clipStartEpoch) {
+            out.expectedMiddle = expectedMiddleColourAt((Date.now() - opts.clipStartEpoch) / 1000);
+            out.matchesExpected = out.expectedMiddle ? out.dominantMiddle === out.expectedMiddle : null;
+          }
+        } catch (e) { out.decodeError = describeError(e); }
+      }
+      cb(out);
+    });
+  });
+}
+
+// Item 1+4: T0 (before call) / T1 (call returns), then the output file inspected at each of `delays` ms after T1, for
+// `count` requests, each with its own unique filename. Nothing is overwritten: every observation is kept.
+function mode3DelayedReadTest(mode, count, delays, opts, done) {
+  var requests = [], paths = [];
+  (function next(i) {
+    if (i >= count) { finish(); return; }
+    var name = "m3-test-" + ("00000" + (i + 1)).slice(-6), assumedPath = CAPTURE_DIR + "/" + name + ".jpg";
+    try { require("fs").unlinkSync(assumedPath); } catch (_) {}
+    var t0 = hr();
+    rawCaptureCall(mode, name, function (callResult) {
+      var t1 = hr(), path = (callResult.reply && callResult.reply.path) || assumedPath; // item 9: honour a path the service actually names
+      paths.push(path);
+      var entry = { index: i, name: name, requestedPath: assumedPath, actualPath: path, t0Ms: Math.round(t0 * 10) / 10, t1Ms: Math.round(t1 * 10) / 10,
+        callMs: Math.round((t1 - t0) * 10) / 10, call: callResult, observations: [] };
+      requests.push(entry);
+      var di = 0;
+      (function nextDelay() {
+        if (di >= delays.length) { next(i + 1); return; }
+        var delay = delays[di++], wait = Math.max(0, Math.round(t1 + delay - hr()));
+        setTimeout(function () {
+          fileSnapshot(path, opts, function (snap) {
+            snap.delayRequestedMs = delay;
+            snap.delayActualMs = Math.round(hr() - t1);
+            entry.observations.push(snap);
+            nextDelay();
+          });
+        }, wait);
+      })();
+    });
+  })(0);
+  function finish() {
+    paths.forEach(function (p) { try { require("fs").unlinkSync(p); } catch (_) {} });
+    done({ mode: mode, count: count, delaysMs: delays, requests: requests });
+  }
+}
+
+function mode3NameForStrategy(strategy, i) {
+  if (strategy === "reuse") return "m3-reuse";
+  if (strategy === "alternate") return i % 2 === 0 ? "m3-alt-a" : "m3-alt-b";
+  if (strategy === "ring4") return "m3-ring-" + (i % 4);
+  return "m3-uniq-" + i; // "unique" and any unrecognised value
+}
+
+// Items 2+3: captures back to back for `seconds` using one naming strategy, file read right after the call returns (no
+// extra delay - this is what the real loop would see). The headline number is realUniqueValidFramesPerSecond, not calls/s.
+function mode3FilenameStrategyTest(mode, strategy, seconds, opts, done) {
+  var began = hr(), results = [], paths = {}, i = 0, serviceErrors = 0;
+  (function next() {
+    if (hr() - began >= seconds * 1000) { finish(); return; }
+    var name = mode3NameForStrategy(strategy, i++), assumedPath = CAPTURE_DIR + "/" + name + ".jpg", t0 = hr();
+    rawCaptureCall(mode, name, function (callResult) {
+      var callMs = Math.round((hr() - t0) * 10) / 10;
+      if (!callResult.ok || (callResult.reply && callResult.reply.ret !== 0)) {
+        serviceErrors++;
+        results.push({ name: name, callMs: callMs, error: callResult.error || ("service returned " + (callResult.reply && callResult.reply.ret)) });
+        next();
+        return;
+      }
+      var path = (callResult.reply && callResult.reply.path) || assumedPath; // item 9: honour a path the service actually names
+      paths[path] = true;
+      fileSnapshot(path, opts, function (snap) {
+        results.push({ name: name, callMs: callMs, exists: snap.exists, size: snap.size, validJpeg: snap.validJpeg, hash: snap.hash,
+          dominantMiddle: snap.dominantMiddle, matchesExpected: snap.matchesExpected });
+        next();
+      });
+    });
+  })();
+  function finish() {
+    var validHashes = {}, invalid = 0, latencies = [];
+    results.forEach(function (r) {
+      if (r.callMs !== undefined) latencies.push(r.callMs);
+      if (r.validJpeg === false) invalid++;
+      if (r.validJpeg && r.hash) validHashes[r.hash] = (validHashes[r.hash] || 0) + 1;
+    });
+    var distinctValid = Object.keys(validHashes).length, elapsedS = (hr() - began) / 1000;
+    latencies.sort(function (a, b) { return a - b; });
+    Object.keys(paths).forEach(function (p) { try { require("fs").unlinkSync(p); } catch (_) {} });
+    done({ mode: mode, strategy: strategy, seconds: seconds, requests: results.length, serviceErrors: serviceErrors, invalidOrPartialJpeg: invalid,
+      distinctValidFrames: distinctValid, realUniqueValidFramesPerSecond: Math.round(distinctValid / elapsedS * 10) / 10,
+      apiCallsPerSecond: Math.round(results.length / elapsedS * 10) / 10,
+      meanCallMs: latencies.length ? Math.round(latencies.reduce(function (a, b) { return a + b; }, 0) / latencies.length * 10) / 10 : null,
+      sampleResults: results.slice(0, 20) });
+  }
+}
+
+// Items 5+6: up to `maxInFlight` requests running at once, each its own process and unique filename, never waiting for a
+// previous one before starting the next. Overlapping [start,finish] windows between any two requests means the service
+// itself can run captures concurrently; if every window is disjoint, dcapture serialises internally regardless of how many
+// client processes call it at once.
+function mode3InFlightTest(mode, maxInFlight, seconds, opts, done) {
+  var began = hr(), launched = 0, completed = [], paths = {}, active = 0, stopLaunching = false;
+  function launchOne() {
+    active++;
+    var index = launched++, name = "m3-flight-" + maxInFlight + "-" + index, assumedPath = CAPTURE_DIR + "/" + name + ".jpg", startedAt = hr();
+    rawCaptureCall(mode, name, function (callResult) {
+      var calledBackAt = hr(), path = (callResult.reply && callResult.reply.path) || assumedPath; // item 9
+      paths[path] = true;
+      fileSnapshot(path, opts, function (snap) {
+        var finishedAt = hr();
+        completed.push({ index: index, startedAt: Math.round(startedAt - began), callReturnedAt: Math.round(calledBackAt - began), finishedAt: Math.round(finishedAt - began),
+          callMs: Math.round((calledBackAt - startedAt) * 10) / 10, totalMs: Math.round((finishedAt - startedAt) * 10) / 10,
+          ok: callResult.ok && (!callResult.reply || callResult.reply.ret === 0), validJpeg: snap.validJpeg, hash: snap.hash });
+        active--;
+        pump();
+      });
+    });
+  }
+  function pump() {
+    if (stopLaunching) { if (active === 0) finish(); return; }
+    if (hr() - began >= seconds * 1000) { stopLaunching = true; pump(); return; }
+    while (active < maxInFlight && hr() - began < seconds * 1000) launchOne();
+    setTimeout(pump, 10);
+  }
+  pump();
+  function finish() {
+    var overlapping = false, a, b;
+    for (a = 0; a < completed.length && !overlapping; a++) for (b = a + 1; b < completed.length; b++) {
+      if (completed[a].startedAt < completed[b].finishedAt && completed[b].startedAt < completed[a].finishedAt) { overlapping = true; break; }
+    }
+    var validHashes = {};
+    completed.forEach(function (r) { if (r.validJpeg && r.hash) validHashes[r.hash] = (validHashes[r.hash] || 0) + 1; });
+    var distinctValid = Object.keys(validHashes).length, elapsedS = (hr() - began) / 1000;
+    var totals = completed.map(function (r) { return r.totalMs; }).sort(function (a2, b2) { return a2 - b2; });
+    var mean = totals.length ? totals.reduce(function (a3, b3) { return a3 + b3; }, 0) / totals.length : null;
+    var p95 = totals.length ? totals[Math.min(totals.length - 1, Math.ceil(totals.length * 0.95) - 1)] : null;
+    var validCount = completed.filter(function (r) { return r.validJpeg; }).length;
+    Object.keys(paths).forEach(function (p) { try { require("fs").unlinkSync(p); } catch (_) {} });
+    done({ mode: mode, maxInFlight: maxInFlight, seconds: seconds, requests: completed.length,
+      requestsPerSecond: Math.round(completed.length / elapsedS * 10) / 10, completedValidFramesPerSecond: Math.round(distinctValid / elapsedS * 10) / 10,
+      avgCompletionLatencyMs: mean === null ? null : Math.round(mean * 10) / 10, p95CompletionLatencyMs: p95 === null ? null : Math.round(p95 * 10) / 10,
+      staleFrames: Math.max(0, validCount - distinctValid), failedFrames: completed.filter(function (r) { return !r.ok; }).length,
+      overlapDetected: overlapping, timeline: completed.slice(0, 60) });
+  }
+}
+
+// Item 9: what did the service actually return, and did it write where we asked?
+function mode3PathSemanticsTest(mode, done) {
+  var fs = require("fs"), name = "m3-path-test", requestedPath = CAPTURE_DIR + "/" + name + ".jpg";
+  try { fs.unlinkSync(requestedPath); } catch (_) {}
+  rawCaptureCall(mode, name, function (callResult) {
+    var returnedPath = callResult.reply && callResult.reply.path;
+    var result = { mode: mode, requestedName: name, requestedPath: requestedPath, returnedPath: returnedPath || null,
+      returnedPathDiffersFromRequested: !!returnedPath && returnedPath !== requestedPath,
+      fileAtRequestedPath: fs.existsSync(requestedPath), fileAtReturnedPath: returnedPath ? fs.existsSync(returnedPath) : false, raw: callResult.raw };
+    try { fs.unlinkSync(requestedPath); } catch (_) {}
+    if (returnedPath && returnedPath !== requestedPath) { try { fs.unlinkSync(returnedPath); } catch (_2) {} }
+    done(result);
+  });
+}
+
+// Item 10: /dev/shm, one capture, 300 ms of settling, then a before/after diff (added, removed, resized, mtime-changed).
+function mode3DirWatchTest(mode, done) {
+  var fs = require("fs");
+  function snapshotDir() {
+    var map = {};
+    try { fs.readdirSync(CAPTURE_DIR).forEach(function (n) { try { var s = fs.statSync(CAPTURE_DIR + "/" + n); map[n] = { size: s.size, mtime: s.mtimeMs }; } catch (_) {} }); } catch (_2) {}
+    return map;
+  }
+  var before = snapshotDir(), name = "m3-dirwatch";
+  rawCaptureCall(mode, name, function (callResult) {
+    var elapsed = 0;
+    (function wait() { if (elapsed >= 300) { report(); return; } setTimeout(function () { elapsed += 5; wait(); }, 5); })();
+    function report() {
+      var after = snapshotDir(), added = [], removed = [], resized = [], mtimeChanged = [];
+      Object.keys(after).forEach(function (n) {
+        if (!(n in before)) added.push({ name: n, size: after[n].size });
+        else {
+          if (before[n].size !== after[n].size) resized.push({ name: n, before: before[n].size, after: after[n].size });
+          if (before[n].mtime !== after[n].mtime) mtimeChanged.push(n);
+        }
+      });
+      Object.keys(before).forEach(function (n) { if (!(n in after)) removed.push(n); });
+      try { fs.unlinkSync((callResult.reply && callResult.reply.path) || (CAPTURE_DIR + "/" + name + ".jpg")); } catch (_3) {}
+      done({ mode: mode, requestName: name, requestedPath: CAPTURE_DIR + "/" + name + ".jpg", callOk: callResult.ok, reply: callResult.reply,
+        added: added, removed: removed, resized: resized, mtimeChanged: mtimeChanged });
+    }
+  });
+}
+
+// Item 11: does mode 3 need another mode called first to produce fresh frames? `sequences` is a list of mode arrays,
+// e.g. [[3], [1, 3], [2, 3], [0, 3]] - every mode but the last is a throwaway warm-up call, the last is scored.
+function mode3SequenceTest(sequences, opts, done) {
+  var results = [], i = 0;
+  (function next() {
+    if (i >= sequences.length) { done({ sequences: results }); return; }
+    var seq = sequences[i++], label = seq.join("->"), j = 0;
+    (function warmup() {
+      if (j >= seq.length - 1) {
+        mode3FilenameStrategyTest(seq[seq.length - 1], "unique", 1, opts, function (result) {
+          results.push({ sequence: label, warmupModes: seq.slice(0, -1), testedMode: seq[seq.length - 1], result: result });
+          next();
+        });
+        return;
+      }
+      var warmName = "m3-seq-warm-" + label.replace(/[^0-9]/g, "") + "-" + j;
+      rawCaptureCall(seq[j], warmName, function (callResult) {
+        try { require("fs").unlinkSync((callResult.reply && callResult.reply.path) || (CAPTURE_DIR + "/" + warmName + ".jpg")); } catch (_) {}
+        j++; warmup();
+      });
+    })();
+  })();
+}
+
+// Item 12: the first `count` requests, in order, not averaged away - looking for "first N stale then live", "first frame
+// good then freezes", or "always the same".
+function mode3WarmupTest(mode, count, opts, done) {
+  var results = [], paths = {}, i = 0;
+  (function next() {
+    if (i >= count) { finish(); return; }
+    var name = "m3-warmup-" + i, assumedPath = CAPTURE_DIR + "/" + name + ".jpg", t0 = hr();
+    rawCaptureCall(mode, name, function (callResult) {
+      var callMs = Math.round((hr() - t0) * 10) / 10, path = (callResult.reply && callResult.reply.path) || assumedPath; // item 9
+      paths[path] = true;
+      fileSnapshot(path, opts, function (snap) {
+        results.push({ index: i, ok: callResult.ok && (!callResult.reply || callResult.reply.ret === 0), callMs: callMs,
+          validJpeg: snap.validJpeg, hash: snap.hash, dominantMiddle: snap.dominantMiddle, matchesExpected: snap.matchesExpected });
+        i++; next();
+      });
+    });
+  })();
+  function finish() {
+    var distinctHashes = {};
+    results.forEach(function (r) { if (r.validJpeg && r.hash) distinctHashes[r.hash] = (distinctHashes[r.hash] || 0) + 1; });
+    Object.keys(paths).forEach(function (p) { try { require("fs").unlinkSync(p); } catch (_) {} });
+    done({ mode: mode, count: count, distinctFrames: Object.keys(distinctHashes).length, timeline: results });
+  }
+}
+
+// ---- one background job, the whole battery above in the priority order asked for --------------------------------------
+var mode3Research = null;
+var MODE3_STEP_TIMEOUT_MS = 90000;
+
+function startMode3Research(query) {
+  if (mode3Research && !mode3Research.done) return false;
+  var clipStartEpoch = Number(query && query.clipStartEpoch) || null;
+  var opts = clipStartEpoch ? { clipStartEpoch: clipStartEpoch } : null;
+  var delays = [0, 2, 5, 10, 20, 30, 40, 60, 80, 120, 160, 200, 300];
+  var strategies = ["reuse", "alternate", "ring4", "unique"];
+  var inFlightLevels = [1, 2, 3, 4, 6, 8];
+  var sequences = [[3], [1, 3], [2, 3], [0, 3]];
+  var strategySeconds = (query && Number(query.strategySeconds)) || 3;
+  var inFlightSeconds = (query && Number(query.inFlightSeconds)) || 3;
+
+  mode3Research = { startedAt: Date.now(), done: false, progress: "starting", clipStartEpoch: clipStartEpoch, results: {}, order: [] };
+  var run = mode3Research;
+  var steps = [
+    ["delayed-read-mode3", function (cb) { mode3DelayedReadTest(3, 8, delays, opts, cb); }],
+    ["filename-strategies-mode3", function (cb) {
+      var out = {}, i = 0;
+      (function next() {
+        if (i >= strategies.length) { cb(out); return; }
+        var s = strategies[i++];
+        mode3FilenameStrategyTest(3, s, strategySeconds, opts, function (r) { out[s] = r; next(); });
+      })();
+    }],
+    ["in-flight-mode3", function (cb) {
+      var out = {}, i = 0;
+      (function next() {
+        if (i >= inFlightLevels.length) { cb(out); return; }
+        var n = inFlightLevels[i++];
+        mode3InFlightTest(3, n, inFlightSeconds, opts, function (r) { out[n] = r; next(); });
+      })();
+    }],
+    ["path-semantics-mode3", function (cb) { mode3PathSemanticsTest(3, cb); }],
+    ["dir-watch-mode3", function (cb) { mode3DirWatchTest(3, cb); }],
+    ["mode-sequence", function (cb) { mode3SequenceTest(sequences, opts, cb); }],
+    ["warmup-mode3", function (cb) { mode3WarmupTest(3, 30, opts, cb); }],
+    ["control-mode1", function (cb) { mode3FilenameStrategyTest(1, "unique", strategySeconds, opts, cb); }],
+    ["control-mode2", function (cb) { mode3FilenameStrategyTest(2, "unique", strategySeconds, opts, cb); }]
+  ];
+  (function next(i) {
+    if (i >= steps.length) { finishRun(); return; }
+    var name = steps[i][0], finished = false;
+    run.progress = name;
+    run.order.push(name);
+    function finish(result) { if (finished) return; finished = true; clearTimeout(timer); run.results[name] = result; next(i + 1); }
+    var timer = setTimeout(function () { finish({ ok: false, error: "step did not finish within " + (MODE3_STEP_TIMEOUT_MS / 1000) + " s" }); }, MODE3_STEP_TIMEOUT_MS);
+    try { steps[i][1](finish); } catch (error) { finish({ ok: false, error: describeError(error) }); }
+  })(0);
+
+  function finishRun() {
+    run.summary = summariseMode3Research(run.results);
+    run.done = true; run.finishedAt = Date.now(); run.progress = "done";
+  }
+  return true;
+}
+
+// Item 17: the concise report, plus the five explicit yes/no/inconclusive answers.
+function summariseMode3Research(results) {
+  function modeSummary(r) {
+    if (!r) return null;
+    return { realUniqueValidFramesPerSecond: r.realUniqueValidFramesPerSecond, apiCallsPerSecond: r.apiCallsPerSecond, meanCallMs: r.meanCallMs, invalidOrPartialJpeg: r.invalidOrPartialJpeg };
+  }
+  var summary = { mode1: modeSummary(results["control-mode1"]), mode2: modeSummary(results["control-mode2"]) };
+
+  // Delay until a mode 3 request's file becomes a fresh, complete, colour-matching JPEG after the call returns.
+  var delayed = results["delayed-read-mode3"], freshDelays = [];
+  if (delayed && delayed.requests) {
+    delayed.requests.forEach(function (req) {
+      var fresh = req.observations.filter(function (o) { return o.validJpeg && (o.matchesExpected === true || o.matchesExpected === null); });
+      if (fresh.length) freshDelays.push(fresh[0].delayActualMs);
+    });
+  }
+  summary.mode3DelayUntilFreshJpegMs = freshDelays.length ? Math.round(freshDelays.reduce(function (a, b) { return a + b; }, 0) / freshDelays.length * 10) / 10 : null;
+  summary.mode3DelayedReadSampleCount = freshDelays.length;
+
+  // Best filename strategy and best in-flight count by real unique valid frames/s.
+  var strategyResults = results["filename-strategies-mode3"] || {}, bestStrategy = null, bestStrategyFps = -1;
+  Object.keys(strategyResults).forEach(function (s) {
+    var r = strategyResults[s];
+    if (r && r.realUniqueValidFramesPerSecond > bestStrategyFps) { bestStrategyFps = r.realUniqueValidFramesPerSecond; bestStrategy = s; }
+  });
+  summary.mode3BestFilenameStrategy = bestStrategy;
+  summary.mode3BestFilenameStrategyFps = bestStrategy ? bestStrategyFps : null;
+  var reuseFps = strategyResults.reuse ? strategyResults.reuse.realUniqueValidFramesPerSecond : null;
+  var uniqueFps = strategyResults.unique ? strategyResults.unique.realUniqueValidFramesPerSecond : null;
+
+  var inFlightResults = results["in-flight-mode3"] || {}, bestInFlight = null, bestInFlightFps = -1, anyOverlap = false;
+  Object.keys(inFlightResults).forEach(function (n) {
+    var r = inFlightResults[n];
+    if (!r) return;
+    if (r.overlapDetected) anyOverlap = true;
+    if (r.completedValidFramesPerSecond > bestInFlightFps) { bestInFlightFps = r.completedValidFramesPerSecond; bestInFlight = Number(n); }
+  });
+  summary.mode3BestInFlightCount = bestInFlight;
+  summary.mode3BestInFlightFps = bestInFlight !== null ? bestInFlightFps : null;
+  summary.mode3StalePercent = null;
+  var level1 = inFlightResults[1];
+  if (level1 && level1.requests) summary.mode3StalePercent = Math.round(level1.staleFrames / level1.requests * 1000) / 10;
+
+  var bestMode3Fps = Math.max(summary.mode3BestFilenameStrategyFps || 0, summary.mode3BestInFlightFps || 0);
+  summary.mode3 = { apiCallsPerSecond: strategyResults.unique ? strategyResults.unique.apiCallsPerSecond : null,
+    realUniqueValidFramesPerSecond: bestMode3Fps, delayUntilFreshJpegMs: summary.mode3DelayUntilFreshJpegMs,
+    bestFilenameStrategy: bestStrategy, bestInFlightCount: bestInFlight, stalePercent: summary.mode3StalePercent };
+
+  // The five explicit answers.
+  var answers = {};
+  answers.mode3Asynchronous = summary.mode3DelayedReadSampleCount === 0 ? "INCONCLUSIVE (no sample reached a fresh, scorable frame)"
+    : (summary.mode3DelayUntilFreshJpegMs > 2 ? "YES (fresh frame appears " + summary.mode3DelayUntilFreshJpegMs + " ms after the call returns, on average)" : "NO (fresh by the time the call returns)");
+  answers.mode3FasterThanMode2 = (summary.mode2 && bestMode3Fps > (summary.mode2.realUniqueValidFramesPerSecond || 0))
+    ? "YES (" + bestMode3Fps + " vs " + summary.mode2.realUniqueValidFramesPerSecond + " real unique frames/s)"
+    : "NO (" + bestMode3Fps + " vs " + (summary.mode2 ? summary.mode2.realUniqueValidFramesPerSecond : "?") + " real unique frames/s)";
+  answers.filenameReuseCausesStaleFrames = (reuseFps !== null && uniqueFps !== null)
+    ? (uniqueFps > reuseFps * 1.3 ? "YES (reuse " + reuseFps + " vs unique " + uniqueFps + " real frames/s)" : "NO (reuse and unique gave a similar rate: " + reuseFps + " vs " + uniqueFps + ")")
+    : "INCONCLUSIVE";
+  answers.capturesCanOverlap = anyOverlap ? "YES (at least one in-flight level showed overlapping [start,finish] windows)" : "NO (every request's window was disjoint from every other - dcapture serialises internally)";
+  answers.pathAboveTwentyRealFps = bestMode3Fps >= 20 ? "YES (" + bestMode3Fps + " real unique valid frames/s achieved)" : "NO (best seen: " + bestMode3Fps + " real unique valid frames/s)";
+  summary.answers = answers;
+  return summary;
+}
+
+function mode3ResearchSnapshot() {
+  if (!mode3Research) return { ok: true, started: false };
+  return { ok: true, started: true, done: mode3Research.done, progress: mode3Research.progress,
+    elapsedS: Math.round(((mode3Research.finishedAt || Date.now()) - mode3Research.startedAt) / 1000),
+    clipStartEpoch: mode3Research.clipStartEpoch, order: mode3Research.order, results: mode3Research.results, summary: mode3Research.summary || null };
+}
+
 // ---- capture parameter bench ------------------------------------------------------------------------
 // RequestCaptureToFileSync(app_type, capture_mode, comp_type, width, height, quality, dir, name). What do sizes bigger or
 // smaller than 480x270, other qualities, modes and app types cost, and what comes back? Each setting is called `count`
@@ -2424,6 +2846,12 @@ function handleRequest(request, response) {
       case "/ambilight/research-result":
         sendJson(response, 200, researchSnapshot());
         return;
+      case "/ambilight/mode3-research-start":
+        sendJson(response, 200, { ok: true, started: startMode3Research(query) });
+        return;
+      case "/ambilight/mode3-research-result":
+        sendJson(response, 200, mode3ResearchSnapshot());
+        return;
       case "/ambilight/capture-series":
         captureSeries(query, function (result) { sendJson(response, 200, result); });
         return;
@@ -2485,6 +2913,19 @@ module.exports = {
     readElfInfo: readElfInfo,
     setHuntDelays: function (d) { huntDelays = d; },
     resetResearch: function () { research = null; },
+    resetMode3Research: function () { mode3Research = null; },
+    rawCaptureCall: rawCaptureCall,
+    fileSnapshot: fileSnapshot,
+    expectedMiddleColourAt: expectedMiddleColourAt,
+    classifyMiddleColour: classifyMiddleColour,
+    mode3DelayedReadTest: mode3DelayedReadTest,
+    mode3FilenameStrategyTest: mode3FilenameStrategyTest,
+    mode3InFlightTest: mode3InFlightTest,
+    mode3PathSemanticsTest: mode3PathSemanticsTest,
+    mode3DirWatchTest: mode3DirWatchTest,
+    mode3SequenceTest: mode3SequenceTest,
+    mode3WarmupTest: mode3WarmupTest,
+    summariseMode3Research: summariseMode3Research,
     paceDelayFor: paceDelayFor,
     decodeJpegChecked: decodeJpegChecked,
     jpegDecoder: jpegDecoder,

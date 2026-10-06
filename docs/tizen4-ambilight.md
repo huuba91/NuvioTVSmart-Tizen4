@@ -250,3 +250,32 @@ stays selectable (`/ambilight/capture-mode?mode=3`) for experiments only.
 - `capture-series` (and the lab matrix) now report `timing`: median / 90th percentile of the capture call, file read and JPEG decode in ms per
   mode, to show whether the ~38 ms capture is service, IPC or our JavaScript. The lab's `series` asks for up to 40 pictures/s, so a long run
   works: `node tools/capture-lab/lab-cli.mjs matrix --tv 192.168.129.0 --clips h264-1080p.mp4 --engines html --modes 1,2 --seconds 60`.
+
+### Mode 3 research battery (is it actually async, and is the freeze a filename/cache issue?)
+
+A dedicated route (`/ambilight/mode3-research-start`, `/ambilight/mode3-research-result`) runs a background battery of tests
+against capture mode 3, reusing standalone `busctl` calls (never the shared capture shells, so it never collides with a live
+ambilight session and can fire overlapping requests):
+
+- **Delayed read**: for 8 unique-named requests, the output file is inspected at delays of 0-300 ms after the call returns
+  (exists/size/mtime/SOI+EOI/hash/decoded colour), to see whether a fresh frame appears asynchronously.
+- **Filename strategy**: reuse one name, alternate two, a ring of four, or a unique name every time - which produces the
+  most *distinct, valid* frames per second (not API calls/s).
+- **In-flight concurrency**: 1/2/3/4/6/8 requests fired without waiting for each other, each its own process; whether any
+  two overlap in wall-clock time tells us if the service itself serialises captures.
+- **Path semantics**: does the service ever write somewhere other than the requested path?
+- **Directory watch**: a before/after diff of all of `/dev/shm` around one capture, catching unexpected files.
+- **Mode sequencing**: does mode 3 need a mode 0/1/2 call first to "warm up"?
+- **Warm-up timeline**: the first 30 mode 3 requests, kept individually (not averaged), to see first-N-stale vs always-static
+  vs genuinely live.
+- **Controls**: the same filename-strategy test run against modes 1 and 2, for comparison.
+
+The run finishes with a summary and five explicit answers (asynchronous? faster than mode 2? does filename reuse cause
+staleness? can captures overlap? is there a credible path above 20 real fps?). Run it from the capture lab:
+
+```
+node tools/capture-lab/lab-cli.mjs mode3 --tv 192.168.129.0
+```
+
+(`--clip`, `--engine`, `--strategy-seconds`, `--in-flight-seconds` are optional; the clip's known colours let the delayed-read
+and warm-up tests check whether a "fresh" JPEG is genuinely new content, not just a new file with the old picture.)

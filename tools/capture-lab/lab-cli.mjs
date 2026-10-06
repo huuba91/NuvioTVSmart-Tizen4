@@ -1,7 +1,9 @@
 // PC controller for the capture lab running on the TV.
 //   node tools/capture-lab/lab-cli.mjs <command> --tv 192.168.129.0 [options]
-// Commands: status | info | play --clip X --engine html|avplay | stop | matrix | research | all | get /ambilight/state
+// Commands: status | info | play --clip X --engine html|avplay | stop | matrix | research | mode3 | all | get /ambilight/state
 // matrix options: --clips a.mp4,b.mp4 --engines html,avplay --modes 1,2,3 --seconds 6 --warm
+// mode3 options: --clip h264-1080p.mp4 --engine html --strategy-seconds 3 --in-flight-seconds 3 (plays the known-colour clip,
+// then runs the mode 3 async/filename/overlap research battery against it - see docs/tizen4-ambilight.md)
 import { writeFile } from "node:fs/promises";
 
 const args = process.argv.slice(2);
@@ -79,6 +81,56 @@ async function runResearch() {
   }
 }
 
+function msOrDash(v) { return v === null || v === undefined ? "-" : `${v} ms`; }
+
+function printMode3Report(result) {
+  const s = result.summary;
+  console.log("\nMode 1:");
+  console.log(`  real unique frames/s: ${s.mode1 ? s.mode1.realUniqueValidFramesPerSecond : "-"}   mean call latency: ${s.mode1 ? msOrDash(s.mode1.meanCallMs) : "-"}`);
+  console.log("Mode 2:");
+  console.log(`  real unique frames/s: ${s.mode2 ? s.mode2.realUniqueValidFramesPerSecond : "-"}   mean call latency: ${s.mode2 ? msOrDash(s.mode2.meanCallMs) : "-"}`);
+  console.log("Mode 3:");
+  console.log(`  API calls/s: ${s.mode3.apiCallsPerSecond ?? "-"}   real unique frames/s: ${s.mode3.realUniqueValidFramesPerSecond}`);
+  console.log(`  delay until fresh JPEG: ${msOrDash(s.mode3.delayUntilFreshJpegMs)} (n=${s.mode3DelayedReadSampleCount})`);
+  console.log(`  best filename strategy: ${s.mode3.bestFilenameStrategy ?? "-"} (${s.mode3BestFilenameStrategyFps ?? "-"} frames/s)`);
+  console.log(`  best in-flight count: ${s.mode3.bestInFlightCount ?? "-"} (${s.mode3BestInFlightFps ?? "-"} frames/s)`);
+  console.log(`  stale percentage (in-flight=1): ${s.mode3.stalePercent === null ? "-" : s.mode3.stalePercent + "%"}`);
+  console.log("\nAnswers:");
+  for (const [k, v] of Object.entries(s.answers)) console.log(`  ${k}: ${v}`);
+  const pathResult = result.results["path-semantics-mode3"];
+  if (pathResult) console.log(`\nreturned path ${pathResult.returnedPathDiffersFromRequested ? "DIFFERS from" : "matches"} the requested one (${pathResult.requestedPath} -> ${pathResult.returnedPath})`);
+  const dirWatch = result.results["dir-watch-mode3"];
+  if (dirWatch && (dirWatch.added.length > 1 || dirWatch.removed.length)) console.log(`dir watch: ${dirWatch.added.length} files added, ${dirWatch.removed.length} removed (beyond the requested capture)`);
+}
+
+async function runMode3() {
+  await requireUi();
+  const clip = opt("clip", "h264-1080p.mp4"), engine = opt("engine", "html");
+  const played = await get(`/lab/command?type=play&clip=${clip}&engine=${engine}&wait=45`, 60000);
+  if (!played.ok) throw new Error(`could not play the clip: ${played.error}`);
+  const clipStartEpoch = played.data.clipStartEpoch;
+  const params = new URLSearchParams({ clipStartEpoch: String(clipStartEpoch) });
+  for (const key of ["strategySeconds", "inFlightSeconds"]) {
+    const flag = key.replace(/([A-Z])/g, "-$1").toLowerCase();
+    const v = opt(flag);
+    if (v && v !== true) params.set(key, v);
+  }
+  const started = await get(`/ambilight/mode3-research-start?${params}`);
+  if (!started.started) throw new Error("a mode 3 research run is already in progress on the TV");
+  console.log("mode 3 research running on the TV (about 1-2 minutes)...");
+  let shown = 0;
+  for (;;) {
+    await sleep(3000);
+    const result = await get("/ambilight/mode3-research-result", 15000);
+    while (shown < result.order.length) console.log(`  ${result.order[shown++]} done`);
+    if (result.done) {
+      await get("/lab/command?type=stop").catch(() => {});
+      printMode3Report(result);
+      return result;
+    }
+  }
+}
+
 try {
   switch (command) {
     case "status": console.log(JSON.stringify(await get("/lab/health", 8000), null, 2)); break;
@@ -87,6 +139,7 @@ try {
     case "stop": console.log(JSON.stringify(await get("/lab/command?type=stop"), null, 2)); break;
     case "matrix": { const r = await runMatrix(); await save("matrix", r); break; }
     case "research": { const r = await runResearch(); await save("research", r); break; }
+    case "mode3": { const r = await runMode3(); await save("mode3", r); break; }
     case "all": {
       const matrix = await runMatrix();
       await requireUi();
