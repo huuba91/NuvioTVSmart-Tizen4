@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Capture Lab</title>
+<meta name="viewport" content="width=1920, height=1080">
+<link rel="stylesheet" href="lab.css">
+<script src="$WEBAPIS/webapis/webapis.js"></script>
+</head>
+<body>
+<div id="stage"></div>
+<object id="avPlayerObject" type="application/avplayer"></object>
+<div id="panel">
+  <h1>Capture Lab</h1>
+  <div id="line1" class="big">starting...</div>
+  <div id="line2"></div>
+  <pre id="log"></pre>
+  <div class="hint">Remote: RED = hide/show this panel, GREEN = play next clip locally, BLUE = stop, BACK = exit. Everything else is driven from the PC (tools/capture-lab/lab-cli.mjs).</div>
+</div>
+<script src="lab.js"></script>
+</body>
+</html>

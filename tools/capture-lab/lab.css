@@ -1,0 +1,11 @@
+html, body { margin: 0; padding: 0; width: 1920px; height: 1080px; overflow: hidden; background: #000; color: #eee; font-family: sans-serif; }
+body.avplay { background: transparent; }
+#stage, #stage video { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; background: #000; }
+#avPlayerObject { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; }
+#panel { position: absolute; left: 40px; top: 30px; width: 1100px; padding: 16px 24px; background: rgba(0, 0, 0, 0.72); border-radius: 10px; font-size: 26px; }
+#panel.hidden { display: none; }
+h1 { margin: 0 0 8px; font-size: 34px; }
+.big { font-size: 34px; font-weight: bold; }
+#line2 { margin-top: 6px; color: #9cf; }
+#log { height: 320px; overflow: hidden; font-size: 20px; color: #bbb; margin: 10px 0; white-space: pre-wrap; }
+.hint { font-size: 18px; color: #888; }
