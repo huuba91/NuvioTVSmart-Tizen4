@@ -28,6 +28,7 @@
 //   GET /ambilight/eco?mode=on|off               slow captures down on still pictures (default on)
 //   GET /ambilight/capture-sweep?w=64&h=36&modes=0,1,2,3,4&comps=0,1,2,3   try dcapture modes/formats
 //   GET /ambilight/periodic-probe?ms=300&seconds=2   does StartPeriodicCapture write files, and where
+//   GET /ambilight/capture-format?mode=png|jpeg&quality=60   capture as PNG (default) or small JPEG
 //   GET /ambilight/introspect                    what samsung.tizen.dcapture offers (also written to /dev/shm)
 
 var BULBS_FILE = "ambilight-bulbs.json";
@@ -45,9 +46,17 @@ var MAX_FAILED_CAPTURES = 6;
 // between consecutive pictures (0-255); it jumps up at once on a cut and decays by DECAY per picture.
 var ECO = { staticBelow: 0.6, calmBelow: 2.5, staticRate: 3, calmRate: 6, decay: 0.85 };
 var ecoEnabled = true;
+// dcapture comp_type: 0 = PNG (~100 KB, what the research used), 1 = JPEG (~10 KB, captured in roughly half the
+// time). JPEG is read by jpeg-dc.cjs (one pixel per 8x8 block, 60x34). It is opt-in until measured on the
+// TV (/ambilight/capture-format?mode=jpeg) and drops back to PNG by itself when it cannot be decoded.
+var CAPTURE_FORMATS = { png: { comp: 0, ext: "png" }, jpeg: { comp: 1, ext: "jpg" } };
+var captureFormat = "png";
+var jpegQuality = 60;
+var jpegFailures = 0;
 var TICK_MS = 50; // colour updates per bulb between pictures: 20/s (the PC sync sends up to 30/s)
 var FLIP_BACK_AFTER = 500; // anti-flicker: no straight return to the colour just left within this time
 
+var jpegDc = require("./jpeg-dc.cjs");
 var colourEngine = require("./ambilight-colour.cjs");
 var stripOutput = require("./ambilight-strip.cjs");
 
@@ -513,20 +522,25 @@ function discover(ms, done) {
 // ---- capture through samsung.tizen.dcapture ------------------------------------------------------
 function captureOnce(name, done) {
   var cp = require("child_process"), fs = require("fs");
-  var file = CAPTURE_DIR + "/" + name + ".png", began = Date.now();
+  var formatName = captureFormat, format = CAPTURE_FORMATS[formatName];
+  var file = CAPTURE_DIR + "/" + name + "." + format.ext, began = Date.now();
   cp.execFile(
     "gdbus",
     ["call", "--system", "--timeout", "4", "--dest", "samsung.tizen.dcapture", "--object-path", "/samsung/tizen/dcapture",
       "--method", "samsung.tizen.dcapture.RequestCaptureToFileSync",
-      "0", "2", "0", String(CAPTURE_SIZE[0]), String(CAPTURE_SIZE[1]), "80", CAPTURE_DIR, name],
+      "0", "2", String(format.comp), String(CAPTURE_SIZE[0]), String(CAPTURE_SIZE[1]),
+      formatName === "jpeg" ? String(jpegQuality) : "80", CAPTURE_DIR, name],
     { timeout: 5000 },
-    function (error) {
+    function (error, stdout) {
       if (error) { done("capture " + describeError(error)); return; }
-      var captured = Date.now(), image;
+      var captured = Date.now(), image, reply = parseCaptureReply(stdout);
       try {
-        image = decodePng(fs.readFileSync(file));
+        // The file we asked for; if the service wrote it elsewhere (its reply names the real path), use that.
+        if (reply && reply.path && !fs.existsSync(file)) file = reply.path;
+        var bytes = fs.readFileSync(file);
+        image = formatName === "jpeg" ? jpegDc.decodeJpegDc(bytes) : decodePng(bytes);
       } catch (problem) {
-        done("decode " + describeError(problem));
+        done((formatName === "jpeg" ? "decode jpeg " : "decode ") + describeError(problem));
         return;
       }
       done(null, image, { captureMs: captured - began, decodeMs: Date.now() - captured });
@@ -647,6 +661,16 @@ Session.prototype.loop = function (worker) {
   var begun = Date.now();
   captureOnce(CAPTURE_PREFIX + worker, function (error, image, timing) {
     if (self.stopped) return;
+    if (error && /^decode jpeg/.test(error)) {
+      jpegFailures++;
+      self.note(error);
+      if (jpegFailures >= 3 && captureFormat === "jpeg") {
+        captureFormat = "png";
+        self.note("jpeg capture switched off after " + jpegFailures + " decode failures");
+      }
+      setTimeout(function () { self.loop(worker); }, 50);
+      return;
+    }
     if (error) {
       self.failures++;
       self.note(error);
@@ -735,6 +759,7 @@ Session.prototype.stop = function (reason) {
   var fs = require("fs"), bulbs = this.bulbs;
   for (var w = 0; w < CAPTURE_WORKERS; w++) {
     try { fs.unlinkSync(CAPTURE_DIR + "/" + CAPTURE_PREFIX + w + ".png"); } catch (_) {}
+    try { fs.unlinkSync(CAPTURE_DIR + "/" + CAPTURE_PREFIX + w + ".jpg"); } catch (_) {}
   }
   bulbs.forEach(function (b) { b.autoReconnect = false; b.restore(); });
   if (this.strip) this.strip.close();
@@ -765,6 +790,10 @@ Session.prototype.describe = function () {
       size: CAPTURE_SIZE.join("x"),
       workers: CAPTURE_WORKERS,
       eco: ecoEnabled,
+      format: captureFormat,
+      jpegQuality: jpegQuality,
+      jpegFailures: jpegFailures,
+      picture: this.prevImage ? this.prevImage.w + "x" + this.prevImage.h : null,
       mode: this.mode,
       modePercent: this.modePercent(),
       activity: Math.round(this.activity * 100) / 100,
@@ -995,6 +1024,13 @@ function handleRequest(request, response) {
       case "/ambilight/eco": {
         if (query.mode === "on" || query.mode === "off") ecoEnabled = query.mode === "on";
         sendJson(response, 200, { ok: true, eco: ecoEnabled });
+        return;
+      }
+      case "/ambilight/capture-format": {
+        if (query.mode === "png" || query.mode === "jpeg") { captureFormat = query.mode; jpegFailures = 0; }
+        var q = Number(query.quality);
+        if (isFinite(q) && q >= 10 && q <= 95) jpegQuality = Math.round(q);
+        sendJson(response, 200, { ok: true, format: captureFormat, jpegQuality: jpegQuality });
         return;
       }
       case "/ambilight/introspect":

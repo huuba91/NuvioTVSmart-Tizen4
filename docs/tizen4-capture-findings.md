@@ -41,6 +41,26 @@ Interface `samsung.tizen.dcapture` at `/samsung/tizen/dcapture`:
 - `RequestCapture`, `RequestCapture_SYNC` (+ `WithoutAppInfo`): other capture entry points, output target unknown.
 - `*_XWD` variants and `PrepXwdCapture` / `CompleteXwdCapture`: capture of an X11 window by handle.
 
+### Results of the sweep and the periodic probe (UE49NU7100, video playing)
+
+- **Size:** the requested 64x36 is ignored; every successful capture returns **480x270** (PNG is RGBA).
+- **`comp_type`:** 0 = PNG (94-147 KB), **1 = JPEG (9-17 KB)**; 2 and 3 fail with -6. There is no raw or BMP format.
+- **`capture_mode`:** 0, 1, 2 and 3 work; 4 fails with -4. Mean colours are similar across modes 0-3, so the
+  sweep did not show a mode that leaves out Nuvio's controls (a mode comparison on a screen with the player
+  UI visible would be needed).
+- **Speed:** with the same mode, JPEG capture finished faster than PNG in every pair (about half the time
+  in most, e.g. mode 2: 261 ms vs 622 ms; mode 3: 273 vs 504 ms). The PNG encode inside the capture service
+  is a major part of the cost, not only our decode.
+- **Periodic capture:** `StartPeriodicCaptureWithoutAppInfo` and `EndPeriodicCapture` both returned success,
+  but no new file appeared in the watched directories other than the running session's own captures, so the
+  output location is still unknown (inconclusive, not a negative).
+
+Consequence: capture as JPEG and read only the DC coefficient of each 8x8 block (`jpeg-dc.cjs`, 60x34), which
+is cheaper than the PNG inflate and unfilter loop and matches how coarsely the analysis samples anyway.
+It is opt-in (`/ambilight/capture-format?mode=jpeg`) until compared on the TV. In tests against Pillow the
+average error of the 60x34 result is ~0.3 levels without chroma subsampling and 2-5 levels with 4:2:0, with
+larger errors only in blocks straddling a hard colour edge.
+
 Experiments (run them while a video is playing; they change nothing and are not used by a session):
 
 - `/ambilight/capture-sweep?w=64&h=36&modes=0,1,2,3,4&comps=0,1,2,3` tries every mode x comp_type and reports
@@ -51,8 +71,10 @@ Experiments (run them while a video is playing; they change nothing and are not 
 
 ## Ideas not yet tried
 
-- Reading the sweep and periodic-probe results to find a raw/BMP format that skips the PNG inflate, a mode that
-  excludes Nuvio's own controls, or a periodic capture that removes the per-picture `gdbus` process.
+- A periodic capture that removes the per-picture `gdbus` process (output location unknown; a wider file search
+  or `gdbus monitor` on the service during the call could find it).
+- A capture mode that leaves out Nuvio's own controls (compare modes 0-3 with the player UI on screen).
+- Measuring JPEG against PNG on the TV (CPU, pictures/s, colour match) and then making JPEG the default.
 - Eco pacing (shipped in 1.2.66): fewer captures on still pictures; effect on CPU not yet measured on the TV.
 - Offload: a PC/Pi/Home Assistant helper decodes the same stream at low resolution and sends DDP, kept in
   sync by position pings from the TV. Near-zero TV load; needs an always-on machine and a second read of the stream.

@@ -103,7 +103,7 @@ export const AmbilightController = {
     const capture = state.capture;
     const share = capture?.modePercent;
     const captureNote = capture
-      ? ` Capture: ${state.perSecond ?? "?"}/s (${active ? capture.mode : `still ${share?.static ?? 0}% / calm ${share?.calm ?? 0}% / moving ${share?.active ?? 0}%`}${capture.eco ? ", eco" : ", eco off"}), ${capture.cpuPercent ?? "?"}% CPU, gdbus ${capture.captureMs ?? "?"} ms + decode ${capture.decodeMs ?? "?"} ms.`
+      ? ` Capture: ${state.perSecond ?? "?"}/s (${active ? capture.mode : `still ${share?.static ?? 0}% / calm ${share?.calm ?? 0}% / moving ${share?.active ?? 0}%`}${capture.eco ? ", eco" : ", eco off"}, ${capture.format ?? "png"}${capture.picture ? " " + capture.picture : ""}), ${capture.cpuPercent ?? "?"}% CPU, gdbus ${capture.captureMs ?? "?"} ms + decode ${capture.decodeMs ?? "?"} ms.`
       : "";
     const counted = strip.health?.available
       ? `strip counted ${strip.health.moved ?? "?"} packets in the last check`

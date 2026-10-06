@@ -383,3 +383,119 @@ test("capture experiments: reply parsing, format sniffing and the sweep route", 
     fs.rmSync(fake, { recursive: true, force: true });
   }
 });
+
+var jpegDc = require("../services/tizen/runtime/jpeg-dc.cjs");
+var JPEG_DIR = path.join(__dirname, "fixtures", "jpeg");
+
+function near(actual, expected, tolerance, label) {
+  for (var k = 0; k < 3; k++) assert.ok(Math.abs(actual[k] - expected[k]) <= tolerance, label + " channel " + k + ": " + actual[k] + " vs " + expected[k]);
+}
+
+function pixelAt(image, x, y) {
+  var p = (y * image.w + x) * image.bpp;
+  return [image.data[p], image.data[p + 1], image.data[p + 2]];
+}
+
+test("jpeg-dc reads one pixel per 8x8 block and keeps the three zone colours", function () {
+  // Fixtures: left fifth red, right fifth blue, green ellipse in the middle, on a gradient (made with Pillow).
+  var RED = [230, 40, 40], BLUE = [40, 80, 230], GREEN = [40, 200, 60];
+  ["420", "444", "rst"].forEach(function (name) {
+    var image = jpegDc.decodeJpegDc(fs.readFileSync(path.join(JPEG_DIR, name + ".jpg")));
+    assert.equal(image.w, 60, name);
+    assert.equal(image.h, 34, name);
+    assert.equal(image.bpp, 3, name);
+    near(pixelAt(image, 2, 17), RED, 14, name + " left");
+    near(pixelAt(image, 57, 17), BLUE, 14, name + " right");
+    near(pixelAt(image, 30, 17), GREEN, 14, name + " centre");
+  });
+  var a = jpegDc.decodeJpegDc(fs.readFileSync(path.join(JPEG_DIR, "420.jpg")));
+  var b = jpegDc.decodeJpegDc(fs.readFileSync(path.join(JPEG_DIR, "rst.jpg")));
+  assert.deepEqual(Array.from(a.data), Array.from(b.data), "restart markers decode the same picture");
+});
+
+test("jpeg-dc handles greyscale and odd sizes and refuses progressive files", function () {
+  var grey = jpegDc.decodeJpegDc(fs.readFileSync(path.join(JPEG_DIR, "grey.jpg")));
+  assert.equal(grey.bpp, 1);
+  assert.equal(grey.w, 60);
+  var odd = jpegDc.decodeJpegDc(fs.readFileSync(path.join(JPEG_DIR, "odd.jpg")));
+  assert.equal(odd.w, 13);
+  assert.equal(odd.h, 10);
+  assert.throws(function () { jpegDc.decodeJpegDc(fs.readFileSync(path.join(JPEG_DIR, "prog.jpg"))); }, /SOF2/);
+  assert.throws(function () { jpegDc.decodeJpegDc(Buffer.from("not a jpeg")); }, /not a JPEG/);
+  var truncated = fs.readFileSync(path.join(JPEG_DIR, "420.jpg")).slice(0, 1500);
+  assert.throws(function () { jpegDc.decodeJpegDc(truncated); });
+});
+
+test("capture-format route switches between png and jpeg and clamps the quality", async function () {
+  function call(url) {
+    return new Promise(function (resolve) {
+      ambilight.handleRequest({ url: url }, { writeHead: function () {}, end: function (text) { resolve(JSON.parse(text)); } });
+    });
+  }
+  try {
+    assert.equal((await call("/ambilight/capture-format")).format, "png");
+    assert.equal((await call("/ambilight/capture-format?mode=jpeg&quality=45")).format, "jpeg");
+    assert.equal((await call("/ambilight/capture-format?quality=500")).jpegQuality, 45);
+    assert.equal((await call("/ambilight/capture-format?mode=bogus")).format, "jpeg");
+  } finally {
+    await call("/ambilight/capture-format?mode=png&quality=60");
+  }
+});
+
+// Same end to end run with the JPEG capture format: the fake capture service answers comp_type 1 with a
+// half red, half blue JPEG, which must come out as a red bulb through jpeg-dc.cjs and the colour analysis.
+test("a session on JPEG capture colours the bulb and reports its format", { skip: process.platform !== "linux" || !fs.existsSync("/dev/shm") }, async function () {
+  var os = require("node:os");
+  var net = require("node:net");
+  var dir = fs.mkdtempSync(path.join(os.tmpdir(), "ambilight-"));
+  var jpeg = path.join(JPEG_DIR, "halves.jpg");
+  fs.writeFileSync(path.join(dir, "gdbus"),
+    '#!/bin/sh\nfor last; do :; done\neval "dir=\\${$(($# - 1))}"\n' +
+    'if [ "${13}" = 1 ]; then cp "' + jpeg + '" "$dir/$last.jpg"; else echo "png asked" >&2; exit 1; fi\n' +
+    'echo "(0, 480, 270, \'$dir/$last.jpg\')"\n', { mode: 493 });
+  var originalPath = process.env.PATH;
+  process.env.PATH = dir + path.delimiter + originalPath;
+  var received = [];
+  var state = { 1: false, 2: "white", 3: 500, 5: "00f003e803e8" };
+  var server = net.createServer(function (socket) {
+    var rx = Buffer.alloc(0);
+    socket.on("data", function (chunk) {
+      rx = Buffer.concat([rx, chunk]);
+      while (rx.length >= 24 && rx.length >= 16 + rx.readUInt32BE(12)) {
+        var total = 16 + rx.readUInt32BE(12), command = rx.readUInt32BE(8);
+        var data = rx.slice(16, total - 8);
+        rx = rx.slice(total);
+        if (data.slice(0, 3).toString() === "3.3") data = data.slice(15);
+        var body = JSON.parse(internals.aes(KEY, data, true).toString());
+        received.push({ command: command, dps: body.dps });
+        if (command === 10) {
+          var reply = internals.aes(KEY, Buffer.from(JSON.stringify({ dps: state })), false);
+          socket.write(internals.tuyaFrame(1, 10, Buffer.concat([Buffer.alloc(4), reply])));
+        }
+      }
+    });
+  });
+  await new Promise(function (resolve) { server.listen(6668, "127.0.0.1", resolve); });
+  fs.writeFileSync(BULBS_FILE, JSON.stringify([{ id: "a", name: "Desk left", key: KEY, ip: "127.0.0.1", pos: "center" }]));
+  try {
+    assert.equal((await call("/ambilight/capture-format?mode=jpeg&quality=60")).body.format, "jpeg");
+    await call("/ambilight/start?level=100&assign=a:left:100");
+    await new Promise(function (resolve) { setTimeout(resolve, 2600); });
+    var colour = received.filter(function (m) { return m.command === 7 && m.dps["5"]; })[0];
+    assert.ok(colour, "the bulb received a colour from the JPEG capture");
+    var hue = parseInt(colour.dps["5"].slice(0, 4), 16);
+    assert.ok(hue <= 8 || hue >= 352, "left edge is red, hue " + hue);
+    var capture = (await call("/ambilight/state")).body.state.capture;
+    assert.equal(capture.format, "jpeg");
+    assert.equal(capture.picture, "60x34");
+    assert.equal(capture.jpegFailures, 0);
+  } finally {
+    await call("/ambilight/stop");
+    await call("/ambilight/capture-format?mode=png&quality=60");
+    process.env.PATH = originalPath;
+    try { fs.unlinkSync(BULBS_FILE); } catch (_) {}
+    await new Promise(function (resolve) { setTimeout(resolve, 1500); });
+    server.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

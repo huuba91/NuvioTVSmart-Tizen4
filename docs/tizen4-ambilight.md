@@ -71,6 +71,15 @@ left edge, the right edge or the whole picture (center), or stays off.
    slider: Up/Down change the overall brightness in 10% steps, OK or Back closes it.
 4. Stop the PC bulb hub (and screen_sync.py) first: a Tuya bulb accepts one connection at a time.
 
+## Capture format
+
+`RequestCaptureToFileSync(app_type, capture_mode, comp_type, width, height, jpeg_quality, dir, name)`: the
+service uses `0, 2, comp_type, 64, 36, quality`. The size is ignored (always 480x270). `comp_type` 0 is PNG
+(default), 1 is JPEG (~10x smaller, captured faster). JPEG is decoded by `runtime/jpeg-dc.cjs`, which reads
+only each 8x8 block's DC coefficient (60x34 picture). Switch with `/ambilight/capture-format?mode=jpeg|png&quality=60`
+(reset when the service restarts); three decode failures switch back to PNG on their own. The Strip status line
+shows the format and picture size in use.
+
 ## Finding out what the capture service can do
 
 `GET /ambilight/introspect` (any time Nuvio's service is running) lists the methods and arguments of
