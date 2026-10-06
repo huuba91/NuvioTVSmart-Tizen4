@@ -770,3 +770,52 @@ test("a session captures through long-lived capture shells and the CPU figure in
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("bus-proxy-probe hands a socket to the proxy, says Hello through it and makes captures", { skip: process.platform !== "linux" || !fs.existsSync("/dev/shm") }, async function () {
+  var os = require("node:os");
+  var fake = require("./helpers/fake-dbus.cjs");
+  var dir = fs.mkdtempSync(path.join(os.tmpdir(), "proxy-"));
+  // a stand-in systemd-bus-proxyd: its stdin/stdout is the accepted socket, bridged to a stand-in bus
+  var script = path.join(dir, "fake-proxyd.cjs");
+  fs.writeFileSync(script,
+    'var net = require("net");\nvar up = net.connect(process.argv[2]);\n' +
+    'var sock = new net.Socket({ fd: 0, readable: true, writable: true });\nsock.pipe(up);\nup.pipe(sock);\n' +
+    'up.on("close", function () { process.exit(0); });\n');
+  var bus = await fake.fakeBus({
+    answer: function (msg) {
+      if (msg.fields[3] === "Hello") return fake.withReplySerial(fake.hex(fake.GOLDEN_HELLO), msg.serial);
+      if (msg.fields[3] === "RequestCaptureToFileSync") {
+        fs.copyFileSync(path.join(JPEG_DIR, "420.jpg"), "/dev/shm/nuvio-bus-proxy.jpg");
+        return fake.withReplySerial(fake.hex(fake.GOLDEN_RETURN), msg.serial);
+      }
+      return fake.withReplySerial(fake.hex(fake.GOLDEN_ERROR), msg.serial);
+    }
+  });
+  internals.setProxyCandidates([{ path: process.execPath, args: [script, bus.path] }]);
+  try {
+    var result = (await call("/ambilight/bus-proxy-probe?count=4")).body;
+    assert.equal(result.ok, true);
+    assert.equal(result.attempts.length, 1);
+    var attempt = result.attempts[0];
+    assert.equal(attempt.stage, "captured", JSON.stringify(attempt));
+    assert.equal(attempt.uniqueName, ":1.9");
+    assert.equal(attempt.captures.ok, 4);
+    assert.ok(result.success, "a working proxy is reported");
+  } finally {
+    internals.setProxyCandidates(null);
+    bus.close();
+    try { fs.unlinkSync("/dev/shm/nuvio-bus-proxy.jpg"); } catch (_) {}
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("bus-proxy-probe reports when no proxy binary exists", { skip: process.platform !== "linux" }, async function () {
+  internals.setProxyCandidates([]);
+  try {
+    var result = (await call("/ambilight/bus-proxy-probe")).body;
+    assert.equal(result.success, null);
+    assert.match(result.note, /no executable/);
+  } finally {
+    internals.setProxyCandidates(null);
+  }
+});

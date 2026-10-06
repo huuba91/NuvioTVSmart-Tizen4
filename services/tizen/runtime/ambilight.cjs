@@ -29,6 +29,7 @@
 //   GET /ambilight/capture-sweep?w=64&h=36&modes=0,1,2,3,4&comps=0,1,2,3   try dcapture modes/formats
 //   GET /ambilight/capture-tools?count=10            gdbus vs dbus-send vs busctl: time and CPU per capture
 //   GET /ambilight/dbus-where                        how the system bus is reached (paths, sockets, kdbus)
+//   GET /ambilight/bus-proxy-probe?count=10          is systemd-bus-proxyd on the TV, and can dbus-lite use it for captures
 //   GET /ambilight/dbus-probe?count=10               direct system-bus capture vs gdbus: time and CPU per capture
 //   GET /ambilight/jpeg-sample?quality=60            one JPEG capture: structure, decode result and timing
 //   GET /ambilight/periodic-probe?ms=300&seconds=2   does StartPeriodicCapture write files, and where
@@ -1270,6 +1271,119 @@ function dbusWhere(done) {
   });
 }
 
+// ---- kdbus proxy experiment -------------------------------------------------------------------------
+// The TV's buses are kdbus, which Node cannot speak. systemd shipped `systemd-bus-proxyd` for exactly this: it is handed
+// an accepted unix socket (inetd style: the socket is its stdin and stdout), speaks classic D-Bus to the client on it and
+// kdbus to the kernel. If the TV has it, dbus-lite could keep one connection open and call the capture service in-process.
+// This probe looks for the binary, runs it for one connection, says Hello through it and makes captures, and reports.
+var proxyCandidateOverride = null; // tests only: [{ path, args }]
+var PROXY_FIXED_PATHS = ["/usr/lib/systemd/systemd-bus-proxyd", "/lib/systemd/systemd-bus-proxyd", "/usr/libexec/systemd-bus-proxyd",
+  "/usr/bin/systemd-bus-proxyd", "/usr/sbin/systemd-bus-proxyd"];
+var PROXY_ADDRESS_ARGS = [["--address=kernel:path=/sys/fs/kdbus/0-system/bus"], []];
+
+function busProxyProbe(query, done) {
+  var fs = require("fs"), cp = require("child_process"), net = require("net");
+  var count = Math.max(1, Math.min(20, Math.round(Number(query.count)) || 10));
+  var out = { ok: true, count: count, found: [], libs: [], attempts: [], success: null };
+  var sockPath = CAPTURE_DIR + "/nuvio-bus-proxy.sock", file = CAPTURE_DIR + "/nuvio-bus-proxy.jpg", name = "nuvio-bus-proxy";
+
+  function discover(cb) {
+    var find = 'find /usr /lib /bin /sbin /opt/usr/bin -maxdepth 4 \\( -iname "*bus-proxy*" -o -iname "*kdbus*" -o -iname "libsystemd*" -o -iname "*sd-bus*" \\) 2>/dev/null | head -60';
+    cp.execFile("sh", ["-c", find], { timeout: 25000, maxBuffer: 256 * 1024 }, function (error, stdout) {
+      var lines = error && !stdout ? [] : String(stdout).split("\n").filter(Boolean);
+      lines.forEach(function (l) { (/bus-proxy/i.test(l) ? out.found : out.libs).push(l); });
+      cb();
+    });
+  }
+  function executable(p) {
+    try { var st = fs.statSync(p); return st.isFile() && (st.mode & 73) !== 0; } catch (_) { return false; }
+  }
+  function attempt(candidate, args, cb) {
+    var result = { path: candidate, args: args, stage: "start", stderr: "" };
+    out.attempts.push(result);
+    try { fs.unlinkSync(sockPath); } catch (_) {}
+    var child = null, connection = null, finished = false;
+    var server = net.createServer({ pauseOnConnect: true }, function (sock) {
+      // hand the accepted socket to the proxy as its stdin/stdout; our own copy stays unread
+      try {
+        child = cp.spawn(candidate, args, { stdio: [sock, sock, "pipe"] });
+      } catch (error) { result.spawnError = describeError(error); sock.destroy(); return; }
+      child.stderr.setEncoding("utf8");
+      child.stderr.on("data", function (c) { if (result.stderr.length < 600) result.stderr += c; });
+      child.on("error", function (error) { result.spawnError = describeError(error); });
+      child.on("exit", function (code, signal) { result.exit = { code: code, signal: signal }; });
+      result.pid = child.pid;
+      sock.destroy();
+    });
+    function end() {
+      if (finished) return;
+      finished = true;
+      if (connection) connection.close();
+      if (child) { try { child.kill(); } catch (_) {} }
+      server.close();
+      try { fs.unlinkSync(sockPath); } catch (_) {}
+      try { fs.unlinkSync(file); } catch (_) {}
+      cb(result.stage === "captured");
+    }
+    server.on("error", function (error) { result.serverError = describeError(error); end(); });
+    server.listen(sockPath, function () {
+      connection = new dbusLite.Connection({ path: sockPath, timeoutMs: 4000 });
+      var began = Date.now();
+      connection.open(function (error) {
+        result.connectMs = Date.now() - began;
+        if (error) { result.error = String(error.message || error).slice(0, 200); result.stage = "connect-failed"; setTimeout(end, 200); return; }
+        result.stage = "hello"; result.uniqueName = connection.uniqueName;
+        var cpu0 = child && child.pid ? procCpuSeconds(child.pid) : null, runs = { ok: 0, errors: [], calls: [] }, n = 0, t0 = Date.now(), nodeCpu0 = procCpuSeconds("self");
+        (function next() {
+          if (n >= count) {
+            var wall = Date.now() - t0, cpu1 = child && child.pid ? procCpuSeconds(child.pid) : null, nodeCpu1 = procCpuSeconds("self");
+            result.captures = { ok: runs.ok, errors: runs.errors, calls: runs.calls, msPerCapture: Math.round(wall / count),
+              proxyCpuMsPerCapture: cpu0 !== null && cpu1 !== null ? Math.round((cpu1 - cpu0) * 1000 / count) : null,
+              nodeCpuMsPerCapture: nodeCpu0 !== null && nodeCpu1 !== null ? Math.round((nodeCpu1 - nodeCpu0) * 1000 / count) : null };
+            if (runs.ok > 0) result.stage = "captured";
+            end();
+            return;
+          }
+          n++;
+          var began2 = Date.now();
+          connection.call({ dest: CAPTURE_DEST, path: CAPTURE_PATH, iface: CAPTURE_DEST, member: CAPTURE_METHOD, signature: "iiiiiiss",
+            args: [0, 2, 1, CAPTURE_SIZE[0], CAPTURE_SIZE[1], jpegQuality, CAPTURE_DIR, name] }, function (callError, reply) {
+            runs.calls.push(Date.now() - began2);
+            if (callError) { if (runs.errors.length < 3) runs.errors.push(String(callError.message || callError).slice(0, 160)); }
+            else if (reply.args[0] !== 0) { if (runs.errors.length < 3) runs.errors.push("capture returned " + reply.args[0]); }
+            else {
+              try { jpegDc.decodeJpegDc(fs.readFileSync(reply.args[3] && fs.existsSync(reply.args[3]) ? reply.args[3] : file)); runs.ok++; }
+              catch (problem) { if (runs.errors.length < 3) runs.errors.push("decode " + describeError(problem)); }
+            }
+            next();
+          });
+        })();
+      });
+    });
+  }
+
+  function tryAll(list, i) {
+    if (i >= list.length) { done(out); return; }
+    attempt(list[i].path, list[i].args, function (ok) {
+      if (ok) { out.success = { path: list[i].path, args: list[i].args }; done(out); return; }
+      tryAll(list, i + 1);
+    });
+  }
+  function start() {
+    var list = [];
+    if (proxyCandidateOverride) list = proxyCandidateOverride;
+    else {
+      var paths = PROXY_FIXED_PATHS.slice();
+      out.found.forEach(function (f) { if (paths.indexOf(f) < 0) paths.push(f); });
+      paths.filter(executable).forEach(function (p) { PROXY_ADDRESS_ARGS.forEach(function (a) { list.push({ path: p, args: a }); }); });
+    }
+    out.executables = list.map(function (c) { return c.path; }).filter(function (p, k, all) { return all.indexOf(p) === k; });
+    if (!list.length) { out.note = "no executable systemd-bus-proxyd found"; done(out); return; }
+    tryAll(list, 0);
+  }
+  if (proxyCandidateOverride) start(); else discover(start);
+}
+
 // Can the service talk to the system bus itself, and would that be cheaper than spawning gdbus for every
 // capture? Opens one connection, makes `count` JPEG captures over it, then the same number through gdbus, and
 // reports time and CPU per capture for both (read + decode included in both). Run it with no session active:
@@ -1483,6 +1597,9 @@ function handleRequest(request, response) {
       case "/ambilight/dbus-where":
         dbusWhere(function (result) { sendJson(response, 200, result); });
         return;
+      case "/ambilight/bus-proxy-probe":
+        busProxyProbe(query, function (result) { sendJson(response, 200, result); });
+        return;
       case "/ambilight/dbus-probe":
         dbusProbe(query, function (result) { sendJson(response, 200, result); });
         return;
@@ -1518,6 +1635,7 @@ module.exports = {
     parseCaptureReply: parseCaptureReply,
     parseBusctlReply: parseBusctlReply,
     CaptureShell: CaptureShell,
+    setProxyCandidates: function (list) { proxyCandidateOverride = list; },
     modeForActivity: modeForActivity,
     ECO: ECO,
     hsvToRgb255: hsvToRgb255,

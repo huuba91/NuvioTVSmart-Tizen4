@@ -126,6 +126,17 @@ missing): `busctl-sh` (default) -> `busctl` started by Node -> `gdbus`, the way 
 ("Operation not permitted"), so where a periodic capture delivers its pictures, if anywhere, is still unknown.
 `/ambilight/dbus-where` also checks the session bus (see below) for the capture service.
 
+### Next idea: systemd-bus-proxyd
+
+kdbus clients on a classic socket are what `systemd-bus-proxyd` was made for: it is handed an accepted unix socket as its
+stdin/stdout, speaks D-Bus to the client and kdbus to the kernel. If the TV has it, `dbus-lite.cjs` could keep one connection
+open and call the capture service in-process (~1 ms instead of ~30 ms of busctl per capture, no per-capture processes).
+`GET /ambilight/bus-proxy-probe?count=10` searches for the binary (and libsystemd/sd-bus files), runs it for one
+connection with and without `--address=kernel:path=/sys/fs/kdbus/0-system/bus`, says Hello through it and makes captures,
+reporting each attempt's stage, the proxy's stderr, time per capture and CPU of the proxy and of Node. Tested here against a stand-in
+proxy and bus (not against kdbus, and on a newer Node than the TV's 4.4.3). Other ideas considered: a persistent C bridge
+(needs a binary built for the TV and permission to execute it) and an FFI library such as Koffi (needs N-API, Node 8+; the TV has Node 4).
+
 ## Finding out what the capture service can do
 
 `GET /ambilight/introspect` (any time Nuvio's service is running) lists the methods and arguments of
