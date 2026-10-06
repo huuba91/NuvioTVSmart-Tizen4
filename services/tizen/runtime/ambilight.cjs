@@ -38,6 +38,7 @@
 //   GET /ambilight/jpeg-sample?quality=60            one JPEG capture: structure, decode result and timing
 //   GET /ambilight/periodic-probe?ms=300&seconds=2   does StartPeriodicCapture write files, and where
 //   GET /ambilight/capture-format?mode=png|jpeg&quality=60   capture as small JPEG (default) or PNG
+//   GET /ambilight/capture-rate?max=15               cap on pictures per second, all loops together (0 = no cap)
 //   GET /ambilight/capture-workers?count=3           overlapped capture loops (1-8), live; more = higher picture rate, more CPU
 //   GET /ambilight/capture-mode?mode=0|1|2|3         which dcapture mode the ambilight captures (3 = video only, default)
 //   GET /ambilight/capture-tool?mode=busctl-sh|busctl|gdbus   how the capture call is made (busctl-sh default, falls back down the list)
@@ -52,13 +53,18 @@ var CAPTURE_PREFIX = "nuvio-ambilight-";
 var CAPTURE_SIZE = [64, 36]; // capture mode 2 returns at least 320x180
 var captureWorkers = 3; // overlapped captures, no fade; 2 gave only ~2.8 pictures/s on the TV while a video played, so one more
 var MAX_WORKERS = 8; // /ambilight/capture-workers?count=N changes it live
-var WATCHDOG_MS = 10000; // stop when the app stops pinging (player gone, app killed)
+// Stop when the app stops pinging (player gone, app killed). 30 s: with a heavy load at movie start the app's own thread can be
+// starved for several seconds, and a 10 s watchdog then ended a working session.
+var WATCHDOG_MS = 30000;
 var MAX_FAILED_CAPTURES = 6;
 // Eco pacing: the colours glide between pictures anyway, so a still or slowly changing picture does not
 // need ~9 captures/s (each one spawns gdbus and inflates a PNG). Activity is the mean per-byte change
 // between consecutive pictures (0-255); it jumps up at once on a cut and decays by DECAY per picture.
 var ECO = { staticBelow: 0.6, calmBelow: 2.5, staticRate: 3, calmRate: 6, decay: 0.85 };
 var ecoEnabled = true;
+// Upper limit on pictures per second for all capture loops together (0 = none). Without it a fast capture mode lets the rate and
+// the CPU load climb (276% at ~26/s on the TV), which can starve the app itself.
+var maxPerSecond = 15;
 // dcapture comp_type: 0 = PNG (~100 KB, what the research used), 1 = JPEG (~10 KB, captured in roughly half the
 // time). JPEG is read by jpeg-dc.cjs (one pixel per 8x8 block, 60x34). Measured on the UE49NU7100 against
 // PNG: capture 250 vs 696 ms, decode 23 vs 188 ms, analysis 10 vs 47 ms. Three failures in a row drop back to
@@ -68,10 +74,10 @@ var captureFormat = "jpeg";
 var jpegQuality = 40; // the DC-only decoder never reconstructs detail; 40 keeps the block averages within ~1.3 levels
 var jpegFailures = 0;
 // dcapture capture_mode (see docs): 0 = everything on screen incl. Nuvio's controls, 1 = picture with the screen's letterbox
-// bars, 2 and 3 = the video picture only (~31 ms; 0 and 1 take ~67 ms). 2 is the validated one. 3 looked identical on a paused
-// frame and was tried as the default, but the lights stopped working in that same build (cause not yet separated from the
-// decoder change), so 2 is back until 3 is tested on its own: /ambilight/capture-mode?mode=3 switches live.
-var captureMode = 2;
+// bars, 2 and 3 = the video picture only. Both take ~31 ms idle, but under playback mode 3 is about twice as fast: with 5 loops
+// mode 3 gave ~25.8 pictures/s at ~180 ms per capture, mode 2 ~13.6/s at ~320 ms (the service handles one capture at a time).
+// /ambilight/capture-mode?mode=2 switches live.
+var captureMode = 3;
 // How the capture call is made. The TV's system bus is kdbus (kernel), which Node cannot speak, so a command-line tool
 // is started for every capture. Measured on the UE49NU7100 (10 captures, idle): gdbus 105 ms / 199 ms CPU,
 // dbus-send 97 / 184, busctl 57 / 99. busctl is used first; three failures in a row (or no busctl) fall back to gdbus.
@@ -917,12 +923,20 @@ Session.prototype.loop = function (worker) {
   });
 };
 
+// Rest (ms) a capture loop takes after a capture that took `elapsed` ms, so that `workers` loops together make `rate` pictures per
+// second; `rate` is the eco rate for the current activity (0 = none) and `cap` the overall limit (0 = none).
+function paceDelayFor(workers, rate, cap, elapsed) {
+  var target = rate;
+  if (cap > 0) target = target > 0 ? Math.min(target, cap) : cap;
+  return target > 0 ? Math.max(0, Math.round(workers / target * 1000 - elapsed)) : 0;
+}
+
 // How long a worker rests before its next capture so that all workers together give the pictures per
 // second wanted for the current activity. 0 = flat out (also whenever eco is off).
 Session.prototype.paceDelay = function (elapsed) {
-  if (!ecoEnabled) return 0;
-  var rate = this.mode === "static" ? ECO.staticRate : this.mode === "calm" ? ECO.calmRate : 0;
-  return rate ? Math.max(0, Math.round(captureWorkers / rate * 1000 - elapsed)) : 0;
+  var rate = 0;
+  if (ecoEnabled) rate = this.mode === "static" ? ECO.staticRate : this.mode === "calm" ? ECO.calmRate : 0;
+  return paceDelayFor(captureWorkers, rate, maxPerSecond, elapsed);
 };
 
 // A new picture only moves the goal; tick() glides the bulbs towards it.
@@ -961,7 +975,7 @@ Session.prototype.recent = function () {
   if (!base) base = this.samples[0];
   if (!base || now - base.t < 2000 || !parts || base.node === null) return null;
   var seconds = (now - base.t) / 1000;
-  function pct(v) { return Math.round(v / seconds * 1000) / 10; }
+  function pct(ms) { return Math.round(ms / (seconds * 1000) * 1000) / 10; } // ms of work over the window, as a share of one core
   var js = (this.busy.decode - base.decode) + (this.busy.analyse - base.analyse) + (this.busy.tick - base.tick);
   var nodeCpu = parts.node - base.node, shellCpu = parts.shells - base.shells;
   return {
@@ -1073,6 +1087,7 @@ Session.prototype.describe = function () {
     capture: {
       size: CAPTURE_SIZE.join("x"),
       workers: captureWorkers,
+      maxPerSecond: maxPerSecond,
       recent: this.recent(),
       eco: ecoEnabled,
       tool: captureTool,
@@ -1868,6 +1883,12 @@ function handleRequest(request, response) {
         sendJson(response, 200, { ok: true, format: captureFormat, jpegQuality: jpegQuality });
         return;
       }
+      case "/ambilight/capture-rate": {
+        var cap = Number(query.max);
+        if (query.max !== undefined && isFinite(cap) && cap >= 0 && cap <= 60 && cap === Math.round(cap)) maxPerSecond = cap;
+        sendJson(response, 200, { ok: true, maxPerSecond: maxPerSecond });
+        return;
+      }
       case "/ambilight/capture-workers": {
         var count = Number(query.count);
         if (query.count !== undefined && isFinite(count) && count >= 1 && count <= MAX_WORKERS && count === Math.round(count)) {
@@ -1950,6 +1971,7 @@ module.exports = {
     parseCaptureReply: parseCaptureReply,
     parseBusctlReply: parseBusctlReply,
     CaptureShell: CaptureShell,
+    paceDelayFor: paceDelayFor,
     decodeJpegChecked: decodeJpegChecked,
     jpegDecoder: jpegDecoder,
     activeLoopsForTest: function () { return session ? session.active : {}; },

@@ -176,6 +176,21 @@ Live dials (all reset when the service restarts), and `capture.recent` in `/ambi
 shells, ambilight JS) so a change can be judged within seconds:
 `/ambilight/eco?mode=on|off`, `/ambilight/capture-workers?count=1..8`, `/ambilight/capture-mode?mode=0..3`.
 
+### Live tuning on the TV: mode 3 is twice as fast under playback
+
+Measured with `capture.recent` (the percentages in the first version of that field were 1000x too large; the figures below are
+corrected) while a movie played. Mode 2, 3 loops: 13.5 pictures/s, CPU 188%, Node 156%, ambilight JS 65%, shells 32%, capture
+175-190 ms. Eco off changed nothing (13.5/s). 5 loops in mode 2 changed nothing either (13.3-13.6/s) but each capture took
+~320 ms: the capture service handles one capture at a time. Mode 3 with 5 loops: ~25.8/s, capture ~180 ms, CPU 276%, Node 216%,
+ambilight JS 90%, shells 60%. So mode 3 captures about twice as fast and fresher, at the price of load: the ambilight's JavaScript
+needs ~48 ms per picture under playback (twice the idle figure) and at ~26/s takes ~90% of a core. Node's total CPU exceeds 100% (it
+uses several threads), so what matters for stutter is the main thread, not that total.
+
+Defaults now: mode 3, 3 loops, eco on, a cap of 15 pictures/s for all loops together (`/ambilight/capture-rate?max=N`, 0 = no cap),
+and a watchdog of 30 s. The earlier failure (lights lit during loading and stopped when the movie started, session ended by the
+10 s watchdog) fits a starved app thread at movie start; the cap keeps the load near the known-good level (~190% at 13.5/s) and
+the longer watchdog stops a short stall from ending a working session.
+
 ### Where the CPU goes now (TV, paused/still picture, 3.6 pictures/s)
 
 Status line: 45.4% CPU = Node 36% (ambilight JS 9.6%: decode 6, analyse 2.5, tick 1.1) + shells 8.7%. About 26% of a core of

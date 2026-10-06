@@ -934,10 +934,11 @@ test("the capture mode is switchable and reaches both the shell and the command 
   var originalPath = process.env.PATH;
   process.env.PATH = dir + path.delimiter + originalPath;
   try {
-    assert.equal((await call("/ambilight/capture-mode")).body.captureMode, 2, "2 is the validated default");
+    assert.equal((await call("/ambilight/capture-mode")).body.captureMode, 3, "3 is the default (about twice as fast under playback)");
+    assert.equal((await call("/ambilight/capture-mode?mode=2")).body.captureMode, 2);
+    assert.equal((await call("/ambilight/capture-mode?mode=9")).body.captureMode, 2, "out of range is ignored");
+    assert.equal((await call("/ambilight/capture-mode?mode=1.5")).body.captureMode, 2);
     assert.equal((await call("/ambilight/capture-mode?mode=3")).body.captureMode, 3);
-    assert.equal((await call("/ambilight/capture-mode?mode=9")).body.captureMode, 3, "out of range is ignored");
-    assert.equal((await call("/ambilight/capture-mode?mode=1.5")).body.captureMode, 3);
     // through a long-lived shell
     var shell = new internals.CaptureShell();
     var viaShell = await new Promise(function (resolve) { shell.run(1, 40, "mode-test", function (error, text) { resolve({ error: error, text: text }); }); });
@@ -945,7 +946,7 @@ test("the capture mode is switchable and reaches both the shell and the command 
     assert.equal(viaShell.error, null);
     assert.match(fs.readFileSync(log, "utf8"), /mode=3/);
   } finally {
-    await call("/ambilight/capture-mode?mode=2");
+    await call("/ambilight/capture-mode?mode=3");
     process.env.PATH = originalPath;
     try { fs.unlinkSync("/dev/shm/mode-test.jpg"); } catch (_) {}
     fs.rmSync(dir, { recursive: true, force: true });
@@ -1068,7 +1069,9 @@ test("the capture worker count can be changed live and the state reports the las
     assert.equal(before.capture.workers, 3);
     assert.ok(before.capture.recent, "recent figures after a few seconds");
     assert.ok(before.capture.recent.perSecond > 0);
-    assert.ok(before.capture.recent.cpuPercent >= 0);
+    assert.ok(before.capture.recent.cpuPercent >= 0 && before.capture.recent.cpuPercent < 1000, "a percentage, not a thousandth: " + before.capture.recent.cpuPercent);
+    assert.ok(before.capture.recent.nodePercent < 1000 && before.capture.recent.ambilightJsPercent < 1000);
+    assert.ok(Math.abs(before.capture.recent.ambilightJsPercent - (before.capture.recent.decodePercent + before.capture.recent.analysePercent + before.capture.recent.tickPercent)) < 0.5);
     // raise the count live: the extra loops start without a restart
     assert.equal((await call("/ambilight/capture-workers?count=6")).body.workers, 6);
     await new Promise(function (resolve) { setTimeout(resolve, 1000); });
@@ -1082,6 +1085,7 @@ test("the capture worker count can be changed live and the state reports the las
   } finally {
     await call("/ambilight/stop");
     await call("/ambilight/capture-workers?count=3");
+    await call("/ambilight/capture-rate?max=15");
     await call("/ambilight/eco?mode=on");
     await call("/ambilight/capture-tool?mode=busctl-sh");
     process.env.PATH = originalPath;
@@ -1089,5 +1093,25 @@ test("the capture worker count can be changed live and the state reports the las
     await new Promise(function (resolve) { setTimeout(resolve, 1500); });
     bulb.close();
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
+test("the picture rate cap paces the capture loops and can be changed live", async function () {
+  // loops resting between captures: workers / target rate, minus the time the capture itself took
+  assert.equal(internals.paceDelayFor(3, 0, 0, 100), 0, "no eco rate and no cap: flat out");
+  assert.equal(internals.paceDelayFor(3, 0, 15, 100), 100, "3 loops at 15/s: 200 ms per cycle, 100 ms already used");
+  assert.equal(internals.paceDelayFor(3, 0, 15, 250), 0, "a capture slower than the cycle does not wait");
+  assert.equal(internals.paceDelayFor(3, 6, 15, 0), 500, "the eco rate wins when lower than the cap");
+  assert.equal(internals.paceDelayFor(3, 20, 15, 0), 200, "the cap wins when lower than the eco rate");
+  assert.equal(internals.paceDelayFor(5, 3, 0, 0), 1667, "eco alone");
+  try {
+    assert.equal((await call("/ambilight/capture-rate")).body.maxPerSecond, 15, "capped at 15/s by default");
+    assert.equal((await call("/ambilight/capture-rate?max=25")).body.maxPerSecond, 25);
+    assert.equal((await call("/ambilight/capture-rate?max=999")).body.maxPerSecond, 25, "out of range is ignored");
+    assert.equal((await call("/ambilight/capture-rate?max=7.5")).body.maxPerSecond, 25);
+    assert.equal((await call("/ambilight/capture-rate?max=0")).body.maxPerSecond, 0, "0 removes the cap");
+  } finally {
+    await call("/ambilight/capture-rate?max=15");
   }
 });
