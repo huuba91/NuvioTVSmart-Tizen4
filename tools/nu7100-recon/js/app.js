@@ -111,7 +111,7 @@
   }
   $("b-export").onclick = function () {
     showReport();
-    var name = stampName(), body = $("report").value, lines = ["EXPORT " + name + " (" + body.length + " bytes)"], roots = ["documents", "wgt-private"], i = 0;
+    var name = stampName(), body = $("report").value, lines = ["EXPORT " + name + " (" + body.length + " bytes)"], roots = ["documents", "wgt-private", "wgt-private-tmp", "downloads", "file:///tmp", "file:///dev/shm"], i = 0;
     $("exported").textContent = lines.join("\n") + "\nsaving...";
     (function next() {
       if (i >= roots.length) {
