@@ -102,3 +102,26 @@ deferred, since this TV only keeps one foreground app alive and typing on the re
 - Defaults filled in on the page so nothing needs typing on the remote: PC receiver `http://192.168.192.8:8099`,
   known dcapture path `/dev/shm/nuvio-ambilight-0.jpg` (the real live-session file name - `nuvio-ambilight-1.jpg` and
   `-2.jpg` are the other two capture workers; `nuvio-series.jpg` is only used by the unrelated capture-lab diagnostic).
+
+## This round: dcapture benchmark first, multi-offset SHM windows, full inspector-port read
+
+Priority was the known-dcapture-path benchmark, then the SHM window watcher, then the full inspector read, then a
+`/dev/shm` filename diff. Test D (two apps open at once) stays deferred.
+
+- **`dcapture.known_path`**: now one complete timed read of the whole file (resolve/stat/open/read/close each timed
+  separately), `FF D8 FF` start and `FF D9` end checked, `complete` (bytes read === reported size).
+- **New `dcapture.benchmark`**: the same read 50 times back to back; mean/p50/p95/min/max per phase, how many reads
+  started with `FF D8 FF`, how many were incomplete or missing the end marker, and how many distinct file contents were
+  seen across the 50 reads (if always 1, nothing moved during the run - worth knowing either way). New **BENCHMARK 50x**
+  button next to **Known dcapture path**.
+- **`sharedmem.watch_windows`** replaces the old `shm_ave`/`shm_ave_tddg` pair-watch: 4 KB windows at the requested
+  offsets (0, 4 KB, 64 KB, 128 KB, 192 KB, 256 KB, end-4KB for `shm_ave`; add 512 KB/768 KB/1 MB for `shm_ave_tddg`),
+  hashed at roughly 5-10 Hz for 5 s, reporting per-offset sample count and hash-change count - a changing offset that
+  the first-256-bytes check missed would show up here.
+- **`sharedmem.inspector_port`** now reads the WHOLE ~412-byte file instead of the first 256 bytes (which were all
+  zero). Reports `nonZeroByteCount`, a printable-string scan, and `first256AllZero` so the report states plainly that
+  the interesting bytes are past the 256-byte mark, if that's what they are.
+- **New SNAPSHOT SHM / DIFF SHM**: press SNAPSHOT SHM with Nuvio idle (saves the `/dev/shm` name/size list to
+  `localStorage`, which survives closing Recon); start Nuvio's movie/ambilight; relaunch Recon and press DIFF SHM - it
+  reports exactly which names were added, removed, or changed size since the snapshot. This replaces needing both apps
+  open at once for a filename-level comparison.

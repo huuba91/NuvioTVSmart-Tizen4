@@ -49,8 +49,21 @@
   };
 
   // define(group-category, id, name, fn(done)); done(status, value, error)
-  Recon.define = function (category, id, name, fn) {
-    Recon.tests.push({ id: id, category: category, group: GROUP_OF[category] || category, name: name, fn: fn });
+  // opts.timeoutMs overrides the default 12 s limit (the 50x read benchmark needs longer).
+  Recon.define = function (category, id, name, fn, opts) {
+    Recon.tests.push({ id: id, category: category, group: GROUP_OF[category] || category, name: name, fn: fn, timeoutMs: opts && opts.timeoutMs });
+  };
+
+  // Millisecond clock, fractional where performance.now exists (Chromium M56 has it).
+  Recon.now = function () { return typeof performance !== "undefined" && performance && performance.now ? performance.now() : Date.now(); };
+  // mean / p50 / p95 / min / max of a list of numbers (nearest-rank percentiles), rounded to 0.01.
+  Recon.stats = function (list) {
+    var n = list.length, sorted = list.slice().sort(function (a, b) { return a - b; }), sum = 0, i;
+    function r(v) { return Math.round(v * 100) / 100; }
+    function pick(q) { return sorted[Math.min(n - 1, Math.max(0, Math.ceil(q * n) - 1))]; }
+    if (!n) return { count: 0, mean: null, p50: null, p95: null, min: null, max: null };
+    for (i = 0; i < n; i++) sum += list[i];
+    return { count: n, mean: r(sum / n), p50: r(pick(0.5)), p95: r(pick(0.95)), min: r(sorted[0]), max: r(sorted[n - 1]) };
   };
 
   Recon.runTest = function (test, cb) {
@@ -67,7 +80,8 @@
       Recon.note(test.id, test.name, status, result.error);
       cb(result);
     }
-    timer = setTimeout(function () { done("ERROR", null, "test did not finish within " + Recon.TIMEOUT_MS / 1000 + " s"); }, Recon.TIMEOUT_MS);
+    var limit = test.timeoutMs || Recon.TIMEOUT_MS;
+    timer = setTimeout(function () { done("ERROR", null, "test did not finish within " + limit / 1000 + " s"); }, limit);
     try { test.fn(done); } catch (e) { done("ERROR", null, e); }
   };
 
@@ -146,15 +160,27 @@
     });
     var watch = v("sharedmem.watch");
     out.sharedMemory.watchedPathChanges = watch ? watch.changes : "NOT_RUN";
-    var pair = v("sharedmem.watch_pair");
-    out.sharedMemory.avePairChanges = pair ? { "shm_ave": pair.objects["/dev/shm/shm_ave"] && pair.objects["/dev/shm/shm_ave"].changes,
-      "shm_ave_tddg": pair.objects["/dev/shm/shm_ave_tddg"] && pair.objects["/dev/shm/shm_ave_tddg"].changes } : "NOT_RUN";
+    var windows = v("sharedmem.watch_windows");
+    out.sharedMemory.windowWatch = "NOT_RUN";
+    if (windows) {
+      out.sharedMemory.windowWatch = {};
+      Object.keys(windows.files).forEach(function (path) {
+        var f = windows.files[path];
+        out.sharedMemory.windowWatch[path.replace("/dev/shm/", "")] = { sizeChanges: f.sizeChanges, mtimeChanges: f.mtimeChanges,
+          windows: f.windows.map(function (w) { return w.label + ": " + w.hashChanges + " changes / " + w.sampleCount + " samples" + (w.errors ? " (" + w.errors + " errors: " + w.firstError + ")" : ""); } ) };
+      });
+    }
+    out.sharedMemory.diffSinceSnapshot = Recon.results["sharedmem.diff"] ? (v("sharedmem.diff") ? { added: v("sharedmem.diff").added, removed: v("sharedmem.diff").removed, resized: v("sharedmem.diff").resized } : s("sharedmem.diff")) : "NOT_RUN";
     var insp = v("sharedmem.inspector_port");
     out.inspector.port = s("sharedmem.inspector_port") || "NOT_RUN";
-    out.inspector.value = insp ? insp.first256Text : null;
+    out.inspector.value = insp ? { sizeBytes: insp.sizeBytes, complete: insp.complete, nonZeroByteCount: insp.nonZeroByteCount, strings: insp.strings, first256AllZero: insp.first256AllZero } : null;
     out.inspector.devToolsSemaphores = v("sharedmem.devtools_sem") || "NOT_RUN";
+    var kp = v("dcapture.known_path"), bm = v("dcapture.benchmark"), dw = v("dcapture.watch");
     out.dcapture.knownPathRead = s("dcapture.known_path") || "NOT_RUN";
-    out.dcapture.knownPathWatch = v("dcapture.watch") ? v("dcapture.watch").changes : "NOT_RUN";
+    out.dcapture.knownPath = kp ? { sizeBytes: kp.sizeBytes, startsWithFFD8FF: kp.startsWithFFD8FF, endsWithFFD9: kp.endsWithFFD9, timingsMs: kp.timingsMs } : null;
+    out.dcapture.benchmark50 = bm ? { status: s("dcapture.benchmark"), successes: bm.successes, failures: bm.failures, distinctContents: bm.distinctContents, readsPerSecond: bm.readsPerSecond,
+      totalMs: bm.timingsMs && bm.timingsMs.total, openMs: bm.timingsMs && bm.timingsMs.open, readMs: bm.timingsMs && bm.timingsMs.read, closeMs: bm.timingsMs && bm.timingsMs.close } : "NOT_RUN";
+    out.dcapture.knownPathWatch = dw ? dw.changes : "NOT_RUN";
     out.dcapture.tmpSockets = v("dcapture.tmp_sockets") || "NOT_RUN";
     return out;
   };

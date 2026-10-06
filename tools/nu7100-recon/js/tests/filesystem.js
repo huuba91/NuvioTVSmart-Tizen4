@@ -35,14 +35,24 @@
   R.text = text;
 
   // offset/hex/printable dump, 16 bytes per line, capped at 256 lines (4096 bytes) so a report never carries a megabyte of text.
-  R.hexDump = function (bytes, max) {
-    var lines = [], i, j, limit = Math.min(bytes.length, max || 4096), hexPart, textPart, b;
+  R.hexDump = function (bytes, max, base) {
+    var lines = [], i, j, limit = Math.min(bytes.length, max || 4096), hexPart, textPart, b, offset = base || 0;
     for (i = 0; i < limit; i += 16) {
       hexPart = []; textPart = "";
       for (j = i; j < Math.min(i + 16, limit); j++) { b = bytes[j] & 255; hexPart.push((b < 16 ? "0" : "") + b.toString(16)); textPart += b >= 32 && b < 127 ? String.fromCharCode(b) : "."; }
-      lines.push(pad6(i) + "  " + hexPart.join(" ") + "  " + textPart);
+      lines.push(pad6(offset + i) + "  " + hexPart.join(" ") + "  " + textPart);
     }
     return lines.join("\n");
+  };
+  // Runs of at least minLen printable ASCII characters (the "strings" view), capped at 40 runs.
+  R.printableStrings = function (bytes, minLen) {
+    var out = [], cur = "", i, b, min = minLen || 4;
+    for (i = 0; i <= bytes.length; i++) {
+      b = i < bytes.length ? bytes[i] & 255 : 0;
+      if (b >= 32 && b < 127) cur += String.fromCharCode(b);
+      else { if (cur.length >= min && out.length < 40) out.push(cur); cur = ""; }
+    }
+    return out;
   };
   function pad6(n) { var s = n.toString(16); while (s.length < 6) s = "0" + s; return s; }
 
@@ -169,6 +179,79 @@
           cb(out);
         }, function (e4) { out.steps.open = R.errText(e4); out.error = "open: " + R.errText(e4); out.readTimeMs = Date.now() - begun; cb(out); }, "UTF-8");
       } catch (e5) { out.steps.open = R.errText(e5); out.error = "open: " + R.errText(e5); cb(out); }
+    });
+  };
+
+  // One level of a directory as objects: cb(error, [{ name, size, isDirectory, modified }])
+  R.listDir = function (path, cb) {
+    resolveAny(path.charAt(0) === "/" ? ["file://" + path, path] : [path], "r", function (error, dir) {
+      if (error) { cb(error); return; }
+      try {
+        dir.listFiles(function (files) {
+          var out = [], i;
+          for (i = 0; i < files.length; i++) out.push({ name: files[i].name, size: files[i].isFile ? files[i].fileSize : null, isDirectory: !!files[i].isDirectory,
+            modified: R.safe(function () { return files[i].modified ? new Date(files[i].modified).toISOString() : null; }, null) });
+          cb(null, out);
+        }, function (e) { cb("list: " + R.errText(e)); });
+      } catch (e2) { cb("list: " + R.errText(e2)); }
+    });
+  };
+
+  // Hashes `windowSize`-byte windows at several offsets of one file with ONE open stream (position is set before each read).
+  // offsets: numbers, or -1 meaning "the last window" (size - windowSize). cb({ size, modified, windows: [{ offset, bytesRead, hash, zeroRatio, error }], error })
+  R.readWindows = function (path, offsets, windowSize, cb) {
+    var out = { size: null, modified: null, windows: [], error: null };
+    resolveAny(path.charAt(0) === "/" ? ["file://" + path, path] : [path], "r", function (error, file) {
+      if (error) { out.error = "resolve: " + error; cb(out); return; }
+      try { out.size = file.fileSize; out.modified = R.safe(function () { return file.modified ? new Date(file.modified).toISOString() : null; }, null); }
+      catch (e) { out.error = "stat: " + R.errText(e); cb(out); return; }
+      try {
+        file.openStream("r", function (stream) {
+          offsets.forEach(function (wanted) {
+            var offset = wanted === -1 ? Math.max(0, out.size - windowSize) : wanted, entry = { offset: offset, bytesRead: 0, hash: null, zeroRatio: null, error: null };
+            out.windows.push(entry);
+            if (offset >= out.size) { entry.error = "beyond end of file (" + out.size + " bytes)"; return; }
+            try {
+              stream.position = offset;
+              var bytes = stream.readBytes(Math.min(windowSize, out.size - offset)), zeros = 0, i;
+              for (i = 0; i < bytes.length; i++) if ((bytes[i] & 255) === 0) zeros++;
+              entry.bytesRead = bytes.length; entry.hash = R.hashBytes(bytes); entry.zeroRatio = bytes.length ? Math.round(zeros / bytes.length * 1000) / 1000 : null;
+            } catch (e2) { entry.error = R.errText(e2); }
+          });
+          try { stream.close(); } catch (e3) { /* ignore */ }
+          cb(out);
+        }, function (e4) { out.error = "open: " + R.errText(e4); cb(out); }, "UTF-8");
+      } catch (e5) { out.error = "open: " + R.errText(e5); cb(out); }
+    });
+  };
+
+  // One complete read with every phase timed separately (ms, fractional): resolve, stat, open, read, close. Reads the WHOLE file
+  // up to maxBytes (default 4 MB). cb({ ok, error, size, bytes, timings: { resolve, stat, open, read, close, total } })
+  R.readTimed = function (path, maxBytes, cb) {
+    var t0 = R.now(), out = { ok: false, error: null, size: null, modified: null, bytes: null, timings: { resolve: null, stat: null, open: null, read: null, close: null, total: null } };
+    resolveAny(path.charAt(0) === "/" ? ["file://" + path, path] : [path], "r", function (error, file) {
+      var t1 = R.now();
+      out.timings.resolve = t1 - t0;
+      if (error) { out.error = "resolve: " + error; out.timings.total = R.now() - t0; cb(out); return; }
+      var size;
+      try { size = file.fileSize; out.size = size; out.modified = R.safe(function () { return file.modified ? new Date(file.modified).toISOString() : null; }, null); }
+      catch (e) { out.error = "stat: " + R.errText(e); out.timings.total = R.now() - t0; cb(out); return; }
+      var t2 = R.now();
+      out.timings.stat = t2 - t1;
+      try {
+        file.openStream("r", function (stream) {
+          var t3 = R.now(), t4, t5;
+          out.timings.open = t3 - t2;
+          try { out.bytes = size ? stream.readBytes(Math.min(size, maxBytes || 4194304)) : []; out.ok = true; } catch (e2) { out.error = "read: " + R.errText(e2); }
+          t4 = R.now();
+          out.timings.read = t4 - t3;
+          try { stream.close(); } catch (e3) { /* ignore */ }
+          t5 = R.now();
+          out.timings.close = t5 - t4;
+          out.timings.total = t5 - t0;
+          cb(out);
+        }, function (e4) { out.error = "open: " + R.errText(e4); out.timings.total = R.now() - t0; cb(out); }, "UTF-8");
+      } catch (e5) { out.error = "open: " + R.errText(e5); out.timings.total = R.now() - t0; cb(out); }
     });
   };
 

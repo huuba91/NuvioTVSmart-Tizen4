@@ -43,8 +43,14 @@
     $("summary").textContent = "RECON COMPLETE   Passed: " + c.PASS + "   Blocked: " + c.BLOCKED + "   Unavailable: " + c.NOT_AVAILABLE + "   Partial: " + c.PARTIAL + "   Failed: " + (c.FAIL + c.ERROR);
   }
 
+  // The path fields are read when a run starts, so RUN ALL TESTS uses what is on screen too.
+  function syncInputs() {
+    R.inputs.dcapturePath = $("dc-path").value.replace(/^\s+|\s+$/g, "");
+  }
+
   function runGroup(group) {
     if (running) return;
+    syncInputs();
     running = true;
     $("summary").textContent = "running...";
     $("bar").style.width = "0";
@@ -66,7 +72,7 @@
     R.results = {}; R.order = []; R.log = []; R.manualProbes = [];
     build(); counts();
     $("summary").textContent = ""; $("fingerprint").textContent = "(run the tests)"; $("report").value = ""; $("exported").textContent = "";
-    $("probe-out").textContent = ""; $("dc-out").textContent = ""; $("shm-out").textContent = ""; $("findings").textContent = "(run the tests)";
+    $("probe-out").textContent = ""; $("dc-out").textContent = ""; $("shm-out").textContent = ""; $("snap-out").textContent = ""; $("findings").textContent = "(run the tests)";
   };
 
   function formatProbe(info) {
@@ -93,13 +99,25 @@
     })();
   }
   $("b-dc-read").onclick = function () {
-    R.inputs.dcapturePath = $("dc-path").value.replace(/^\s+|\s+$/g, "");
+    syncInputs();
     runNamed(["dcapture.known_path"], $("dc-out"), "reading...");
   };
+  $("b-dc-bench").onclick = function () {
+    syncInputs();
+    runNamed(["dcapture.benchmark"], $("dc-out"), "reading 50 times...");
+  };
   $("b-dc-watch").onclick = function () {
-    R.inputs.dcapturePath = $("dc-path").value.replace(/^\s+|\s+$/g, "");
+    syncInputs();
     runNamed(["dcapture.watch"], $("dc-out"), "watching for 5 s...");
   };
+  $("b-snap").onclick = function () {
+    $("snap-out").textContent = "listing /dev/shm...";
+    R.shmSnapshotSave(function (r) {
+      $("snap-out").textContent = r.ok ? "Snapshot saved: " + r.count + " names at " + r.at + ". Now start Nuvio's movie/ambilight, come back within ~30 s and press DIFF SHM."
+        : "Snapshot failed: " + (r.error || r.storageNote || "unknown");
+    });
+  };
+  $("b-diff").onclick = function () { runNamed(["sharedmem.diff"], $("snap-out"), "comparing with the snapshot..."); };
   $("b-shm-watch").onclick = function () {
     R.inputs.shmWatchPath = $("shm-path").value.replace(/^\s+|\s+$/g, "");
     runNamed(["sharedmem.watch"], $("shm-out"), "watching for 5 s...");
