@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<widget xmlns:tizen="http://tizen.org/ns/widgets" xmlns="http://www.w3.org/ns/widgets" id="http://research.local/nu7100recon" version="0.1.0" viewmodes="maximized">
+  <access origin="*" subdomains="true"/>
+  <tizen:application id="NU7100Reco.Recon" package="NU7100Reco" required_version="4.0"/>
+  <author href="http://research.local">NU-7100 research</author>
+  <content src="index.html"/>
+  <feature name="http://tizen.org/feature/screen.size.all"/>
+  <icon src="assets/icon.png"/>
+  <name>NU-7100-Recon</name>
+  <tizen:privilege name="http://tizen.org/privilege/internet"/>
+  <tizen:privilege name="http://tizen.org/privilege/filesystem.read"/>
+  <tizen:privilege name="http://tizen.org/privilege/filesystem.write"/>
+  <tizen:privilege name="http://tizen.org/privilege/application.info"/>
+  <tizen:privilege name="http://tizen.org/privilege/packagemanager.info"/>
+  <tizen:privilege name="http://tizen.org/privilege/system"/>
+  <tizen:privilege name="http://tizen.org/privilege/network.get"/>
+  <tizen:privilege name="http://tizen.org/privilege/tv.inputdevice"/>
+  <tizen:privilege name="http://developer.samsung.com/privilege/productinfo"/>
+  <tizen:profile name="tv-samsung"/>
+  <tizen:setting screen-orientation="landscape" context-menu="enable" background-support="disable" encryption="disable" install-location="auto"/>
+</widget>

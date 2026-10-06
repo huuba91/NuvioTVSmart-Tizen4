@@ -1,0 +1,20 @@
+html, body { margin: 0; background: #101418; color: #d8dee4; font-family: monospace; font-size: 22px; }
+body { padding: 24px 48px; }
+h1 { margin: 0; font-size: 40px; color: #7fd1ff; }
+h2 { color: #7fd1ff; margin: 24px 0 6px; }
+.sub { color: #8a96a3; margin-bottom: 12px; }
+.box { background: #1a2027; padding: 10px 16px; margin: 10px 0; border-radius: 6px; }
+button, input, textarea { font-family: monospace; font-size: 22px; background: #26303a; color: #fff; border: 2px solid #3a4856; padding: 8px 14px; margin: 4px 6px 4px 0; }
+input { width: 520px; }
+textarea { width: 100%; box-sizing: border-box; font-size: 16px; }
+.nav:focus, tr.nav:focus { outline: 4px solid #ffb300; background: #33414f; }
+pre { white-space: pre-wrap; word-break: break-all; font-size: 17px; margin: 6px 0 10px; color: #b8c4d0; }
+#progress { height: 10px; background: #26303a; margin: 10px 0; }
+#bar { height: 10px; width: 0; background: #7fd1ff; }
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; border-bottom: 2px solid #3a4856; padding: 4px 8px; }
+td { padding: 4px 8px; border-bottom: 1px solid #222b34; vertical-align: top; font-size: 18px; word-break: break-all; }
+td.st { width: 170px; font-weight: bold; }
+.PASS { color: #5fd38d; } .FAIL { color: #ff6b6b; } .BLOCKED { color: #ff9f43; }
+.NOT_AVAILABLE { color: #8a96a3; } .PARTIAL { color: #f1d65a; } .ERROR { color: #ff4d9d; }
+#summary { font-size: 26px; margin: 8px 0; }

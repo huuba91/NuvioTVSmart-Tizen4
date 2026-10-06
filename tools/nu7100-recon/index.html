@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NU-7100-Recon</title>
+<link rel="stylesheet" href="css/style.css">
+<script src="$WEBAPIS/webapis/webapis.js"></script>
+</head>
+<body>
+<h1>NU-7100 RECON</h1>
+<div class="sub">Samsung Tizen 4.0 capability scanner</div>
+<div id="intro" class="box">
+  Device: UE49NU7100 &middot; T-KTM2LDEUC-1360.0 &middot; Tizen 4.0<br>
+  This application performs read-only capability tests. No firmware or system settings will be modified.
+  Files are only created in /tmp, /dev/shm and the app's own folders, under a unique name, and deleted again.
+</div>
+<div id="buttons">
+  <button class="nav" id="b-all">RUN ALL TESTS</button>
+  <button class="nav" id="b-system">RUN SYSTEM TESTS</button>
+  <button class="nav" id="b-filesystem">RUN FILESYSTEM TESTS</button>
+  <button class="nav" id="b-process">RUN PROCESS/EXEC TESTS</button>
+  <button class="nav" id="b-ipc">RUN IPC/SOCKET TESTS</button>
+  <button class="nav" id="b-export">EXPORT REPORT</button>
+  <button class="nav" id="b-clear">CLEAR</button>
+</div>
+<div id="probes" class="box">
+  Probe path: <input class="nav" id="probe-path" value="/dev/shm"> <button class="nav" id="b-probe">PROBE</button>
+  <pre id="probe-out"></pre>
+  Known dcapture path: <input class="nav" id="dc-path" value=""> <button class="nav" id="b-dc">PROBE</button>
+  <pre id="dc-out"></pre>
+</div>
+<div id="progress"><div id="bar"></div></div>
+<div id="status">Completed: 0 / 0 &middot; Timestamp: -</div>
+<div id="summary"></div>
+<table id="results"><thead><tr><th>TEST NAME</th><th>STATUS</th><th>RESULT</th></tr></thead><tbody></tbody></table>
+<h2>FINGERPRINT</h2><pre id="fingerprint">(run the tests)</pre>
+<h2>REPORT</h2><textarea id="report" class="nav" readonly rows="14"></textarea>
+<div id="exported"></div>
+<script src="js/core.js"></script>
+<script src="js/tests/system.js"></script>
+<script src="js/tests/filesystem.js"></script>
+<script src="js/tests/dcapture.js"></script>
+<script src="js/tests/process.js"></script>
+<script src="js/tests/network.js"></script>
+<script src="js/tests/ipc.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
