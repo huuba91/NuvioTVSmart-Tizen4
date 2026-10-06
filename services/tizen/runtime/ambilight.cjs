@@ -24,7 +24,9 @@
 //   GET /ambilight/level?value=N                 change the overall brightness live
 //   GET /ambilight/ping                          keep the session alive
 //   GET /ambilight/stop                          stop and restore the bulbs
-//   GET /ambilight/state                         diagnostics
+//   GET /ambilight/state                         diagnostics (incl. capture timing, CPU, eco mode)
+//   GET /ambilight/eco?mode=on|off               slow captures down on still pictures (default on)
+//   GET /ambilight/introspect                    what samsung.tizen.dcapture offers (also written to /dev/shm)
 
 var BULBS_FILE = "ambilight-bulbs.json";
 var POSITIONS = ["left", "center", "right"];
@@ -36,11 +38,46 @@ var CAPTURE_SIZE = [64, 36]; // capture mode 2 returns at least 320x180
 var CAPTURE_WORKERS = 3; // overlapped captures, no fade; 2 gave only ~2.8 pictures/s on the TV while a video played, so one more
 var WATCHDOG_MS = 10000; // stop when the app stops pinging (player gone, app killed)
 var MAX_FAILED_CAPTURES = 6;
+// Eco pacing: the colours glide between pictures anyway, so a still or slowly changing picture does not
+// need ~9 captures/s (each one spawns gdbus and inflates a PNG). Activity is the mean per-byte change
+// between consecutive pictures (0-255); it jumps up at once on a cut and decays by DECAY per picture.
+var ECO = { staticBelow: 0.6, calmBelow: 2.5, staticRate: 3, calmRate: 6, decay: 0.85 };
+var ecoEnabled = true;
 var TICK_MS = 50; // colour updates per bulb between pictures: 20/s (the PC sync sends up to 30/s)
 var FLIP_BACK_AFTER = 500; // anti-flicker: no straight return to the colour just left within this time
 
 var colourEngine = require("./ambilight-colour.cjs");
 var stripOutput = require("./ambilight-strip.cjs");
+
+function ema(old, value) {
+  return old === null || old === undefined ? value : old * 0.8 + value * 0.2;
+}
+
+// Mean absolute difference of every ~5th pixel between two decoded pictures; 255 when they cannot be compared.
+function pictureChange(a, b) {
+  if (!a || !b || a.w !== b.w || a.h !== b.h || a.bpp !== b.bpp) return 255;
+  var da = a.data, db = b.data, n = Math.min(da.length, db.length), step = a.bpp * 5, sum = 0, count = 0, i;
+  for (i = 0; i + 2 < n; i += step) {
+    sum += Math.abs(da[i] - db[i]) + Math.abs(da[i + 1] - db[i + 1]) + Math.abs(da[i + 2] - db[i + 2]);
+    count += 3;
+  }
+  return count ? sum / count : 255;
+}
+
+function modeForActivity(activity) {
+  return activity < ECO.staticBelow ? "static" : activity < ECO.calmBelow ? "calm" : "active";
+}
+
+// CPU seconds used by this service and the gdbus children it has waited for (from /proc, Node 4 has no cpuUsage).
+function cpuSeconds() {
+  try {
+    var fields = require("fs").readFileSync("/proc/self/stat", "utf8").replace(/^.*\) /, "").split(" ");
+    // after the "(comm) " part: state is index 0, utime 11, stime 12, cutime 13, cstime 14 (clock ticks, 100/s)
+    return (Number(fields[11]) + Number(fields[12]) + Number(fields[13]) + Number(fields[14])) / 100;
+  } catch (_) {
+    return null;
+  }
+}
 
 function describeError(error) {
   return String(((error && (error.code || error.name)) || "") + " " + ((error && error.message) || error)).slice(0, 200);
@@ -474,7 +511,7 @@ function discover(ms, done) {
 // ---- capture through samsung.tizen.dcapture ------------------------------------------------------
 function captureOnce(name, done) {
   var cp = require("child_process"), fs = require("fs");
-  var file = CAPTURE_DIR + "/" + name + ".png";
+  var file = CAPTURE_DIR + "/" + name + ".png", began = Date.now();
   cp.execFile(
     "gdbus",
     ["call", "--system", "--timeout", "4", "--dest", "samsung.tizen.dcapture", "--object-path", "/samsung/tizen/dcapture",
@@ -483,11 +520,14 @@ function captureOnce(name, done) {
     { timeout: 5000 },
     function (error) {
       if (error) { done("capture " + describeError(error)); return; }
+      var captured = Date.now(), image;
       try {
-        done(null, decodePng(fs.readFileSync(file)));
+        image = decodePng(fs.readFileSync(file));
       } catch (problem) {
         done("decode " + describeError(problem));
+        return;
       }
+      done(null, image, { captureMs: captured - began, decodeMs: Date.now() - captured });
     }
   );
 }
@@ -517,6 +557,11 @@ function Session(bulbs, level, stripConfig) {
   this.regions = { left: new colourEngine.Region(), center: new colourEngine.Region(), right: new colourEngine.Region() };
   this.lastPicture = 0;
   this.lastTick = 0;
+  this.prevImage = null;
+  this.activity = 255; // the first pictures count as moving
+  this.mode = "active";
+  this.timing = { captureMs: null, decodeMs: null, analyseMs: null };
+  this.cpuAtStart = cpuSeconds();
 }
 
 Session.prototype.note = function (text) {
@@ -596,7 +641,7 @@ Session.prototype.loop = function (worker) {
   var self = this;
   if (this.stopped) return;
   var begun = Date.now();
-  captureOnce(CAPTURE_PREFIX + worker, function (error, image) {
+  captureOnce(CAPTURE_PREFIX + worker, function (error, image, timing) {
     if (self.stopped) return;
     if (error) {
       self.failures++;
@@ -606,24 +651,43 @@ Session.prototype.loop = function (worker) {
       return;
     }
     self.captures++;
+    if (timing) {
+      self.timing.captureMs = ema(self.timing.captureMs, timing.captureMs);
+      self.timing.decodeMs = ema(self.timing.decodeMs, timing.decodeMs);
+    }
     if (begun >= self.shownBegun) {
       self.shownBegun = begun;
       self.analyse(image);
     }
-    self.loop(worker);
+    var wait = self.paceDelay(Date.now() - begun);
+    if (wait > 0) setTimeout(function () { self.loop(worker); }, wait);
+    else self.loop(worker);
   });
+};
+
+// How long a worker rests before its next capture so that all workers together give the pictures per
+// second wanted for the current activity. 0 = flat out (also whenever eco is off).
+Session.prototype.paceDelay = function (elapsed) {
+  if (!ecoEnabled) return 0;
+  var rate = this.mode === "static" ? ECO.staticRate : this.mode === "calm" ? ECO.calmRate : 0;
+  return rate ? Math.max(0, Math.round(CAPTURE_WORKERS / rate * 1000 - elapsed)) : 0;
 };
 
 // A new picture only moves the goal; tick() glides the bulbs towards it.
 Session.prototype.analyse = function (image) {
   var now = Date.now(), dt = this.lastPicture ? Math.min(1, (now - this.lastPicture) / 1000) : 0.1;
   this.lastPicture = now;
+  var change = pictureChange(this.prevImage, image);
+  this.prevImage = image;
+  this.activity = Math.max(change, this.activity * ECO.decay);
+  this.mode = modeForActivity(this.activity);
   var summary = this.analyser.analyse(image, dt, !!this.strip), regions = this.regions;
   POSITIONS.forEach(function (pos) { regions[pos].setGoal(summary[pos]); });
   if (this.strip && summary.zones) {
     this.strip.setGoals(summary.zones);
     this.strip.record(this.strip.analyseMs, Date.now() - now); // whole picture analysis incl. the 8 zones
   }
+  this.timing.analyseMs = ema(this.timing.analyseMs, Date.now() - now);
 };
 
 // Runs between pictures too, so every bulb fades through intermediate colours instead of stepping.
@@ -667,12 +731,30 @@ Session.prototype.stop = function (reason) {
   if (session === this) session = null;
 };
 
+// Service plus gdbus CPU since the session began, as a share of one core; null when /proc is unreadable.
+Session.prototype.cpuPercent = function () {
+  var used = cpuSeconds(), seconds = (Date.now() - this.startedAt) / 1000;
+  if (used === null || this.cpuAtStart === null || seconds < 1) return null;
+  return Math.round((used - this.cpuAtStart) / seconds * 1000) / 10;
+};
+
 Session.prototype.describe = function () {
   return {
     running: this.running,
     level: this.level,
     captures: this.captures,
     perSecond: this.captures ? Math.round((this.captures * 10000) / (Date.now() - this.startedAt)) / 10 : 0,
+    capture: {
+      size: CAPTURE_SIZE.join("x"),
+      workers: CAPTURE_WORKERS,
+      eco: ecoEnabled,
+      mode: this.mode,
+      activity: Math.round(this.activity * 100) / 100,
+      captureMs: this.timing.captureMs === null ? null : Math.round(this.timing.captureMs),
+      decodeMs: this.timing.decodeMs === null ? null : Math.round(this.timing.decodeMs),
+      analyseMs: this.timing.analyseMs === null ? null : Math.round(this.timing.analyseMs),
+      cpuPercent: this.cpuPercent()
+    },
     errors: this.errors,
     strip: this.strip ? this.strip.describe() : null,
     bulbs: this.bulbs.map(function (b) {
@@ -722,6 +804,32 @@ function sendJson(response, status, body) {
   response.end(text);
 }
 
+// What the TV's capture service offers (methods, arguments, formats) and which other services look like
+// they could capture the screen. Also saved next to the captures so it can be fetched with `sdb pull`.
+var INTROSPECT_FILE = CAPTURE_DIR + "/nuvio-dcapture-introspect.txt";
+
+function introspectCapture(done) {
+  var cp = require("child_process"), fs = require("fs");
+  var out = { ok: true, file: INTROSPECT_FILE, introspect: [], names: [], errors: [] };
+  cp.execFile("gdbus", ["introspect", "--system", "--dest", "samsung.tizen.dcapture", "--object-path", "/samsung/tizen/dcapture"],
+    { timeout: 6000, maxBuffer: 512 * 1024 }, function (error, stdout) {
+      if (error) out.errors.push("introspect " + describeError(error));
+      else out.introspect = String(stdout).split("\n");
+      cp.execFile("gdbus", ["call", "--system", "--dest", "org.freedesktop.DBus", "--object-path", "/org/freedesktop/DBus",
+        "--method", "org.freedesktop.DBus.ListNames"], { timeout: 6000, maxBuffer: 512 * 1024 }, function (error2, stdout2) {
+        if (error2) out.errors.push("ListNames " + describeError(error2));
+        else {
+          out.names = (String(stdout2).match(/'[^']+'/g) || []).map(function (n) { return n.slice(1, -1); })
+            .filter(function (n) { return /samsung|tizen|capture|screen|video|display|avplay|hdmi|media|multimedia|vd/i.test(n) && n.charAt(0) !== ":"; });
+        }
+        try {
+          fs.writeFileSync(INTROSPECT_FILE, out.introspect.join("\n") + "\n\n# names\n" + out.names.join("\n") + "\n\n# errors\n" + out.errors.join("\n") + "\n");
+        } catch (problem) { out.errors.push("write " + describeError(problem)); }
+        done(out);
+      });
+    });
+}
+
 function isAmbilightRequest(requestUrl) {
   return String(requestUrl || "").indexOf("/ambilight/") === 0;
 }
@@ -758,6 +866,14 @@ function handleRequest(request, response) {
         stop("stopped");
         sendJson(response, 200, { ok: true });
         return;
+      case "/ambilight/eco": {
+        if (query.mode === "on" || query.mode === "off") ecoEnabled = query.mode === "on";
+        sendJson(response, 200, { ok: true, eco: ecoEnabled });
+        return;
+      }
+      case "/ambilight/introspect":
+        introspectCapture(function (result) { sendJson(response, 200, result); });
+        return;
       case "/ambilight/state":
         sendJson(response, 200, { ok: true, active: !!session, state: session ? session.describe() : null });
         return;
@@ -779,6 +895,9 @@ module.exports = {
     parseAssignments: parseAssignments,
     parseStrip: parseStrip,
     decodePng: decodePng,
+    pictureChange: pictureChange,
+    modeForActivity: modeForActivity,
+    ECO: ECO,
     hsvToRgb255: hsvToRgb255,
     colourHex: colourHex,
     hsv16Hex: hsv16Hex,

@@ -25,6 +25,12 @@ left edge, the right edge or the whole picture (center), or stays off.
     5% weight;
   - saturation × 1.5, faded out on black-and-white video; never darker than 15%;
   - an almost entirely white screen switches to the bulb's own warm white, with hysteresis.
+- **Eco pacing.** A still or slowly changing picture needs far fewer captures than a busy one, since
+  the colours glide between pictures anyway. Each picture is compared with the previous one (mean
+  change per byte, 0-255, jumping up at once on a cut and decaying 15% per picture): below 0.6 the
+  service captures about 3 pictures/s, below 2.5 about 6/s, otherwise flat out (~9/s). Turn it off
+  with `/ambilight/eco?mode=off` to compare. The settings line under Ambilight now shows pictures/s,
+  mode, CPU (service plus its gdbus children, share of one core) and the gdbus/decode times.
 - **Smooth fades without extra captures.** A new picture only moves the target. A 20 Hz tick
   glides every bulb towards it with a critically damped spring in Oklab (0.6 s for gradual
   changes, 0.08 s on a scene cut), so the bulbs pass through intermediate colours between
@@ -64,6 +70,14 @@ left edge, the right edge or the whole picture (center), or stays off.
    list from the service. During playback, More actions > Lights (the % button) opens a vertical
    slider: Up/Down change the overall brightness in 10% steps, OK or Back closes it.
 4. Stop the PC bulb hub (and screen_sync.py) first: a Tuya bulb accepts one connection at a time.
+
+## Finding out what the capture service can do
+
+`GET /ambilight/introspect` (any time Nuvio's service is running) lists the methods and arguments of
+`samsung.tizen.dcapture` and the other D-Bus services whose names look capture-related. It also writes
+the text to `/dev/shm/nuvio-dcapture-introspect.txt` (fetch with `sdb pull`). The current call passes
+`0 2 0 <w> <h> 80 <dir> <name>`; knowing the real meaning of those arguments, and whether a raw or BMP
+format exists, would let us skip the PNG inflate.
 
 ## Known limits
 

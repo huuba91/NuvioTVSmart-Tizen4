@@ -294,3 +294,55 @@ test("a session colours the bulb from its zone, follows live brightness and rest
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("pictureChange measures how much two pictures differ and refuses mismatched ones", function () {
+  var a = internals.decodePng(png(8, 8, function () { return [100, 100, 100]; }));
+  var same = internals.decodePng(png(8, 8, function () { return [100, 100, 100]; }));
+  var brighter = internals.decodePng(png(8, 8, function () { return [110, 100, 90]; }));
+  var other = internals.decodePng(png(4, 4, function () { return [100, 100, 100]; }));
+  assert.equal(internals.pictureChange(a, same), 0);
+  assert.equal(internals.pictureChange(a, brighter), 20 / 3);
+  assert.equal(internals.pictureChange(a, other), 255);
+  assert.equal(internals.pictureChange(null, a), 255);
+});
+
+test("eco activity modes: still, calm and moving pictures", function () {
+  var eco = internals.ECO;
+  assert.equal(internals.modeForActivity(0), "static");
+  assert.equal(internals.modeForActivity(eco.staticBelow), "calm");
+  assert.equal(internals.modeForActivity(eco.calmBelow - 0.01), "calm");
+  assert.equal(internals.modeForActivity(eco.calmBelow), "active");
+  assert.equal(internals.modeForActivity(255), "active");
+});
+
+test("eco route toggles pacing and introspect works without a session", async function () {
+  var originalPath = process.env.PATH;
+  var fake = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "gdbus-"));
+  fs.writeFileSync(path.join(fake, "gdbus"),
+    "#!/bin/sh\nif [ \"$1\" = introspect ]; then echo 'interface samsung.tizen.dcapture {'; echo '  methods: RequestCaptureToFileSync();'; echo '};'; " +
+    "else echo \"(['org.freedesktop.DBus', 'samsung.tizen.dcapture', ':1.5', 'org.tizen.other'],)\"; fi\n", { mode: 493 });
+  process.env.PATH = fake + path.delimiter + originalPath;
+  function call(url) {
+    return new Promise(function (resolve) {
+      var response = {
+        writeHead: function () {},
+        end: function (text) { resolve(JSON.parse(text)); }
+      };
+      ambilight.handleRequest({ url: url }, response);
+    });
+  }
+  try {
+    assert.equal((await call("/ambilight/eco?mode=off")).eco, false);
+    assert.equal((await call("/ambilight/eco")).eco, false);
+    assert.equal((await call("/ambilight/eco?mode=on")).eco, true);
+    var result = await call("/ambilight/introspect");
+    assert.deepEqual(result.errors, []);
+    assert.ok(result.introspect.some(function (line) { return /RequestCaptureToFileSync/.test(line); }));
+    assert.deepEqual(result.names, ["samsung.tizen.dcapture", "org.tizen.other"]);
+    assert.ok(fs.readFileSync(result.file, "utf8").indexOf("RequestCaptureToFileSync") >= 0);
+  } finally {
+    process.env.PATH = originalPath;
+    try { fs.unlinkSync("/dev/shm/nuvio-dcapture-introspect.txt"); } catch (_) {}
+    fs.rmSync(fake, { recursive: true, force: true });
+  }
+});

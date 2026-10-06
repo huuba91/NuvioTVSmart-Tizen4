@@ -101,7 +101,11 @@ export const AmbilightController = {
       ? `strip counted ${strip.health.moved ?? "?"} packets in the last check`
       : strip.health?.error || "no packet count from the strip yet";
     const problem = strip.errors?.length ? ` Last problem: ${strip.errors[strip.errors.length - 1]}` : "";
-    return `Sending ${strip.method} to ${strip.ip}: ${strip.sent} frames, ${counted}.${problem}`;
+    const capture = body.state.capture;
+    const captureNote = capture
+      ? ` Capture: ${body.state.perSecond ?? "?"}/s (${capture.mode}${capture.eco ? ", eco" : ""}), ${capture.cpuPercent ?? "?"}% CPU, gdbus ${capture.captureMs ?? "?"} ms + decode ${capture.decodeMs ?? "?"} ms.`
+      : "";
+    return `Sending ${strip.method} to ${strip.ip}: ${strip.sent} frames, ${counted}.${captureNote}${problem}`;
   },
 
   // Called whenever the player reports real playback; repeated calls are cheap.
