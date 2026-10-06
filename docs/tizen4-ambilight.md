@@ -109,11 +109,22 @@ is spoken through kernel calls that Node cannot make, which is why no unix socke
 | dbus-send | 97 | 184 |
 | **busctl** | **57** | **99** |
 
-Captures are now made with `busctl` (`busctl --system call samsung.tizen.dcapture ... iiiiiiss ...`); `gdbus` is the
-fallback when there is no busctl or three calls in a row fail (`/ambilight/capture-tool?mode=busctl|gdbus` forces one).
-The same route also reports the bare cost of starting a program and of busctl run from a small shell, to judge whether a
-long-running shell that starts busctl would be cheaper than Node doing it. `/ambilight/periodic-probe` looks for a
-periodic capture that pushes pictures by itself (which would remove the per-capture launch altogether).
+Second round (same TV): starting a trivial program (`true`) from Node costs **~56 ms CPU** per call, more than half of
+busctl's 110 ms (incl. ~25 ms read + decode); busctl run ten times inside one small shell cost **~30 ms per capture**.
+Node's process starts are expensive because Node is a big process. So each capture worker now keeps one long-lived
+`sh` (`CaptureShell`) that runs busctl per request line (`comp quality w h dir name` in, busctl's reply and
+`__DONE__ <exit code>` out). It ends by itself when Node goes away. The status line's CPU figure includes these shells
+(their busctl children only show up in Node's own figures once the shell exits, so /proc is read for the live shells).
+
+Capture tool chain, each step falling back to the next after three failures in a row (or at once when the tool is
+missing): `busctl-sh` (default) -> `busctl` started by Node -> `gdbus`, the way the ambilight was validated with.
+`/ambilight/capture-tool?mode=busctl-sh|busctl|gdbus` forces one.
+
+`/ambilight/periodic-probe` (3 s): `StartPeriodicCaptureWithoutAppInfo(iiiisi)` returned an empty reply and
+`EndPeriodicCapture(isi)` returned 0, so both exist, but no new file appeared anywhere under /dev/shm, /tmp, /run,
+/var/tmp, /opt/usr/media, /opt/media, /home/owner/share (3 levels deep), and `busctl monitor` is refused
+("Operation not permitted"), so where a periodic capture delivers its pictures, if anywhere, is still unknown.
+`/ambilight/dbus-where` also checks the session bus (see below) for the capture service.
 
 ## Finding out what the capture service can do
 

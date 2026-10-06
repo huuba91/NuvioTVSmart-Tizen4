@@ -290,7 +290,7 @@ test("a session colours the bulb from its zone, follows live brightness and rest
   } finally {
     ambilight.stop("test");
     await call("/ambilight/capture-format?mode=jpeg");
-    await call("/ambilight/capture-tool?mode=busctl");
+    await call("/ambilight/capture-tool?mode=busctl-sh");
     process.env.PATH = originalPath;
     fs.unlinkSync(BULBS_FILE);
     await new Promise(function (resolve) { setTimeout(resolve, 1300); });
@@ -498,7 +498,7 @@ test("a session on JPEG capture colours the bulb and reports its format", { skip
   } finally {
     await call("/ambilight/stop");
     await call("/ambilight/capture-format?mode=jpeg&quality=60");
-    await call("/ambilight/capture-tool?mode=busctl");
+    await call("/ambilight/capture-tool?mode=busctl-sh");
     process.env.PATH = originalPath;
     try { fs.unlinkSync(BULBS_FILE); } catch (_) {}
     await new Promise(function (resolve) { setTimeout(resolve, 1500); });
@@ -562,7 +562,7 @@ test("a failing JPEG capture falls back to PNG after three failures in a row", {
   } finally {
     await call("/ambilight/stop");
     await call("/ambilight/capture-format?mode=jpeg");
-    await call("/ambilight/capture-tool?mode=busctl");
+    await call("/ambilight/capture-tool?mode=busctl-sh");
     process.env.PATH = originalPath;
     try { fs.unlinkSync(BULBS_FILE); } catch (_) {}
     await new Promise(function (resolve) { setTimeout(resolve, 1500); });
@@ -608,11 +608,12 @@ test("busctl replies are parsed and the capture tool route switches tools", asyn
   assert.deepEqual(internals.parseBusctlReply('iiis 0 480 270 "/dev/shm/nuvio-x.jpg"\n'), { ret: 0, w: 480, h: 270, path: "/dev/shm/nuvio-x.jpg" });
   assert.equal(internals.parseBusctlReply("Failed to call method"), null);
   try {
-    assert.equal((await call("/ambilight/capture-tool")).body.tool, "busctl");
+    assert.equal((await call("/ambilight/capture-tool")).body.tool, "busctl-sh");
     assert.equal((await call("/ambilight/capture-tool?mode=gdbus")).body.tool, "gdbus");
-    assert.equal((await call("/ambilight/capture-tool?mode=bogus")).body.tool, "gdbus");
+    assert.equal((await call("/ambilight/capture-tool?mode=busctl")).body.tool, "busctl");
+    assert.equal((await call("/ambilight/capture-tool?mode=bogus")).body.tool, "busctl");
   } finally {
-    await call("/ambilight/capture-tool?mode=busctl");
+    await call("/ambilight/capture-tool?mode=busctl-sh");
   }
 });
 
@@ -643,7 +644,7 @@ function startFakeBulb() {
   });
 }
 
-test("a session captures with busctl by default and colours the bulb", { skip: process.platform !== "linux" || !fs.existsSync("/dev/shm") }, async function () {
+test("without a shell on the PATH a session falls back from busctl-sh to busctl and colours the bulb", { skip: process.platform !== "linux" || !fs.existsSync("/dev/shm") }, async function () {
   var os = require("node:os");
   var dir = fs.mkdtempSync(path.join(os.tmpdir(), "ambilight-"));
   // a fake busctl: writes the JPEG named by its last arguments and prints the reply the way busctl does
@@ -660,8 +661,10 @@ test("a session captures with busctl by default and colours the bulb", { skip: p
     await new Promise(function (resolve) { setTimeout(resolve, 2600); });
     var colour = bulb.received.filter(function (m) { return m.command === 7 && m.dps["5"]; })[0];
     assert.ok(colour, "the bulb received a colour through busctl");
-    var capture = (await call("/ambilight/state")).body.state.capture;
-    assert.equal(capture.tool, "busctl");
+    var snapshot = (await call("/ambilight/state")).body.state;
+    assert.equal(snapshot.capture.tool, "busctl");
+    assert.ok(snapshot.errors.some(function (e) { return /busctl-sh capture switched off/.test(e); }));
+    var capture = snapshot.capture;
     assert.equal(capture.format, "jpeg");
   } finally {
     await call("/ambilight/stop");
@@ -685,7 +688,7 @@ test("a TV without busctl falls back to gdbus at once and keeps capturing", { sk
   fs.writeFileSync(BULBS_FILE, JSON.stringify([{ id: "a", name: "Desk left", key: KEY, ip: "127.0.0.1", pos: "center" }]));
   try {
     await call("/ambilight/capture-format?mode=jpeg");
-    await call("/ambilight/capture-tool?mode=busctl");
+    await call("/ambilight/capture-tool?mode=busctl-sh");
     await call("/ambilight/start?level=100&assign=a:left:100");
     await new Promise(function (resolve) { setTimeout(resolve, 2600); });
     var state = (await call("/ambilight/state")).body.state;
@@ -695,7 +698,7 @@ test("a TV without busctl falls back to gdbus at once and keeps capturing", { sk
     assert.ok(bulb.received.some(function (m) { return m.command === 7 && m.dps["5"]; }), "the bulb still got colours");
   } finally {
     await call("/ambilight/stop");
-    await call("/ambilight/capture-tool?mode=busctl");
+    await call("/ambilight/capture-tool?mode=busctl-sh");
     process.env.PATH = originalPath;
     try { fs.unlinkSync(BULBS_FILE); } catch (_) {}
     await new Promise(function (resolve) { setTimeout(resolve, 1500); });
@@ -727,6 +730,43 @@ test("periodic-probe starts the periodic capture, reports new files and bus traf
   } finally {
     process.env.PATH = originalPath;
     try { fs.unlinkSync(marker); } catch (_) {}
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
+test("a session captures through long-lived capture shells and the CPU figure includes them", { skip: process.platform !== "linux" || !fs.existsSync("/dev/shm") }, async function () {
+  var os = require("node:os");
+  var dir = fs.mkdtempSync(path.join(os.tmpdir(), "ambilight-"));
+  var log = path.join(dir, "busctl.log");
+  fs.writeFileSync(path.join(dir, "busctl"),
+    '#!/bin/sh\necho "$PPID" >> "' + log + '"\nfor last; do :; done\neval "dir=\\${$(($# - 1))}"\n/bin/cp "' + path.join(JPEG_DIR, "halves.jpg") + '" "$dir/$last.jpg"\n' +
+    'echo "iiis 0 480 270 \\"$dir/$last.jpg\\""\n', { mode: 493 });
+  var originalPath = process.env.PATH;
+  process.env.PATH = dir + path.delimiter + originalPath;
+  var bulb = await startFakeBulb();
+  fs.writeFileSync(BULBS_FILE, JSON.stringify([{ id: "a", name: "Desk left", key: KEY, ip: "127.0.0.1", pos: "center" }]));
+  try {
+    await call("/ambilight/capture-format?mode=jpeg");
+    await call("/ambilight/capture-tool?mode=busctl-sh");
+    await call("/ambilight/start?level=100&assign=a:left:100");
+    await new Promise(function (resolve) { setTimeout(resolve, 2600); });
+    var state = (await call("/ambilight/state")).body.state;
+    assert.equal(state.capture.tool, "busctl-sh");
+    assert.ok(state.captures >= 3, "several captures arrived");
+    assert.ok(bulb.received.some(function (m) { return m.command === 7 && m.dps["5"]; }), "the bulb got colours");
+    var parents = fs.readFileSync(log, "utf8").split("\n").filter(Boolean);
+    var distinct = {};
+    parents.forEach(function (pid) { distinct[pid] = 1; });
+    assert.ok(parents.length >= 3, "busctl ran for each capture");
+    assert.ok(Object.keys(distinct).length <= 3, "from at most one shell per capture worker, not from Node: " + Object.keys(distinct).join(","));
+    assert.ok(distinct[String(process.pid)] === undefined, "Node itself never started busctl");
+  } finally {
+    await call("/ambilight/stop");
+    process.env.PATH = originalPath;
+    try { fs.unlinkSync(BULBS_FILE); } catch (_) {}
+    await new Promise(function (resolve) { setTimeout(resolve, 1500); });
+    bulb.close();
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

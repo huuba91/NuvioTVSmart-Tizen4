@@ -33,7 +33,7 @@
 //   GET /ambilight/jpeg-sample?quality=60            one JPEG capture: structure, decode result and timing
 //   GET /ambilight/periodic-probe?ms=300&seconds=2   does StartPeriodicCapture write files, and where
 //   GET /ambilight/capture-format?mode=png|jpeg&quality=60   capture as small JPEG (default) or PNG
-//   GET /ambilight/capture-tool?mode=busctl|gdbus    which command makes the capture call (busctl default, gdbus fallback)
+//   GET /ambilight/capture-tool?mode=busctl-sh|busctl|gdbus   how the capture call is made (busctl-sh default, falls back down the list)
 //   GET /ambilight/introspect                    what samsung.tizen.dcapture offers (also written to /dev/shm)
 
 var BULBS_FILE = "ambilight-bulbs.json";
@@ -62,8 +62,13 @@ var jpegFailures = 0;
 // How the capture call is made. The TV's system bus is kdbus (kernel), which Node cannot speak, so a command-line tool
 // is started for every capture. Measured on the UE49NU7100 (10 captures, idle): gdbus 105 ms / 199 ms CPU,
 // dbus-send 97 / 184, busctl 57 / 99. busctl is used first; three failures in a row (or no busctl) fall back to gdbus.
-var captureTool = "busctl";
+// Starting any program from Node costs ~56 ms CPU on the TV (a plain `true`); busctl run from a small long-lived shell
+// instead costs ~30 ms per capture in total. So each capture worker keeps one `sh` that runs busctl per request line.
+var captureTool = "busctl-sh";
+var TOOL_FALLBACK = { "busctl-sh": "busctl", busctl: "gdbus" };
+var CAPTURE_TOOL_NAMES = ["busctl-sh", "busctl", "gdbus"];
 var toolFailures = 0;
+var shellRunners = []; // live capture shells, for CPU accounting and clean-up
 var TICK_MS = 50; // colour updates per bulb between pictures: 20/s (the PC sync sends up to 30/s)
 var FLIP_BACK_AFTER = 500; // anti-flicker: no straight return to the colour just left within this time
 
@@ -91,15 +96,26 @@ function modeForActivity(activity) {
   return activity < ECO.staticBelow ? "static" : activity < ECO.calmBelow ? "calm" : "active";
 }
 
-// CPU seconds used by this service and the gdbus children it has waited for (from /proc, Node 4 has no cpuUsage).
-function cpuSeconds() {
+// CPU seconds (user + system, and children that finished) of one process, from /proc; null when unreadable.
+function procCpuSeconds(pid) {
   try {
-    var fields = require("fs").readFileSync("/proc/self/stat", "utf8").replace(/^.*\) /, "").split(" ");
+    var fields = require("fs").readFileSync("/proc/" + pid + "/stat", "utf8").replace(/^.*\) /, "").split(" ");
     // after the "(comm) " part: state is index 0, utime 11, stime 12, cutime 13, cstime 14 (clock ticks, 100/s)
     return (Number(fields[11]) + Number(fields[12]) + Number(fields[13]) + Number(fields[14])) / 100;
   } catch (_) {
     return null;
   }
+}
+
+// This service, the children it has already waited for, and the capture shells still running (their busctl children
+// are counted in the shell's own figures; Node only sees them once the shell has exited).
+function cpuSeconds() {
+  var total = procCpuSeconds("self");
+  if (total === null) return null;
+  shellRunners.forEach(function (runner) {
+    if (runner.pid) { var c = procCpuSeconds(runner.pid); if (c !== null) total += c; }
+  });
+  return total;
 }
 
 function describeError(error) {
@@ -532,6 +548,73 @@ function discover(ms, done) {
 }
 
 // ---- capture through samsung.tizen.dcapture ------------------------------------------------------
+// A long-running `sh` that makes capture calls on request: one line in (comp quality width height dir name), the
+// busctl reply and an exit code out. It ends by itself when Node goes away (stdin closes).
+function CaptureShell() {
+  this.child = null;
+  this.pid = null;
+  this.dead = false;
+  this.buffer = "";
+  this.pending = null;
+  this.start();
+}
+
+var SHELL_SCRIPT = 'while read -r comp quality w h dir name; do ' +
+  'busctl --system call samsung.tizen.dcapture /samsung/tizen/dcapture samsung.tizen.dcapture RequestCaptureToFileSync ' +
+  'iiiiiiss 0 2 "$comp" "$w" "$h" "$quality" "$dir" "$name" 2>&1; echo "__DONE__ $?"; done';
+
+CaptureShell.prototype.start = function () {
+  var self = this;
+  try {
+    this.child = require("child_process").spawn("sh", ["-c", SHELL_SCRIPT], { stdio: ["pipe", "pipe", "ignore"] });
+  } catch (error) {
+    this.dead = true;
+    this.startError = error;
+    return;
+  }
+  this.pid = this.child.pid;
+  shellRunners.push(this);
+  this.child.stdout.setEncoding("utf8");
+  this.child.stdout.on("data", function (chunk) {
+    self.buffer += chunk;
+    var match = /__DONE__ (-?\d+)\n/.exec(self.buffer);
+    if (!match || !self.pending) return;
+    var text = self.buffer.slice(0, match.index), code = Number(match[1]), pending = self.pending;
+    self.buffer = self.buffer.slice(match.index + match[0].length);
+    self.pending = null;
+    clearTimeout(pending.timer);
+    pending.cb(code === 0 ? null : new Error("busctl exited " + code + ": " + text.trim().slice(0, 120)), text);
+  });
+  this.child.stdin.on("error", function () { /* the exit handler reports it */ });
+  this.child.on("error", function (error) { self.fail(error); });
+  this.child.on("exit", function () { self.fail(new Error("capture shell exited")); });
+};
+
+CaptureShell.prototype.fail = function (error) {
+  this.dead = true;
+  var index = shellRunners.indexOf(this);
+  if (index >= 0) shellRunners.splice(index, 1);
+  var pending = this.pending;
+  this.pending = null;
+  if (pending) { clearTimeout(pending.timer); pending.cb(error); }
+};
+
+CaptureShell.prototype.run = function (comp, quality, name, cb) {
+  var self = this;
+  if (this.dead || !this.child) { cb(this.startError || new Error("capture shell is not running")); return; }
+  if (this.pending) { cb(new Error("capture shell is busy")); return; }
+  if (!/^[A-Za-z0-9_.-]+$/.test(name)) { cb(new Error("bad capture name")); return; }
+  this.pending = { cb: cb, timer: setTimeout(function () { self.kill(); }, 5000) };
+  var line = [Math.round(Number(comp)), Math.round(Number(quality)), CAPTURE_SIZE[0], CAPTURE_SIZE[1], CAPTURE_DIR, name].join(" ") + "\n";
+  try { this.child.stdin.write(line); } catch (error) { this.fail(error); }
+};
+
+CaptureShell.prototype.kill = function () {
+  var error = new Error("capture shell timeout");
+  try { if (this.child) { this.child.stdin.end(); this.child.kill(); } } catch (_) { /* ignore */ }
+  this.fail(error);
+};
+
 var CAPTURE_DEST = "samsung.tizen.dcapture", CAPTURE_PATH = "/samsung/tizen/dcapture", CAPTURE_METHOD = "RequestCaptureToFileSync";
 
 // { cmd, args } for one RequestCaptureToFileSync(0, 2, comp_type, w, h, quality, dir, name) call with the given tool.
@@ -555,30 +638,31 @@ function parseAnyCaptureReply(text) {
   return parseBusctlReply(text) || parseCaptureReply(text);
 }
 
-function captureOnce(name, done) {
+function captureOnce(name, runner, done) {
   var cp = require("child_process"), fs = require("fs");
   var formatName = captureFormat, format = CAPTURE_FORMATS[formatName];
   var file = CAPTURE_DIR + "/" + name + "." + format.ext, began = Date.now();
-  var command = captureCommand(captureTool, format.comp, formatName === "jpeg" ? jpegQuality : 80, name);
-  cp.execFile(
-    command.cmd,
-    command.args,
-    { timeout: 5000 },
-    function (error, stdout) {
-      if (error) { done("capture " + describeError(error)); return; }
-      var captured = Date.now(), image, reply = parseAnyCaptureReply(stdout);
-      try {
-        // The file we asked for; if the service wrote it elsewhere (its reply names the real path), use that.
-        if (reply && reply.path && !fs.existsSync(file)) file = reply.path;
-        var bytes = fs.readFileSync(file);
-        image = formatName === "jpeg" ? jpegDc.decodeJpegDc(bytes) : decodePng(bytes);
-      } catch (problem) {
-        done((formatName === "jpeg" ? "decode jpeg " : "decode ") + describeError(problem));
-        return;
-      }
-      done(null, image, { captureMs: captured - began, decodeMs: Date.now() - captured });
+  var quality = formatName === "jpeg" ? jpegQuality : 80;
+  function finished(error, stdout) {
+    if (error) { done("capture " + describeError(error)); return; }
+    var captured = Date.now(), image, reply = parseAnyCaptureReply(stdout);
+    try {
+      // The file we asked for; if the service wrote it elsewhere (its reply names the real path), use that.
+      if (reply && reply.path && !fs.existsSync(file)) file = reply.path;
+      var bytes = fs.readFileSync(file);
+      image = formatName === "jpeg" ? jpegDc.decodeJpegDc(bytes) : decodePng(bytes);
+    } catch (problem) {
+      done((formatName === "jpeg" ? "decode jpeg " : "decode ") + describeError(problem));
+      return;
     }
-  );
+    done(null, image, { captureMs: captured - began, decodeMs: Date.now() - captured });
+  }
+  if (captureTool === "busctl-sh" && runner) {
+    runner.run(format.comp, quality, name, finished);
+    return;
+  }
+  var command = captureCommand(captureTool === "gdbus" ? "gdbus" : "busctl", format.comp, quality, name);
+  cp.execFile(command.cmd, command.args, { timeout: 5000 }, finished);
 }
 
 // ---- session ---------------------------------------------------------------------------------------
@@ -607,6 +691,7 @@ function Session(bulbs, level, stripConfig) {
   this.regions = { left: new colourEngine.Region(), center: new colourEngine.Region(), right: new colourEngine.Region() };
   this.lastPicture = 0;
   this.lastTick = 0;
+  this.shells = {};
   this.prevImage = null;
   this.activity = 255; // the first pictures count as moving
   this.mode = "active";
@@ -614,6 +699,13 @@ function Session(bulbs, level, stripConfig) {
   this.modeSeconds = { static: 0, calm: 0, active: 0 };
   this.cpuAtStart = cpuSeconds();
 }
+
+// The long-lived capture shell of one worker (made on first use, again if it died); null when not using shells.
+Session.prototype.shellFor = function (worker) {
+  if (captureTool !== "busctl-sh") return null;
+  if (!this.shells[worker] || this.shells[worker].dead) this.shells[worker] = new CaptureShell();
+  return this.shells[worker];
+};
 
 Session.prototype.note = function (text) {
   if (this.errors.length < 8) this.errors.push(text);
@@ -692,16 +784,18 @@ Session.prototype.loop = function (worker) {
   var self = this;
   if (this.stopped) return;
   var begun = Date.now();
-  captureOnce(CAPTURE_PREFIX + worker, function (error, image, timing) {
+  captureOnce(CAPTURE_PREFIX + worker, this.shellFor(worker), function (error, image, timing) {
     if (self.stopped) return;
-    if (error && /^capture /.test(error) && captureTool === "busctl") {
-      // The capture call itself failed with busctl: no busctl on this TV, or it keeps failing. gdbus is the validated way.
+    if (error && /^capture /.test(error) && TOOL_FALLBACK[captureTool]) {
+      // The capture call itself failed. Each tool falls back to the next one: busctl-sh (long-lived shell) -> busctl
+      // started by Node -> gdbus, the way the ambilight was validated with. A missing tool falls back at once.
       toolFailures++;
       self.note(error);
       if (/ENOENT/.test(error) || toolFailures >= 3) {
-        captureTool = "gdbus";
+        var previous = captureTool;
+        captureTool = TOOL_FALLBACK[previous];
         toolFailures = 0;
-        self.note("busctl capture switched off, using gdbus");
+        self.note(previous + " capture switched off, using " + captureTool);
       }
       setTimeout(function () { self.loop(worker); }, 50);
       return;
@@ -726,7 +820,7 @@ Session.prototype.loop = function (worker) {
       return;
     }
     self.captures++;
-    if (captureTool === "busctl") toolFailures = 0;
+    toolFailures = 0;
     if (captureFormat === "jpeg") jpegFailures = 0;
     if (timing) {
       self.timing.captureMs = ema(self.timing.captureMs, timing.captureMs);
@@ -806,6 +900,7 @@ Session.prototype.stop = function (reason) {
   clearInterval(this.watchdog);
   clearInterval(this.ticker);
   var fs = require("fs"), bulbs = this.bulbs;
+  Object.keys(this.shells).forEach(function (k) { try { this.shells[k].kill(); } catch (_) { /* ignore */ } }, this);
   for (var w = 0; w < CAPTURE_WORKERS; w++) {
     try { fs.unlinkSync(CAPTURE_DIR + "/" + CAPTURE_PREFIX + w + ".png"); } catch (_) {}
     try { fs.unlinkSync(CAPTURE_DIR + "/" + CAPTURE_PREFIX + w + ".jpg"); } catch (_) {}
@@ -1123,6 +1218,29 @@ function captureTools(query, done) {
   })(0);
 }
 
+// The session ("user") bus of this TV has a classic unix socket next to its kdbus address. Is the capture service on
+// it, and may the service connect to that socket? If so the direct client could be used without kdbus.
+function userBusCheck(out, done) {
+  var cp = require("child_process");
+  var address = process.env.DBUS_SESSION_BUS_ADDRESS || "", match = /unix:path=([^,;]+)/.exec(address);
+  out.userBus = { address: address.slice(0, 200), socket: match ? match[1] : null, namesWithCapture: null, connect: null };
+  function finishWith() { done(out); }
+  function tryConnect() {
+    if (!out.userBus.socket) { finishWith(); return; }
+    var connection = new dbusLite.Connection({ path: out.userBus.socket, timeoutMs: 3000 }), began = Date.now();
+    connection.open(function (error) {
+      out.userBus.connect = { ms: Date.now() - began, error: error ? String(error.message || error).slice(0, 160) : null, uniqueName: connection.uniqueName };
+      connection.close();
+      finishWith();
+    });
+  }
+  cp.execFile("busctl", ["--user", "--no-pager", "list"], { timeout: 4000, maxBuffer: 512 * 1024 }, function (error, stdout, stderr) {
+    if (error) out.userBus.listError = (describeError(error) + " " + String(stderr || "")).slice(0, 200);
+    else out.userBus.namesWithCapture = String(stdout).split("\n").filter(function (l) { return /dcapture|capture/i.test(l); }).slice(0, 10);
+    tryConnect();
+  });
+}
+
 // Where does the system bus live on this TV? No unix socket was found at the usual paths although gdbus reaches it:
 // it may be a different path, an abstract socket or kdbus. Reads what the service is allowed to see.
 function dbusWhere(done) {
@@ -1143,9 +1261,12 @@ function dbusWhere(done) {
       out.files[f] = fs.readFileSync(f, "utf8").split("\n").filter(function (l) { return /listen|address|type>|auth/i.test(l); }).slice(0, 12);
     } catch (error) { out.files[f] = "error " + describeError(error); }
   });
+  ["/run/user/5001", "/run/user/5001/dbus", "/run/systemd", "/run/user/0"].forEach(function (d) {
+    try { out.dirs[d] = fs.readdirSync(d).slice(0, 60); } catch (error) { out.dirs[d] = "error " + describeError(error); }
+  });
   cp.execFile("sh", ["-c", "command -v gdbus dbus-send busctl dbus-daemon 2>&1; ls -l /proc/self/fd 2>&1 | head -20"], { timeout: 3000 }, function (error, stdout) {
     out.tools = error ? "error " + describeError(error) : String(stdout).split("\n").slice(0, 30);
-    done(out);
+    userBusCheck(out, done);
   });
 }
 
@@ -1243,7 +1364,8 @@ function snapshotFiles(roots, maxDepth, limit) {
 }
 
 function busMethodCommand(tool, method, signature, args) {
-  if (tool === "busctl") {
+  if (tool !== "gdbus") { // busctl-sh and busctl both mean the busctl program here
+    tool = "busctl";
     return { cmd: "busctl", args: ["--system", "call", CAPTURE_DEST, CAPTURE_PATH, CAPTURE_DEST, method, signature].concat(args) };
   }
   return { cmd: "gdbus", args: ["call", "--system", "--timeout", "4", "--dest", CAPTURE_DEST, "--object-path", CAPTURE_PATH,
@@ -1254,7 +1376,7 @@ function periodicProbe(query, done) {
   var cp = require("child_process"), fs = require("fs");
   var interval = Math.max(100, Math.min(2000, Number(query.ms) || 300)), seconds = Math.max(1, Math.min(5, Number(query.seconds) || 2));
   var id = String(query.id || "nuvio-probe").replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 40) || "nuvio-probe";
-  var out = { ok: true, tool: captureTool, intervalMs: interval, seconds: seconds, appId: id, sessionActive: !!(session && !session.stopped),
+  var out = { ok: true, tool: captureTool === "gdbus" ? "gdbus" : "busctl", intervalMs: interval, seconds: seconds, appId: id, sessionActive: !!(session && !session.stopped),
     replies: {}, newFiles: [], changedFiles: 0, monitor: null };
   function call(method, signature, args, cb) {
     var c = busMethodCommand(captureTool, method, signature, args);
@@ -1345,7 +1467,7 @@ function handleRequest(request, response) {
         return;
       }
       case "/ambilight/capture-tool": {
-        if (query.mode === "busctl" || query.mode === "gdbus") { captureTool = query.mode; toolFailures = 0; }
+        if (CAPTURE_TOOL_NAMES.indexOf(query.mode) >= 0) { captureTool = query.mode; toolFailures = 0; }
         sendJson(response, 200, { ok: true, tool: captureTool });
         return;
       }
@@ -1395,6 +1517,7 @@ module.exports = {
     sniffFormat: sniffFormat,
     parseCaptureReply: parseCaptureReply,
     parseBusctlReply: parseBusctlReply,
+    CaptureShell: CaptureShell,
     modeForActivity: modeForActivity,
     ECO: ECO,
     hsvToRgb255: hsvToRgb255,
