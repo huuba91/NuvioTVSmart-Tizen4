@@ -26,6 +26,12 @@
   function $(id) { return document.getElementById(id); }
   function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   function now() { return (window.performance && performance.now) ? performance.now() : Date.now(); }
+  function withTimeout(p, ms, msg) {
+    return new Promise(function (resolve, reject) {
+      var timer = setTimeout(function () { reject(new Error(msg + " (>" + ms + " ms)")); }, ms);
+      p.then(function (v) { clearTimeout(timer); resolve(v); }, function (e) { clearTimeout(timer); reject(e); });
+    });
+  }
   function hex(c) {
     function h(v) { v = Math.max(0, Math.min(255, Math.round(v))); return (v < 16 ? "0" : "") + v.toString(16); }
     return "#" + h(c[0]) + h(c[1]) + h(c[2]);
@@ -330,6 +336,7 @@
     }).then(function (startMs) {
       res.startMs = startMs;
       res.size = video.videoWidth + "x" + video.videoHeight;
+      log("  " + t.id + ": playing after " + startMs + " ms, " + res.size + ", reading pixels…");
       grabber = makeGrabber(t.method, video);
       var t0 = now();
       var failed = null;
@@ -338,8 +345,9 @@
         var vt = video.currentTime;
         var g0 = now();
         var p;
-        try { p = grabber.grab(); } catch (e) { failed = e; return Promise.resolve(); }
+        try { p = withTimeout(grabber.grab(), 4000, "grab() never returned"); } catch (e) { failed = e; return Promise.resolve(); }
         return p.then(function (data) {
+          if (n === 0) log("  " + t.id + ": first grab ok (" + Math.round(now() - g0) + " ms)");
           var z = zones(data);
           n++;
           lastColours = z;
@@ -360,7 +368,7 @@
           if (k >= 30) return Promise.resolve();
           k++;
           var b0 = now();
-          return grabber.grab().then(function () { spent += now() - b0; return sleep(40); }).then(bench);
+          return withTimeout(grabber.grab(), 4000, "grab() never returned").then(function () { spent += now() - b0; return sleep(40); }).then(bench);
         }
         return bench().then(function () { res.msGrab = Math.round(spent / 30 * 10) / 10; });
       });
@@ -492,7 +500,18 @@
         log("test " + (i + 1) + "/" + TESTS.length + ": " + t.name);
         results.push({ id: t.id, name: t.name, status: "run", detail: "", match: "" });
         renderRows();
-        return runTest(t).then(function (r) {
+        var wd;
+        var watchdog = new Promise(function (resolve) {
+          wd = setTimeout(function () {
+            log("  " + t.id + " WATCHDOG: no result after 45 s, moving on");
+            resolve({ id: t.id, name: t.name, status: "error", detail: "test hung for 45 s (watchdog)", match: "", msGrab: null });
+          }, 45000);
+        });
+        return Promise.race([runTest(t), watchdog]).catch(function (e) {
+          return { id: t.id, name: t.name, status: "error", detail: "uncaught: " + (e && e.message), match: "", msGrab: null };
+        }).then(function (r) {
+          clearTimeout(wd);
+          try { var st = $("stage"); st.innerHTML = ""; st.className = ""; } catch (e) { /* ignore */ }
           results[results.length - 1] = r;
           renderRows();
           log("  " + t.id + " = " + r.status + (r.msGrab !== null ? " (" + r.msGrab + " ms/grab)" : ""));
