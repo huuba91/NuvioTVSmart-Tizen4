@@ -80,10 +80,10 @@ var captureFormat = "jpeg";
 var jpegQuality = 40; // the DC-only decoder never reconstructs detail; 40 keeps the block averages within ~1.3 levels
 var jpegFailures = 0;
 // dcapture capture_mode (see docs): 0 = everything on screen incl. Nuvio's controls, 1 = picture with the screen's letterbox
-// bars, 2 and 3 = the video picture only. Both take ~31 ms idle, but under playback mode 3 is about twice as fast: with 5 loops
-// mode 3 gave ~25.8 pictures/s at ~180 ms per capture, mode 2 ~13.6/s at ~320 ms (the service handles one capture at a time).
-// /ambilight/capture-mode?mode=2 switches live.
-var captureMode = 3;
+// bars, 2 = the video picture only, 3 = answers success but, in the capture lab (tools/capture-lab), returned the same
+// picture for the whole run with every clip and player (STATIC), so its higher pictures/s were not real. Mode 2 followed the
+// test video in every case (~14/s). /ambilight/capture-mode?mode=N switches live.
+var captureMode = 2;
 // How the capture call is made. The TV's system bus is kdbus (kernel), which Node cannot speak, so a command-line tool
 // is started for every capture. Measured on the UE49NU7100 (10 captures, idle): gdbus 105 ms / 199 ms CPU,
 // dbus-send 97 / 184, busctl 57 / 99. busctl is used first; three failures in a row (or no busctl) fall back to gdbus.

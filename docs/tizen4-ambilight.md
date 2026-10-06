@@ -226,3 +226,18 @@ format exists, would let us skip the PNG inflate.
 - Picture-to-light delay is estimated at 0.2-0.35 s (research, not measured).
 - Sources: Philips patent US12062220 (dominant colour per zone), Hyperion configuration wiki
   (black borders, smoothing, saturation gain), HyperHDR v22 release notes (linear-light pipeline).
+
+### Capture lab result (supersedes the mode 3 notes above)
+
+`tools/capture-lab` played known-colour clips (H.264 720p/1080p, HEVC 8-bit/10-bit) with HTML `<video>` and AVPlay, cold start per
+mode. Every combination gave the same result:
+
+| mode | verdict | pictures/s |
+| --- | --- | --- |
+| 1 (picture + letterbox bars) | PASS, score 100% | 9-12 |
+| 2 (video only) | PASS, score 100% | 12.9-14.4 |
+| 3 | **STATIC**: one picture for the whole run, all clips and both players | 24-26 (not real) |
+
+So mode 3's "twice as fast" was the service answering success with an unchanging picture, which is also the frozen blue/green blocks seen in a
+movie. Mode 2 is the default again (~14 pictures/s). Mode 1 sometimes answers `-5` on 10-bit HEVC and its first picture can be black. Mode 3
+stays selectable (`/ambilight/capture-mode?mode=3`) for experiments only.

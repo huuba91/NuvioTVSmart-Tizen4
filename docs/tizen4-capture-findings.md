@@ -160,3 +160,8 @@ the combined result.
 ## Tooling
 
 `tools/html-color-probe/` is the standalone widget that produced the page-side results above.
+
+## Capture lab verdict
+
+Mode 3 returns one unchanging picture (STATIC) for every clip/player combination; modes 1 and 2 follow the video (PASS). Use mode 2.
+Details in docs/tizen4-ambilight.md ("Capture lab result").

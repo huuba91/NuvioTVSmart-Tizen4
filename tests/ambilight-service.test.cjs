@@ -936,7 +936,7 @@ test("the capture mode is switchable and reaches both the shell and the command 
   var originalPath = process.env.PATH;
   process.env.PATH = dir + path.delimiter + originalPath;
   try {
-    assert.equal((await call("/ambilight/capture-mode")).body.captureMode, 3, "3 is the default (about twice as fast under playback)");
+    assert.equal((await call("/ambilight/capture-mode")).body.captureMode, 2, "2 is the default (mode 3 returned a frozen picture in the capture lab)");
     assert.equal((await call("/ambilight/capture-mode?mode=2")).body.captureMode, 2);
     assert.equal((await call("/ambilight/capture-mode?mode=9")).body.captureMode, 2, "out of range is ignored");
     assert.equal((await call("/ambilight/capture-mode?mode=1.5")).body.captureMode, 2);
