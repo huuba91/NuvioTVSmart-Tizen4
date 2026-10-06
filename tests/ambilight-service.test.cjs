@@ -1138,3 +1138,45 @@ test("capture-floor separates the client's cost from the service's work", { skip
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("a refused capture never re-uses the previous picture, and mode 3 falls back to mode 2", { skip: process.platform !== "linux" || !fs.existsSync("/dev/shm") }, async function () {
+  var os = require("node:os");
+  var dir = fs.mkdtempSync(path.join(os.tmpdir(), "refuse-"));
+  var counter = path.join(dir, "calls");
+  // fake busctl: mode 3 -> the service answers -4 (busctl still exits 0); mode 2 -> a picture. Before refusing it leaves a stale
+  // picture behind, the way the real service's previous capture file would be.
+  fs.writeFileSync(path.join(dir, "busctl"),
+    '#!/bin/sh\nfor last; do :; done\neval "dir=\\${$(($# - 1))}"\n' +
+    'if [ "${9}" = 3 ]; then echo x >> "' + counter + '"; /bin/cp "' + path.join(JPEG_DIR, "halves.jpg") + '" "$dir/$last.jpg"; echo "iiis -4 0 0 \\"\\""; exit 0; fi\n' +
+    '/bin/cp "' + path.join(JPEG_DIR, "halves.jpg") + '" "$dir/$last.jpg"\necho "iiis 0 480 270 \\"$dir/$last.jpg\\""\n', { mode: 493 });
+  var originalPath = process.env.PATH;
+  process.env.PATH = dir + path.delimiter + originalPath;
+  var bulb = await startFakeBulb();
+  fs.writeFileSync(BULBS_FILE, JSON.stringify([{ id: "a", name: "Desk left", key: KEY, ip: "127.0.0.1", pos: "center" }]));
+  try {
+    await call("/ambilight/capture-format?mode=jpeg");
+    await call("/ambilight/capture-tool?mode=busctl");
+    await call("/ambilight/capture-mode?mode=3");
+    await call("/ambilight/start?level=100&assign=a:left:100");
+    await new Promise(function (resolve) { setTimeout(resolve, 2600); });
+    var state = (await call("/ambilight/state")).body.state;
+    assert.equal(state.capture.mode, 2, "fell back to mode 2");
+    assert.ok(state.errors.some(function (e) { return /service returned -4/.test(e); }), JSON.stringify(state.errors));
+    assert.ok(state.errors.some(function (e) { return /switched to mode 2/.test(e); }));
+    assert.equal(state.capture.lastReturn, -4);
+    assert.ok(state.capture.serviceErrors >= 3);
+    assert.ok(state.captures > 0, "pictures arrive again on mode 2");
+    // before the fix the stale file made every refused capture count as a picture: mode 3 would have produced "pictures" too
+    var refusals = fs.readFileSync(counter, "utf8").split("\n").filter(Boolean).length;
+    assert.ok(refusals <= 6, "mode 3 was tried only until the fallback: " + refusals);
+  } finally {
+    await call("/ambilight/stop");
+    await call("/ambilight/capture-mode?mode=3");
+    await call("/ambilight/capture-tool?mode=busctl-sh");
+    process.env.PATH = originalPath;
+    try { fs.unlinkSync(BULBS_FILE); } catch (_) {}
+    await new Promise(function (resolve) { setTimeout(resolve, 1500); });
+    bulb.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

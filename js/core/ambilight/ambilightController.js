@@ -112,10 +112,11 @@ export const AmbilightController = {
     const endReasons = { watchdog: "the app stopped pinging for 10 s (closed or hung)", stopped: "stopped by the app" };
     const prefix = active ? "" : `Last session (${state.seconds ?? "?"} s, ended: ${endReasons[state.endReason] || state.endReason || "?"}): `;
     const mean = capture?.meanColour ? ` Last picture average rgb(${capture.meanColour.join(",")}).` : "";
+    const refused = capture?.serviceErrors ? ` Capture service refused ${capture.serviceErrors} captures (last reply ${capture.lastReturn}).` : "";
     const decoder = capture?.jpegDecoder && capture.jpegDecoder.decoder !== "fast"
       ? ` JPEG decoder: ${capture.jpegDecoder.decoder} (${capture.jpegDecoder.mismatch || "?"}).`
       : "";
-    return `${prefix}Sending ${strip.method} to ${strip.ip}: ${strip.sent} frames, ${counted}.${captureNote}${mean}${decoder}${problem}`;
+    return `${prefix}Sending ${strip.method} to ${strip.ip}: ${strip.sent} frames, ${counted}.${captureNote}${mean}${refused}${decoder}${problem}`;
   },
 
   // Called whenever the player reports real playback; repeated calls are cheap.

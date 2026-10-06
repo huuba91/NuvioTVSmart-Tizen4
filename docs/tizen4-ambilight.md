@@ -191,6 +191,14 @@ and a watchdog of 30 s. The earlier failure (lights lit during loading and stopp
 10 s watchdog) fits a starved app thread at movie start; the cap keeps the load near the known-good level (~190% at 13.5/s) and
 the longer watchdog stops a short stall from ending a working session.
 
+### Frozen lights: refused captures re-read the previous picture (fixed)
+
+The capture service reports a refused capture in its reply code while `busctl` and `gdbus` still exit 0, and the code ignored that
+code, so the previous picture's file (still on disk) was read again and again: the strip froze on one old picture ("random colour
+blocks that do not change", "solid purple", 97% still). Now a reply code other than 0 is a failed capture ("service returned N"),
+the target file is deleted before every capture so a stale picture can never be mistaken for a new one, and three refusals in a row
+in mode 3 fall back to mode 2. The status line and `/ambilight/state` show how many captures were refused and the last code.
+
 ### Where the CPU goes now (TV, paused/still picture, 3.6 pictures/s)
 
 Status line: 45.4% CPU = Node 36% (ambilight JS 9.6%: decode 6, analyse 2.5, tick 1.1) + shells 8.7%. About 26% of a core of

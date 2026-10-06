@@ -88,6 +88,7 @@ var captureTool = "busctl-sh";
 var TOOL_FALLBACK = { "busctl-sh": "busctl", busctl: "gdbus" };
 var CAPTURE_TOOL_NAMES = ["busctl-sh", "busctl", "gdbus"];
 var toolFailures = 0;
+var serviceErrorsInARow = 0; // captures the service itself refused (reply code other than 0), counted for the mode fallback
 var shellRunners = []; // live capture shells, for CPU accounting and clean-up
 var TICK_MS = 50; // colour updates per bulb between pictures: 20/s (the PC sync sends up to 30/s)
 var FLIP_BACK_AFTER = 500; // anti-flicker: no straight return to the colour just left within this time
@@ -717,6 +718,9 @@ function captureOnce(name, runner, done) {
   function finished(error, stdout) {
     if (error) { done("capture " + describeError(error)); return; }
     var captured = Date.now(), image, reply = parseAnyCaptureReply(stdout);
+    // The service reports a refused capture in its reply (busctl and gdbus still exit 0). Without this check the previous picture's
+    // file, still on disk, was read again and again: the lights froze on one old picture.
+    if (reply && reply.ret !== 0) { done("service returned " + reply.ret + " (mode " + captureMode + ")"); return; }
     try {
       // The file we asked for; if the service wrote it elsewhere (its reply names the real path), use that.
       if (reply && reply.path && !fs.existsSync(file)) file = reply.path;
@@ -728,6 +732,7 @@ function captureOnce(name, runner, done) {
     }
     done(null, image, { captureMs: captured - began, decodeMs: Date.now() - captured });
   }
+  try { fs.unlinkSync(file); } catch (_) { /* nothing left over from before */ } // a stale picture must never be mistaken for a new one
   if (captureTool === "busctl-sh" && runner) {
     runner.run(format.comp, quality, name, finished);
     return;
@@ -763,6 +768,8 @@ function Session(bulbs, level, stripConfig) {
   this.lastPicture = 0;
   this.lastTick = 0;
   this.shells = {};
+  this.serviceErrors = 0; // captures the service refused, and the last reply code it gave
+  this.lastReturn = null;
   this.active = {}; // capture loops running, by worker index
   this.samples = []; // once-a-second snapshots, to report the last seconds and not only the whole session
   this.lastSample = 0;
@@ -873,6 +880,24 @@ Session.prototype.loop = function (worker) {
   var begun = Date.now();
   captureOnce(CAPTURE_PREFIX + worker, this.shellFor(worker), function (error, image, timing) {
     if (self.stopped) return;
+    if (error && /^service returned/.test(error)) {
+      // The capture service refused this capture. Mode 3 failing three times in a row falls back to mode 2, the first mode that was
+      // validated; both modes failing is a service problem that retrying will show.
+      self.failures++;
+      self.serviceErrors++;
+      var returned = /returned (-?\d+)/.exec(error);
+      self.lastReturn = returned ? Number(returned[1]) : null;
+      self.note(error);
+      serviceErrorsInARow++;
+      if (captureMode === 3 && serviceErrorsInARow >= 3) {
+        captureMode = 2;
+        serviceErrorsInARow = 0;
+        self.note("mode 3 kept being refused by the capture service, switched to mode 2");
+      }
+      if (self.failures >= MAX_FAILED_CAPTURES && self.captures === 0) { self.stop("capture-failed"); return; }
+      setTimeout(function () { self.loop(worker); }, 100);
+      return;
+    }
     if (error && /^capture /.test(error) && TOOL_FALLBACK[captureTool]) {
       // The capture call itself failed. Each tool falls back to the next one: busctl-sh (long-lived shell) -> busctl
       // started by Node -> gdbus, the way the ambilight was validated with. A missing tool falls back at once.
@@ -908,6 +933,7 @@ Session.prototype.loop = function (worker) {
     }
     self.captures++;
     toolFailures = 0;
+    serviceErrorsInARow = 0;
     if (captureFormat === "jpeg") jpegFailures = 0;
     if (timing) {
       self.timing.captureMs = ema(self.timing.captureMs, timing.captureMs);
@@ -1093,6 +1119,8 @@ Session.prototype.describe = function () {
       eco: ecoEnabled,
       tool: captureTool,
       mode: captureMode,
+      serviceErrors: this.serviceErrors,
+      lastReturn: this.lastReturn,
       jpegDecoder: { decoder: jpegDecoder.useReference ? "reference" : "fast", checked: jpegDecoder.checked, mismatch: jpegDecoder.mismatch },
       meanColour: this.meanColour(),
       format: captureFormat,
