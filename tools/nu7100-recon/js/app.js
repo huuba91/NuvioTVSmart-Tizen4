@@ -55,6 +55,7 @@
       running = false;
       summary(counts());
       showReport();
+      if ($("pc-url").value.replace(/\s/g, "")) sendToPc(function (m) { $("exported").textContent = m; });
     });
   }
 
@@ -122,6 +123,25 @@
       saveTo(roots[i++], name, body, function (msg) { lines.push(msg); $("exported").textContent = lines.join("\n") + "\nsaving..."; next(); });
     })();
   };
+
+  // POSTs the report to the receiver on the PC (node tools/nu7100-recon/receive.mjs); cb(message)
+  function sendToPc(cb) {
+    var url = $("pc-url").value.replace(/^\s+|\s+$/g, "").replace(/\/$/, "");
+    if (!url) { cb("PC receiver: no address entered"); return; }
+    showReport();
+    var x = new XMLHttpRequest(), ended = false;
+    function end(msg) { if (ended) return; ended = true; cb(msg); }
+    try {
+      x.open("POST", url + "/report", true);
+      x.timeout = 10000;
+      x.setRequestHeader("Content-Type", "text/plain");
+      x.onload = function () { end("PC receiver: " + x.status + " " + String(x.responseText).slice(0, 120)); };
+      x.onerror = function () { end("PC receiver: could not reach " + url + " (receiver not running, wrong IP, or the PC firewall blocks the port)"); };
+      x.ontimeout = function () { end("PC receiver: timeout"); };
+      x.send($("report").value);
+    } catch (e) { end("PC receiver: " + R.errText(e)); }
+  }
+  $("b-send").onclick = function () { $("exported").textContent = "sending..."; sendToPc(function (m) { $("exported").textContent = m; }); };
 
   // remote control: arrows move the focus, BACK exits
   doc.addEventListener("keydown", function (e) {
