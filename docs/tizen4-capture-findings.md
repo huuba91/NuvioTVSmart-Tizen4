@@ -111,6 +111,18 @@ service is only on the system bus.
 The ambilight uses mode 3 (default; mode 2 looked identical and was used before), so it follows only the video, and it is the fast one.
 `/ambilight/capture-mode?mode=N` switches it live.
 
+## Where the capture call time goes (and what is left to win)
+
+- Idle, one capture call went from ~105 ms (gdbus started by Node) to ~31 ms (busctl run from a long-lived shell): about a third.
+- A smaller picture or raw pixels cannot make the service faster: the size is ignored (min 480x270), quality does not change the
+  time, and only PNG and JPEG exist. "1 ms" was never reachable, the service has to grab and encode a picture.
+- Under playback a call takes ~110-190 ms (mode 2) because the service shares the TV with the video; mode 3 is about twice as fast
+  there (5 loops: ~180 ms per call and ~26 pictures/s against ~320 ms and ~13.6/s). The service handles one capture at a time.
+- Not yet separated: how much of the ~31 ms idle is starting busctl (kdbus connect and login) and how much is the service's own work.
+  `/ambilight/capture-floor` measures it (client start, Ping, real capture, each from one shell). The Ping time is the most a permanent
+  native connection (no program started per capture) could save; direct access from Node is impossible (kdbus, no proxy), so it would
+  need a native helper using libsystemd/sd-bus (present on the TV).
+
 ## Ideas not yet tried
 
 - A periodic capture that removes the per-picture `gdbus` process (output location unknown; a wider file search

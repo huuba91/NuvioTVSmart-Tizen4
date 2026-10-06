@@ -31,6 +31,7 @@
 //   GET /ambilight/dbus-where                        how the system bus is reached (paths, sockets, kdbus)
 //   GET /ambilight/capture-compare                   a page with modes 0-3 side by side, for a paused picture
 //   GET /ambilight/capture-image?mode=0&app=0&size=480x270&quality=60   one capture as an image to view in a browser
+//   GET /ambilight/capture-floor?count=20            client start vs Ping vs real capture: how much a permanent connection could save
 //   GET /ambilight/capture-bench?group=sizes|quality|modes|all&count=8   cost and result of other sizes, qualities, modes, app types
 //   GET /ambilight/fb-check                          can the service read /dev/fb0 or /dev/dri directly
 //   GET /ambilight/bus-proxy-probe?count=10          is systemd-bus-proxyd on the TV, and can dbus-lite use it for captures
@@ -1478,6 +1479,53 @@ function captureCompare(query, response) {
   response.end(html);
 }
 
+// How much of a capture call is the service and how much is the client? Three things are called `count` times each from one small
+// shell: `busctl --version` (starting the client only), a Ping to the capture service (client + bus connection + trivial reply), and
+// a real capture. The capture minus the Ping is roughly the service's own work; the Ping is the most a permanent native connection
+// (no program started, connection kept open) could save. Run it once with nothing playing and once while a movie plays.
+function captureFloor(query, done) {
+  var cp = require("child_process"), fs = require("fs");
+  var count = Math.max(5, Math.min(60, Math.round(Number(query.count)) || 20)), name = "nuvio-floor";
+  var out = { ok: true, count: count, sessionActive: !!(session && !session.stopped), captureMode: captureMode, rows: [] };
+  var items = [
+    { name: "busctl --version (starting the client only)", args: ["--version"] },
+    { name: "Ping to the capture service (client + bus connection + trivial reply)", args: ["--system", "call", CAPTURE_DEST, CAPTURE_PATH, "org.freedesktop.DBus.Peer", "Ping"] },
+    { name: "real capture (JPEG, mode " + captureMode + ")", args: captureCommand("busctl", 1, jpegQuality, name).args }
+  ];
+  (function next(i) {
+    if (i >= items.length) {
+      try { fs.unlinkSync(CAPTURE_DIR + "/" + name + ".jpg"); } catch (_) {}
+      var by = {};
+      out.rows.forEach(function (r) { by[r.index] = r; });
+      if (by[1] && by[2] && by[1].ok && by[2].ok) {
+        out.derived = {
+          clientStartMs: by[0] && by[0].ok ? by[0].msPerCall : null,
+          pingMs: by[1].msPerCall,
+          captureMs: by[2].msPerCall,
+          serviceWorkEstimateMs: Math.round((by[2].msPerCall - by[1].msPerCall) * 10) / 10,
+          note: "a permanent native connection could save about the Ping time per capture; the rest is the service's own work"
+        };
+      }
+      done(out);
+      return;
+    }
+    var item = items[i], row = { index: i, name: item.name };
+    out.rows.push(row);
+    cp.execFile("busctl", item.args, { timeout: 8000 }, function (error, stdout, stderr) {
+      row.ok = !error;
+      if (error) row.error = (describeError(error) + " " + String(stderr || "")).slice(0, 140);
+      var loop = "i=0; while [ $i -lt " + count + " ]; do busctl " + item.args.join(" ") + " >/dev/null 2>&1; i=$((i+1)); done";
+      var cpu0 = cpuSeconds(), t0 = Date.now();
+      cp.execFile("sh", ["-c", loop], { timeout: 60000 }, function () {
+        var wall = Date.now() - t0, cpu1 = cpuSeconds();
+        row.msPerCall = Math.round(wall / count * 10) / 10;
+        row.cpuMsPerCall = cpu0 !== null && cpu1 !== null ? Math.round((cpu1 - cpu0) * 1000 / count * 10) / 10 : null;
+        next(i + 1);
+      });
+    });
+  })(0);
+}
+
 // ---- capture parameter bench ------------------------------------------------------------------------
 // RequestCaptureToFileSync(app_type, capture_mode, comp_type, width, height, quality, dir, name). What do sizes bigger or
 // smaller than 480x270, other qualities, modes and app types cost, and what comes back? Each setting is called `count`
@@ -1926,6 +1974,9 @@ function handleRequest(request, response) {
         return;
       case "/ambilight/capture-image":
         captureImage(query, response);
+        return;
+      case "/ambilight/capture-floor":
+        captureFloor(query, function (result) { sendJson(response, 200, result); });
         return;
       case "/ambilight/capture-bench":
         captureBench(query, function (result) { sendJson(response, 200, result); });

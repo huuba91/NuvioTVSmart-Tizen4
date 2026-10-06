@@ -1115,3 +1115,26 @@ test("the picture rate cap paces the capture loops and can be changed live", asy
     await call("/ambilight/capture-rate?max=15");
   }
 });
+
+test("capture-floor separates the client's cost from the service's work", { skip: process.platform !== "linux" || !fs.existsSync("/dev/shm") }, async function () {
+  var os = require("node:os");
+  var dir = fs.mkdtempSync(path.join(os.tmpdir(), "floor-"));
+  // a fake busctl: --version and Ping are instant; a capture takes ~20 ms and writes a JPEG
+  fs.writeFileSync(path.join(dir, "busctl"),
+    '#!/bin/sh\ncase "$*" in\n --version*) echo "systemd 231"; exit 0;;\n *Ping*) exit 0;;\nesac\n/bin/sleep 0.02\nfor last; do :; done\neval "dir=\\${$(($# - 1))}"\n' +
+    '/bin/cp "' + path.join(JPEG_DIR, "420.jpg") + '" "$dir/$last.jpg"\necho "iiis 0 480 270 \\"$dir/$last.jpg\\""\n', { mode: 493 });
+  var originalPath = process.env.PATH;
+  process.env.PATH = dir + path.delimiter + originalPath;
+  try {
+    var result = (await call("/ambilight/capture-floor?count=5")).body;
+    assert.equal(result.rows.length, 3);
+    assert.ok(result.rows.every(function (r) { return r.ok; }), JSON.stringify(result.rows));
+    assert.ok(result.derived, "derived figures");
+    assert.ok(result.derived.captureMs > result.derived.pingMs, "the capture takes longer than the Ping");
+    assert.ok(result.derived.serviceWorkEstimateMs > 5, "about the 20 ms the fake service takes: " + result.derived.serviceWorkEstimateMs);
+  } finally {
+    process.env.PATH = originalPath;
+    try { fs.unlinkSync("/dev/shm/nuvio-floor.jpg"); } catch (_) {}
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
