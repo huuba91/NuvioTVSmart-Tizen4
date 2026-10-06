@@ -84,6 +84,25 @@ Direct bus access is not possible from Node on this TV: the system bus and the s
 exists for either: `/run/user/5001/dbus/user_bus_socket` is missing, no bus proxy under `/run/systemd`), and the capture
 service is only on the system bus.
 
+## Capture parameter bench, framebuffer check, proxy probe (TV results)
+
+- **Sizes:** whatever is asked (64x36, 160x90, 240x135, 480x270) comes back as 480x270, ~31-38 ms per capture. Asking for 960x540 or
+  1920x1080 returns 720x540 (83 KB, 52 ms, 66 ms DC decode). So nothing smaller than 480x270 can be had, and the service has a fixed
+  cost of ~31 ms per capture that does not depend on size.
+- **Quality (480x270):** 10/30/60/90 give 3.2/4.6/6.7/16.3 KB and 12/13/14/18 ms DC decode; the capture time stays 31 ms. Quality is
+  not a lever.
+- **Modes:** modes 2 and 3 take ~31 ms, modes 0 and 1 ~67 ms. app_type 0-3 all gave the same result. The files of modes 1-3 and of
+  app types 1-3 had identical sizes (2667 bytes) while mode 0 gave 18445 bytes, but the screen changed during the run, so which mode
+  includes Nuvio's own controls is still open (`/ambilight/capture-image?mode=N` shows each as a picture).
+- **Framebuffer:** no `/dev/fb0` (`/sys/class/graphics` is empty). `/dev/dri/card0` and `/dev/dri/renderD128` can be opened by the
+  service's user (uid 5001); `/dev/video10-61` (V4L2) exist. Reading planes needs ioctls, i.e. native code.
+- **Bus proxy:** no `systemd-bus-proxyd` on the TV. `libsystemd.so.0` (0.16.0, systemd 231, includes sd-bus), `libsystemd-shared-231`
+  and kdbus-patched `dbus-libs` / `libgio` exist, so a native bridge could use sd-bus in principle.
+- **CPU after busctl-sh (43 s session):** 8.5 pictures/s, 82.9% CPU = Node 62.7% + shells 20.2%; capture 105 ms, decode 15 ms.
+  The ambilight's own JavaScript (decode, analysis, tick) should be only ~25-30 ms per picture on this TV (measured about 1.5 ms
+  on a desktop, ~14-20x slower on the TV), i.e. ~20-25% of a core, so ~40% of a core of Node's load is other work in the same
+  process (for example serving the video). The status line now reports the ambilight's JS share separately.
+
 ## Ideas not yet tried
 
 - A periodic capture that removes the per-picture `gdbus` process (output location unknown; a wider file search

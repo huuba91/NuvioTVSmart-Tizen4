@@ -855,3 +855,58 @@ test("fb-check lists the graphics device files and tries to open the framebuffer
   assert.equal(result.opens.length, 4);
   assert.ok(result.opens.every(function (o) { return typeof o.opened === "boolean"; }));
 });
+
+test("capture-image serves one capture as a JPEG for viewing", { skip: process.platform !== "linux" || !fs.existsSync("/dev/shm") }, async function () {
+  var os = require("node:os");
+  var dir = fs.mkdtempSync(path.join(os.tmpdir(), "view-"));
+  fs.writeFileSync(path.join(dir, "busctl"),
+    '#!/bin/sh\nfor last; do :; done\neval "dir=\\${$(($# - 1))}"\n/bin/cp "' + path.join(JPEG_DIR, "420.jpg") + '" "$dir/$last.jpg"\necho "iiis 0 480 270 \\"$dir/$last.jpg\\""\n', { mode: 493 });
+  var originalPath = process.env.PATH;
+  process.env.PATH = dir + path.delimiter + originalPath;
+  try {
+    var captured = await new Promise(function (resolve) {
+      var headers = {};
+      ambilight.handleRequest({ url: "/ambilight/capture-image?mode=1" }, {
+        writeHead: function (status, h) { headers.status = status; headers.type = h["Content-Type"]; },
+        end: function (data) { resolve({ headers: headers, data: data }); }
+      });
+    });
+    assert.equal(captured.headers.status, 200);
+    assert.equal(captured.headers.type, "image/jpeg");
+    assert.equal(captured.data[0], 0xff);
+    assert.equal(captured.data[1], 0xd8);
+  } finally {
+    process.env.PATH = originalPath;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a session reports how much of Node's CPU is its own JavaScript", { skip: process.platform !== "linux" || !fs.existsSync("/dev/shm") }, async function () {
+  var os = require("node:os");
+  var dir = fs.mkdtempSync(path.join(os.tmpdir(), "ambilight-"));
+  fs.writeFileSync(path.join(dir, "gdbus"),
+    '#!/bin/sh\nfor last; do :; done\neval "dir=\\${$(($# - 1))}"\n/bin/cp "' + path.join(JPEG_DIR, "halves.jpg") + '" "$dir/$last.jpg"\necho "(0, 480, 270, \'$dir/$last.jpg\')"\n', { mode: 493 });
+  var originalPath = process.env.PATH;
+  process.env.PATH = dir + path.delimiter + originalPath;
+  var bulb = await startFakeBulb();
+  fs.writeFileSync(BULBS_FILE, JSON.stringify([{ id: "a", name: "Desk left", key: KEY, ip: "127.0.0.1", pos: "center" }]));
+  try {
+    await call("/ambilight/capture-format?mode=jpeg");
+    await call("/ambilight/capture-tool?mode=gdbus");
+    await call("/ambilight/start?level=100&assign=a:left:100");
+    await new Promise(function (resolve) { setTimeout(resolve, 2600); });
+    var capture = (await call("/ambilight/state")).body.state.capture;
+    assert.ok(capture.jsBusy, "jsBusy is reported");
+    assert.ok(capture.jsBusy.decode >= 0 && capture.jsBusy.analyse > 0 && capture.jsBusy.tick >= 0);
+    assert.ok(Math.abs(capture.jsBusy.total - (capture.jsBusy.decode + capture.jsBusy.analyse + capture.jsBusy.tick)) < 0.5);
+    assert.ok(capture.cpuSplit && typeof capture.cpuSplit.node === "number");
+  } finally {
+    await call("/ambilight/stop");
+    await call("/ambilight/capture-tool?mode=busctl-sh");
+    process.env.PATH = originalPath;
+    try { fs.unlinkSync(BULBS_FILE); } catch (_) {}
+    await new Promise(function (resolve) { setTimeout(resolve, 1500); });
+    bulb.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

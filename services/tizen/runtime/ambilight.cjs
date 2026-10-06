@@ -29,6 +29,7 @@
 //   GET /ambilight/capture-sweep?w=64&h=36&modes=0,1,2,3,4&comps=0,1,2,3   try dcapture modes/formats
 //   GET /ambilight/capture-tools?count=10            gdbus vs dbus-send vs busctl: time and CPU per capture
 //   GET /ambilight/dbus-where                        how the system bus is reached (paths, sockets, kdbus)
+//   GET /ambilight/capture-image?mode=0&app=0&size=480x270&quality=60   one capture as an image to view in a browser
 //   GET /ambilight/capture-bench?group=sizes|quality|modes|all&count=8   cost and result of other sizes, qualities, modes, app types
 //   GET /ambilight/fb-check                          can the service read /dev/fb0 or /dev/dri directly
 //   GET /ambilight/bus-proxy-probe?count=10          is systemd-bus-proxyd on the TV, and can dbus-lite use it for captures
@@ -79,6 +80,12 @@ var jpegDc = require("./jpeg-dc.cjs");
 var dbusLite = require("./dbus-lite.cjs");
 var colourEngine = require("./ambilight-colour.cjs");
 var stripOutput = require("./ambilight-strip.cjs");
+
+// Milliseconds on a monotonic clock, fractional.
+function hr() {
+  var t = process.hrtime();
+  return t[0] * 1e3 + t[1] / 1e6;
+}
 
 function ema(old, value) {
   return old === null || old === undefined ? value : old * 0.8 + value * 0.2;
@@ -706,6 +713,7 @@ function Session(bulbs, level, stripConfig) {
   this.lastPicture = 0;
   this.lastTick = 0;
   this.shells = {};
+  this.busy = { decode: 0, analyse: 0, tick: 0 }; // ms of synchronous ambilight JavaScript, to tell it from other Node work
   this.prevImage = null;
   this.activity = 255; // the first pictures count as moving
   this.mode = "active";
@@ -840,6 +848,7 @@ Session.prototype.loop = function (worker) {
     if (timing) {
       self.timing.captureMs = ema(self.timing.captureMs, timing.captureMs);
       self.timing.decodeMs = ema(self.timing.decodeMs, timing.decodeMs);
+      self.busy.decode += timing.decodeMs; // reading the file and decoding it run synchronously
     }
     if (begun >= self.shownBegun) {
       self.shownBegun = begun;
@@ -861,6 +870,7 @@ Session.prototype.paceDelay = function (elapsed) {
 
 // A new picture only moves the goal; tick() glides the bulbs towards it.
 Session.prototype.analyse = function (image) {
+  var busyStart = hr();
   var now = Date.now(), dt = this.lastPicture ? Math.min(1, (now - this.lastPicture) / 1000) : 0.1;
   this.lastPicture = now;
   var change = pictureChange(this.prevImage, image);
@@ -875,10 +885,12 @@ Session.prototype.analyse = function (image) {
     this.strip.record(this.strip.analyseMs, Date.now() - now); // whole picture analysis incl. the 8 zones
   }
   this.timing.analyseMs = ema(this.timing.analyseMs, Date.now() - now);
+  this.busy.analyse += hr() - busyStart;
 };
 
 // Runs between pictures too, so every bulb fades through intermediate colours instead of stepping.
 Session.prototype.tick = function () {
+  var busyStart = hr();
   var now = Date.now(), dt = Math.max(0.001, Math.min(0.25, (now - this.lastTick) / 1000)), states = {}, level = this.level;
   this.lastTick = now;
   var regions = this.regions;
@@ -888,6 +900,7 @@ Session.prototype.tick = function () {
     b.heartbeat(now);
   });
   if (this.strip) this.strip.tick(dt, level);
+  this.busy.tick += hr() - busyStart;
 };
 
 Session.prototype.update = function (assignments, level, stripConfig) {
@@ -933,6 +946,16 @@ Session.prototype.cpuSplit = function () {
   return { node: Math.round((now.node - start.node) / seconds * 1000) / 10, shells: Math.round((now.shells - start.shells) / seconds * 1000) / 10 };
 };
 
+// Share of one core the ambilight's own synchronous JavaScript used since the session began (decode, colour analysis, tick).
+// Node's total minus this is other work in the same process, such as serving the video.
+Session.prototype.jsBusy = function () {
+  var ms = Date.now() - this.startedAt;
+  if (ms < 1000) return null;
+  function pct(v) { return Math.round(v / ms * 1000) / 10; }
+  var total = this.busy.decode + this.busy.analyse + this.busy.tick;
+  return { decode: pct(this.busy.decode), analyse: pct(this.busy.analyse), tick: pct(this.busy.tick), total: pct(total) };
+};
+
 Session.prototype.modePercent = function () {
   var m = this.modeSeconds, total = m.static + m.calm + m.active;
   if (!total) return { static: 0, calm: 0, active: 0 };
@@ -968,7 +991,8 @@ Session.prototype.describe = function () {
       decodeMs: this.timing.decodeMs === null ? null : Math.round(this.timing.decodeMs),
       analyseMs: this.timing.analyseMs === null ? null : Math.round(this.timing.analyseMs),
       cpuPercent: this.cpuPercent(),
-      cpuSplit: this.cpuSplit()
+      cpuSplit: this.cpuSplit(),
+      jsBusy: this.jsBusy()
     },
     errors: this.errors,
     strip: this.strip ? this.strip.describe() : null,
@@ -1290,6 +1314,35 @@ function dbusWhere(done) {
   cp.execFile("sh", ["-c", "command -v gdbus dbus-send busctl dbus-daemon 2>&1; ls -l /proc/self/fd 2>&1 | head -20"], { timeout: 3000 }, function (error, stdout) {
     out.tools = error ? "error " + describeError(error) : String(stdout).split("\n").slice(0, 30);
     userBusCheck(out, done);
+  });
+}
+
+// One capture served as an image, to look at in a browser: which parts of the screen does each mode / app type include
+// (video, Nuvio's own controls, subtitles)? GET /ambilight/capture-image?mode=0&app=0&size=480x270&quality=60&format=jpeg|png
+function captureImage(query, response) {
+  var cp = require("child_process"), fs = require("fs");
+  function fail(status, text) {
+    response.writeHead(status, { "Content-Type": "text/plain", "Access-Control-Allow-Origin": "*" });
+    response.end(text);
+  }
+  var mode = Math.round(Number(query.mode)), app = Math.round(Number(query.app)), q = Math.round(Number(query.quality));
+  var size = /^(\d{2,4})x(\d{2,4})$/.exec(String(query.size || ""));
+  var comp = query.format === "png" ? 0 : 1, ext = comp === 0 ? "png" : "jpg", name = "nuvio-view";
+  if (!isFinite(mode) || mode < 0 || mode > 9) mode = 2;
+  if (!isFinite(app) || app < 0 || app > 9) app = 0;
+  if (!isFinite(q) || q < 10 || q > 95) q = 80;
+  var w = size ? Math.min(1920, Number(size[1])) : CAPTURE_SIZE[0], h = size ? Math.min(1080, Number(size[2])) : CAPTURE_SIZE[1];
+  cp.execFile("busctl", ["--system", "call", CAPTURE_DEST, CAPTURE_PATH, CAPTURE_DEST, CAPTURE_METHOD, "iiiiiiss",
+    String(app), String(mode), String(comp), String(w), String(h), String(q), CAPTURE_DIR, name], { timeout: 8000 }, function (error, stdout) {
+    if (error) { fail(500, "capture failed: " + describeError(error)); return; }
+    var reply = parseBusctlReply(stdout), file = reply && reply.path ? reply.path : CAPTURE_DIR + "/" + name + "." + ext;
+    try {
+      var data = fs.readFileSync(file);
+      try { fs.unlinkSync(file); } catch (_) {}
+      response.writeHead(200, { "Content-Type": comp === 0 ? "image/png" : "image/jpeg", "Content-Length": data.length, "Cache-Control": "no-store",
+        "Access-Control-Allow-Origin": "*", "X-Capture-Reply": String(stdout).trim().slice(0, 100) });
+      response.end(data);
+    } catch (problem) { fail(500, "read failed: " + describeError(problem)); }
   });
 }
 
@@ -1714,6 +1767,9 @@ function handleRequest(request, response) {
         return;
       case "/ambilight/dbus-where":
         dbusWhere(function (result) { sendJson(response, 200, result); });
+        return;
+      case "/ambilight/capture-image":
+        captureImage(query, response);
         return;
       case "/ambilight/capture-bench":
         captureBench(query, function (result) { sendJson(response, 200, result); });
