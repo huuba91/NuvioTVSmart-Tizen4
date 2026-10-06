@@ -81,3 +81,24 @@ it with `& $sdb pull <path-from-the-uri> .` (if sdb is allowed to read that fold
   `/etc/passwd` or other general system files, `/proc`/`/sys` one-level enumeration, and the API member-recursion scan. None of these
   bear on the ambilight project (the goal of this app), and several (`/dev/mem`, `/dev/kmem`) are exactly the kind of kernel-memory
   access this scanner is meant to stay away from. Ask if you want any of these added back.
+
+## v0.2.1: the read path had the same encoding bug as the write path
+
+`openStream`'s 4th argument is the encoding; `probePath`/`readFile` were passing `"r"` there (a leftover from the mode
+argument), which is not a valid encoding value and blocked every content read with `TypeMismatchError`. All reads now pass
+`"UTF-8"` (the encoding is irrelevant for `readBytes()`, but it still has to be a valid enum value or Tizen's own argument
+check throws before anything happens - the same class of bug as the v0.1 write fix, just on the other API call).
+
+New in this round, aimed only at `/dev/shm` content and the known dcapture path (test D - two apps open side by side - is
+deferred, since this TV only keeps one foreground app alive and typing on the remote is slow):
+
+- `sharedmem.object.*` and `sharedmem.inspector_port` now report the exact step sequence asked for: `resolve`, `size`,
+  `open`, `bytesAvailable` (if the FileStream exposes it), `read` (256 bytes only - never the whole 1.3 MB object),
+  `close`, plus `readTimeMs`, `first256Hex`, `first256Text`.
+- New `sharedmem.watch_pair`: polls `/dev/shm/shm_ave` and `/dev/shm/shm_ave_tddg` together at 10 Hz for 5 s, recording
+  timestamp, mtime, size, and a hash of the first 256 and first 4096 bytes each sample - run this while a movie is
+  actually playing in Nuvio.
+- `dcapture.known_path`'s latency field is now named `readTimeMs` (was `readMs`) for consistency.
+- Defaults filled in on the page so nothing needs typing on the remote: PC receiver `http://192.168.192.8:8099`,
+  known dcapture path `/dev/shm/nuvio-ambilight-0.jpg` (the real live-session file name - `nuvio-ambilight-1.jpg` and
+  `-2.jpg` are the other two capture workers; `nuvio-series.jpg` is only used by the unrelated capture-lab diagnostic).

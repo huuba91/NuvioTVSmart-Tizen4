@@ -21,7 +21,8 @@ test("the recon app is plain ES5 (Chromium M56 on the TV)", function () {
 
 // A small in-memory tizen.filesystem: two writable directories and one that refuses.
 function fakeTizen() {
-  var store = { "/tmp": {}, "/dev/shm": { "nuvio-series.jpg": "\xff\xd8\xff\xe0abc", "shm_ave": "not a signature, plain ascii text", "WK2SharedMemory.inspector.port": "37011" } };
+  var store = { "/tmp": {}, "/dev/shm": { "nuvio-series.jpg": "\xff\xd8\xff\xe0abc", "shm_ave": "not a signature, plain ascii text",
+    "shm_ave_tddg": "also plain ascii, a stand-in for the 1.3 MB object", "WK2SharedMemory.inspector.port": "37011" } };
   function dirObject(p) {
     return {
       isDirectory: true, isFile: false, readOnly: false, fullPath: p, name: p.split("/").pop(), toURI: function () { return "file://" + p; },
@@ -35,7 +36,8 @@ function fakeTizen() {
       isDirectory: false, isFile: true, readOnly: false, name: n, fullPath: p + "/" + n, fileSize: store[p][n].length, modified: new Date(1e12), toURI: function () { return "file://" + p + "/" + n; },
       openStream: function (mode, ok) {
         ok({ readBytes: function (c) { return store[p][n].split("").slice(0, c).map(function (ch) { return ch.charCodeAt(0); }); },
-          read: function (c) { return store[p][n].slice(0, c); }, write: function (s) { store[p][n] = s; }, close: function () {} });
+          read: function (c) { return store[p][n].slice(0, c); }, write: function (s) { store[p][n] = s; }, close: function () {},
+          bytesAvailable: store[p][n].length });
       }
     };
   }
@@ -87,21 +89,36 @@ test("every recon test finishes with a structured result, and refusals are not c
     assert.equal(w1.steps.verify, "exact match");
     assert.equal(w1.readBack, "NU7100_RECON_TEST");
     assert.equal(status("filesystem.write./dev/shm"), "PASS");
-    // sharedmem: signature detection on the fake shm_ave (plain text) and the inspector port file (a small numeric string)
+    // sharedmem: the read-path encoding bug (openStream's 4th arg was "r", not a valid encoding) made every one of
+    // these BLOCKED before the fix - confirm the step-by-step read now actually succeeds, with the exact field set asked for.
     assert.equal(status("sharedmem.object.shm_ave"), "PASS");
-    assert.equal(R.results["sharedmem.object.shm_ave"].value.likelyText, true);
+    var ave = R.results["sharedmem.object.shm_ave"].value;
+    assert.equal(ave.steps.resolve, "ok");
+    assert.equal(ave.steps.open, "ok");
+    assert.ok(ave.steps.read.indexOf("ok") === 0, "read step: " + ave.steps.read);
+    assert.equal(ave.steps.close, "ok");
+    assert.ok(typeof ave.readTimeMs === "number");
+    assert.ok(ave.first256Hex && ave.first256Text);
+    assert.equal(ave.likelyText, true);
     assert.equal(status("sharedmem.inspector_port"), "PASS");
-    assert.equal(R.results["sharedmem.inspector_port"].value.asText, "37011");
-    assert.equal(R.results["sharedmem.inspector_port"].value.looksNumeric, true);
+    var insp = R.results["sharedmem.inspector_port"].value;
+    assert.equal(insp.first256Text, "37011");
+    // the dedicated 10 Hz / 5 s watcher over shm_ave + shm_ave_tddg together
+    assert.equal(status("sharedmem.watch_pair"), "PARTIAL", "the fake objects never change, so PARTIAL (visible, unchanged) is correct");
+    var pair = R.results["sharedmem.watch_pair"].value;
+    assert.ok(pair.objects["/dev/shm/shm_ave"].sampleCount >= 3);
+    assert.ok(pair.objects["/dev/shm/shm_ave_tddg"].sampleCount >= 3);
+    assert.equal(pair.objects["/dev/shm/shm_ave"].changes.content256, 0);
     // dcapture.known_path must classify the fake JPEG bytes via the shared classifyBytes helper
     assert.equal(status("dcapture.known_path"), "PASS");
     assert.equal(R.results["dcapture.known_path"].value.looksLikeJpeg, true);
+    assert.ok(typeof R.results["dcapture.known_path"].value.readTimeMs === "number");
     var findings = R.findings();
     assert.equal(findings.sharedMemory.shm_ave.likelyJPEG, false);
     assert.equal(findings.inspector.value, "37011");
     assert.equal(findings.dcapture.knownPathRead, "PASS");
     var report2 = R.report();
-    assert.equal(report2.reconVersion, "0.2.0");
+    assert.equal(report2.reconVersion, "0.2.1");
     assert.equal(report2.device.model, "UE49NU7100");
     assert.ok(report2.findings);
     assert.ok(report2.sharedmem["sharedmem.object.shm_ave"]);

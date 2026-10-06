@@ -14,7 +14,7 @@ const pc = pcIndex > 0 ? process.argv[pcIndex + 1].replace(/\/$/, "") : "";
 const zip = new JSZip();
 for (const f of files) {
   let data = await readFile(path.join(here, f));
-  if (f === "index.html" && pc) data = Buffer.from(String(data).replace('id="pc-url" value=""', `id="pc-url" value="${pc}"`)); // prefilled receiver address
+  if (f === "index.html" && pc) data = Buffer.from(String(data).replace(/id="pc-url" value="[^"]*"/, `id="pc-url" value="${pc}"`)); // prefilled receiver address, overriding the baked-in default
   zip.file(f, data);
 }
 await mkdir(outDir, { recursive: true });

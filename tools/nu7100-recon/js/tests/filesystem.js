@@ -84,7 +84,7 @@
           } catch (e) { info.error = "read: " + R.errText(e); }
           try { stream.close(); } catch (e2) { /* ignore */ }
           checkWritable();
-        }, function (e) { info.error = "open: " + R.errText(e); checkWritable(); }, "r");
+        }, function (e) { info.error = "open: " + R.errText(e); checkWritable(); }, "UTF-8");
       } catch (e3) { info.error = "open: " + R.errText(e3); checkWritable(); }
     }
     function listDir(dir) {
@@ -129,8 +129,46 @@
           catch (e2) { out.error = "read: " + R.errText(e2); }
           try { stream.close(); } catch (e3) { /* ignore */ }
           cb(out);
-        }, function (e4) { out.error = "open: " + R.errText(e4); cb(out); }, "r");
+        }, function (e4) { out.error = "open: " + R.errText(e4); cb(out); }, "UTF-8");
       } catch (e5) { out.error = "open: " + R.errText(e5); cb(out); }
+    });
+  };
+
+  // Small, fast hash (FNV-1a, 32-bit) of whatever bytes were already read - just enough to tell "changed" from "unchanged"
+  // across watch samples; not a security hash.
+  R.hashBytes = function (bytes) {
+    var h = 0x811c9dc5, i;
+    for (i = 0; i < bytes.length; i++) { h ^= bytes[i] & 255; h = (h * 0x01000193) >>> 0; }
+    return ("00000000" + h.toString(16)).slice(-8);
+  };
+
+  // Low-level, step-by-step read of one existing file (named exactly as the spec's six steps): resolve, size, open,
+  // bytesAvailable, read<maxBytes> (256 by default - deliberately small so a 1.3 MB shared-memory object is never read whole),
+  // close. cb({ path, steps: { resolve, size, open, bytesAvailable, read, close }, readTimeMs, bytesRead, bytes, error })
+  R.readShmObject = function (path, maxBytes, cb) {
+    var limit = maxBytes || 256;
+    var out = { path: path, steps: { resolve: null, size: null, open: null, bytesAvailable: null, read: null, close: null }, readTimeMs: null, bytesRead: 0, bytes: null, modified: null, error: null };
+    resolveAny(path.charAt(0) === "/" ? ["file://" + path, path] : [path], "r", function (error, file) {
+      if (error) { out.steps.resolve = error; out.error = "resolve: " + error; cb(out); return; }
+      out.steps.resolve = "ok";
+      out.modified = R.safe(function () { return file.modified ? new Date(file.modified).toISOString() : null; }, null);
+      var size; try { size = file.fileSize; out.steps.size = size; } catch (e) { out.steps.size = R.errText(e); out.error = "size: " + R.errText(e); cb(out); return; }
+      if (!size) { out.steps.open = "skipped (empty file)"; cb(out); return; }
+      var begun = Date.now();
+      try {
+        file.openStream("r", function (stream) {
+          out.steps.open = "ok";
+          out.steps.bytesAvailable = R.safe(function () { return stream.bytesAvailable; }, "(not exposed by this FileStream)");
+          try {
+            out.bytes = stream.readBytes(Math.min(size, limit));
+            out.bytesRead = out.bytes.length;
+            out.steps.read = "ok (" + out.bytesRead + " of up to " + limit + " requested)";
+          } catch (e2) { out.steps.read = R.errText(e2); out.error = "read: " + R.errText(e2); }
+          out.readTimeMs = Date.now() - begun;
+          try { stream.close(); out.steps.close = "ok"; } catch (e3) { out.steps.close = R.errText(e3); }
+          cb(out);
+        }, function (e4) { out.steps.open = R.errText(e4); out.error = "open: " + R.errText(e4); out.readTimeMs = Date.now() - begun; cb(out); }, "UTF-8");
+      } catch (e5) { out.steps.open = R.errText(e5); out.error = "open: " + R.errText(e5); cb(out); }
     });
   };
 

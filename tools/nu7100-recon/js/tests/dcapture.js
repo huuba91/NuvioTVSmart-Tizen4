@@ -20,10 +20,10 @@
     var begun = Date.now();
     R.readFile(path, 4096, function (info) {
       var ms = Date.now() - begun;
-      if (!info.exists) { done(R.statusForError(info.error), { readMs: ms }, info.error); return; }
-      if (!info.isFile) { done("PARTIAL", { type: info.isDirectory ? "directory" : "other", readMs: ms }, "not a regular file"); return; }
+      if (!info.exists) { done(R.statusForError(info.error), { readTimeMs: ms }, info.error); return; }
+      if (!info.isFile) { done("PARTIAL", { type: info.isDirectory ? "directory" : "other", readTimeMs: ms }, "not a regular file"); return; }
       var cls = R.classifyBytes(info.bytes || []);
-      done(info.readable ? "PASS" : "BLOCKED", { size: info.fileSize, modified: info.modified, readMs: ms, bytesRead: info.bytesRead,
+      done(info.readable ? "PASS" : "BLOCKED", { size: info.fileSize, modified: info.modified, readTimeMs: ms, bytesRead: info.bytesRead,
         first256Hex: R.hexDump(info.bytes, 256), looksLikeJpeg: cls.likelyJPEG, looksLikePng: cls.likelyPNG, printableRatio: cls.printableRatio }, info.error);
     });
   });

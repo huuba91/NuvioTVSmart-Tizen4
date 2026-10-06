@@ -3,7 +3,7 @@
   "use strict";
   var STATUSES = ["PASS", "FAIL", "BLOCKED", "NOT_AVAILABLE", "PARTIAL", "ERROR"];
   var GROUP_OF = { system: "system", api: "system", filesystem: "filesystem", dcapture: "filesystem", sharedmem: "filesystem", process: "process", network: "ipc", ipc: "ipc" };
-  var Recon = { STATUSES: STATUSES, VERSION: "0.2.0", tests: [], results: {}, order: [], log: [], manualProbes: [], inputs: { dcapturePath: "", shmWatchPath: "" }, TIMEOUT_MS: 12000 };
+  var Recon = { STATUSES: STATUSES, VERSION: "0.2.1", tests: [], results: {}, order: [], log: [], manualProbes: [], inputs: { dcapturePath: "", shmWatchPath: "" }, TIMEOUT_MS: 12000 };
 
   function pad(n) { return n < 10 ? "0" + n : String(n); }
   Recon.clock = function () { var d = new Date(); return pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds()); };
@@ -141,13 +141,17 @@
     });
     ["shm_ave", "shm_ave_tddg", "shm_socpq", "shm_tvsystem"].forEach(function (name) {
       var r = Recon.results["sharedmem.object." + name];
-      out.sharedMemory[name] = r ? { status: r.status, size: r.value && r.value.size, likelyJPEG: r.value && r.value.likelyJPEG, likelyBinary: r.value && r.value.likelyBinary } : "NOT_RUN";
+      out.sharedMemory[name] = r ? { status: r.status, size: r.value && r.value.steps && r.value.steps.size, readTimeMs: r.value && r.value.readTimeMs,
+        likelyJPEG: r.value && r.value.likelyJPEG, likelyText: r.value && r.value.likelyText } : "NOT_RUN";
     });
     var watch = v("sharedmem.watch");
     out.sharedMemory.watchedPathChanges = watch ? watch.changes : "NOT_RUN";
+    var pair = v("sharedmem.watch_pair");
+    out.sharedMemory.avePairChanges = pair ? { "shm_ave": pair.objects["/dev/shm/shm_ave"] && pair.objects["/dev/shm/shm_ave"].changes,
+      "shm_ave_tddg": pair.objects["/dev/shm/shm_ave_tddg"] && pair.objects["/dev/shm/shm_ave_tddg"].changes } : "NOT_RUN";
     var insp = v("sharedmem.inspector_port");
     out.inspector.port = s("sharedmem.inspector_port") || "NOT_RUN";
-    out.inspector.value = insp ? insp.asText : null;
+    out.inspector.value = insp ? insp.first256Text : null;
     out.inspector.devToolsSemaphores = v("sharedmem.devtools_sem") || "NOT_RUN";
     out.dcapture.knownPathRead = s("dcapture.known_path") || "NOT_RUN";
     out.dcapture.knownPathWatch = v("dcapture.watch") ? v("dcapture.watch").changes : "NOT_RUN";
