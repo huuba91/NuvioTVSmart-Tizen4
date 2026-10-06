@@ -27,6 +27,8 @@
 //   GET /ambilight/state                         diagnostics (incl. capture timing, CPU, eco mode)
 //   GET /ambilight/eco?mode=on|off               slow captures down on still pictures (default on)
 //   GET /ambilight/capture-sweep?w=64&h=36&modes=0,1,2,3,4&comps=0,1,2,3   try dcapture modes/formats
+//   GET /ambilight/capture-tools?count=10            gdbus vs dbus-send vs busctl: time and CPU per capture
+//   GET /ambilight/dbus-where                        how the system bus is reached (paths, sockets, kdbus)
 //   GET /ambilight/dbus-probe?count=10               direct system-bus capture vs gdbus: time and CPU per capture
 //   GET /ambilight/jpeg-sample?quality=60            one JPEG capture: structure, decode result and timing
 //   GET /ambilight/periodic-probe?ms=300&seconds=2   does StartPeriodicCapture write files, and where
@@ -988,6 +990,101 @@ function jpegSample(query, done) {
   });
 }
 
+// Runs `runOne(cb)` count times in a row and reports time and CPU (service plus finished children) per run.
+function measureRuns(count, runOne, cb) {
+  var result = { calls: [], errors: [], ok: 0 }, cpu0 = cpuSeconds(), t0 = Date.now(), n = 0;
+  (function next() {
+    if (n >= count) {
+      var wall = Date.now() - t0, cpu1 = cpuSeconds();
+      result.wallMs = wall;
+      result.msPerCapture = Math.round(wall / count);
+      result.cpuMsPerCapture = cpu1 !== null && cpu0 !== null ? Math.round((cpu1 - cpu0) * 1000 / count) : null;
+      cb(result);
+      return;
+    }
+    n++;
+    var began = Date.now();
+    runOne(function (error) {
+      result.calls.push(Date.now() - began);
+      if (error) { if (result.errors.length < 3) result.errors.push(String(error.message || error).slice(0, 160)); }
+      else result.ok++;
+      next();
+    });
+  })();
+}
+
+// Which command-line tools can make the capture call, and what each costs per capture (read + decode included).
+// gdbus starts a large GLib program for every call; dbus-send and busctl are much smaller if the TV has them.
+function captureTools(query, done) {
+  var fs = require("fs"), cp = require("child_process");
+  var count = Math.max(1, Math.min(20, Math.round(Number(query.count)) || 10));
+  var name = "nuvio-tool-probe", file = CAPTURE_DIR + "/" + name + ".jpg";
+  var out = { ok: true, count: count, sessionActive: !!(session && !session.stopped), tools: [] };
+  var dest = "samsung.tizen.dcapture", objectPath = "/samsung/tizen/dcapture", method = "RequestCaptureToFileSync";
+  var q = String(jpegQuality), w = String(CAPTURE_SIZE[0]), h = String(CAPTURE_SIZE[1]);
+  var leanEnv = Object.assign({}, process.env, { GIO_MODULE_DIR: "/nonexistent", GSETTINGS_BACKEND: "memory", GIO_USE_VFS: "local", GIO_USE_PROXY_RESOLVER: "dummy" });
+  var variants = [
+    { name: "gdbus (current)", cmd: "gdbus", args: ["call", "--system", "--timeout", "4", "--dest", dest, "--object-path", objectPath,
+      "--method", dest + "." + method, "0", "2", "1", w, h, q, CAPTURE_DIR, name] },
+    { name: "gdbus (lean GIO environment)", cmd: "gdbus", env: leanEnv, args: ["call", "--system", "--timeout", "4", "--dest", dest, "--object-path", objectPath,
+      "--method", dest + "." + method, "0", "2", "1", w, h, q, CAPTURE_DIR, name] },
+    { name: "dbus-send", cmd: "dbus-send", args: ["--system", "--print-reply", "--dest=" + dest, objectPath, dest + "." + method,
+      "int32:0", "int32:2", "int32:1", "int32:" + w, "int32:" + h, "int32:" + q, "string:" + CAPTURE_DIR, "string:" + name] },
+    { name: "busctl", cmd: "busctl", args: ["--system", "call", dest, objectPath, dest, method, "iiiiiiss", "0", "2", "1", w, h, q, CAPTURE_DIR, name] }
+  ];
+  function runVariant(v, cb) {
+    cp.execFile(v.cmd, v.args, { timeout: 5000, env: v.env || process.env }, function (error) {
+      if (error) { cb(error); return; }
+      try { jpegDc.decodeJpegDc(fs.readFileSync(file)); cb(null); } catch (problem) { cb(problem); }
+    });
+  }
+  (function next(i) {
+    if (i >= variants.length) {
+      try { fs.unlinkSync(file); } catch (_) {}
+      var base = out.tools[0] && out.tools[0].cpuMsPerCapture;
+      out.tools.forEach(function (t) { if (base && t.cpuMsPerCapture !== undefined && t.cpuMsPerCapture !== null) t.cpuVsCurrentPercent = Math.round(t.cpuMsPerCapture / base * 100); });
+      done(out);
+      return;
+    }
+    var v = variants[i];
+    runVariant(v, function (firstError) {
+      if (firstError) { out.tools.push({ name: v.name, available: false, error: String(firstError.message || firstError).slice(0, 160) }); next(i + 1); return; }
+      measureRuns(count, function (cb) { runVariant(v, cb); }, function (r) {
+        r.name = v.name; r.available = true;
+        delete r.calls;
+        out.tools.push(r);
+        next(i + 1);
+      });
+    });
+  })(0);
+}
+
+// Where does the system bus live on this TV? No unix socket was found at the usual paths although gdbus reaches it:
+// it may be a different path, an abstract socket or kdbus. Reads what the service is allowed to see.
+function dbusWhere(done) {
+  var fs = require("fs"), cp = require("child_process");
+  var out = { ok: true, env: {}, dirs: {}, unixSockets: [], mounts: [], files: {} };
+  Object.keys(process.env).forEach(function (k) { if (/dbus|xdg_runtime|^path$|^home$|^user$|kdbus/i.test(k)) out.env[k] = String(process.env[k]).slice(0, 200); });
+  ["/run", "/var/run", "/run/dbus", "/var/run/dbus", "/sys/fs/kdbus", "/dev/kdbus", "/run/user", "/var/run/user", "/tmp", "/etc/dbus-1"].forEach(function (d) {
+    try { out.dirs[d] = fs.readdirSync(d).slice(0, 60); } catch (error) { out.dirs[d] = "error " + describeError(error); }
+  });
+  try {
+    out.unixSockets = fs.readFileSync("/proc/net/unix", "utf8").split("\n").filter(function (l) { return /dbus|bus|kdbus/i.test(l); }).slice(0, 40);
+  } catch (error) { out.unixSockets = ["error " + describeError(error)]; }
+  try {
+    out.mounts = fs.readFileSync("/proc/mounts", "utf8").split("\n").filter(function (l) { return /kdbus|dbus|tmpfs/i.test(l); }).slice(0, 30);
+  } catch (error) { out.mounts = ["error " + describeError(error)]; }
+  ["/etc/dbus-1/system.conf", "/usr/share/dbus-1/system.conf", "/etc/dbus-1/session.conf"].forEach(function (f) {
+    try {
+      out.files[f] = fs.readFileSync(f, "utf8").split("\n").filter(function (l) { return /listen|address|type>|auth/i.test(l); }).slice(0, 12);
+    } catch (error) { out.files[f] = "error " + describeError(error); }
+  });
+  cp.execFile("sh", ["-c", "command -v gdbus dbus-send busctl dbus-daemon 2>&1; ls -l /proc/self/fd 2>&1 | head -20"], { timeout: 3000 }, function (error, stdout) {
+    out.tools = error ? "error " + describeError(error) : String(stdout).split("\n").slice(0, 30);
+    done(out);
+  });
+}
+
 // Can the service talk to the system bus itself, and would that be cheaper than spawning gdbus for every
 // capture? Opens one connection, makes `count` JPEG captures over it, then the same number through gdbus, and
 // reports time and CPU per capture for both (read + decode included in both). Run it with no session active:
@@ -1010,27 +1107,7 @@ function dbusProbe(query, done) {
   function readAndDecode() {
     jpegDc.decodeJpegDc(fs.readFileSync(file));
   }
-  function measure(label, runOne, cb) {
-    var result = { calls: [], errors: [], ok: 0 }, cpu0 = cpuSeconds(), t0 = Date.now(), n = 0;
-    (function next() {
-      if (n >= count) {
-        var wall = Date.now() - t0, cpu1 = cpuSeconds();
-        result.wallMs = wall;
-        result.msPerCapture = Math.round(wall / count);
-        result.cpuMsPerCapture = cpu1 !== null && cpu0 !== null ? Math.round((cpu1 - cpu0) * 1000 / count) : null;
-        cb(result);
-        return;
-      }
-      n++;
-      var began = Date.now();
-      runOne(function (error) {
-        result.calls.push(Date.now() - began);
-        if (error) { if (result.errors.length < 3) result.errors.push(String(error.message || error).slice(0, 160)); }
-        else result.ok++;
-        next();
-      });
-    })();
-  }
+  function measure(label, runOne, cb) { measureRuns(count, runOne, cb); }
   function viaGdbus(cb) {
     cp.execFile("gdbus", ["call", "--system", "--timeout", "4", "--dest", "samsung.tizen.dcapture", "--object-path", "/samsung/tizen/dcapture",
       "--method", "samsung.tizen.dcapture.RequestCaptureToFileSync", "0", "2", "1", String(CAPTURE_SIZE[0]), String(CAPTURE_SIZE[1]),
@@ -1174,6 +1251,12 @@ function handleRequest(request, response) {
         return;
       case "/ambilight/capture-sweep":
         captureSweep(query, function (result) { sendJson(response, 200, result); });
+        return;
+      case "/ambilight/capture-tools":
+        captureTools(query, function (result) { sendJson(response, 200, result); });
+        return;
+      case "/ambilight/dbus-where":
+        dbusWhere(function (result) { sendJson(response, 200, result); });
         return;
       case "/ambilight/dbus-probe":
         dbusProbe(query, function (result) { sendJson(response, 200, result); });

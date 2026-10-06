@@ -93,6 +93,15 @@ sandbox may open the system bus socket. `GET /ambilight/dbus-probe?count=10` ans
 files, whether connecting and authenticating works, and time and CPU per capture for the direct path against `gdbus`
 (run it with no session active so the figures are not mixed with a session's own captures). Nothing uses the client yet.
 
+### First TV result of the probe
+
+No unix socket exists at `/var/run/dbus/system_bus_socket` or `/run/dbus/system_bus_socket` and no
+`DBUS_SYSTEM_BUS_ADDRESS` is set, yet `gdbus --system` works, so the bus is reached some other way (another path,
+an abstract socket or kdbus), and the direct client cannot connect yet. Idle, a `gdbus` capture took ~109 ms wall
+and ~200 ms CPU (read + 25 ms decode included), so roughly 170 ms of CPU per capture is the cost of starting `gdbus`.
+`/ambilight/dbus-where` shows how the bus is reached; `/ambilight/capture-tools?count=10` compares `gdbus`, a
+`gdbus` with a lean GIO environment, `dbus-send` and `busctl` (on a desktop `dbus-send` used ~22% of the CPU of `gdbus`).
+
 ## Finding out what the capture service can do
 
 `GET /ambilight/introspect` (any time Nuvio's service is running) lists the methods and arguments of

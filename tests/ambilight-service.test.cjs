@@ -563,3 +563,36 @@ test("a failing JPEG capture falls back to PNG after three failures in a row", {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("capture-tools benchmarks the tools that exist and reports the missing ones", { skip: process.platform !== "linux" || !fs.existsSync("/dev/shm") }, async function () {
+  var os = require("node:os");
+  var dir = fs.mkdtempSync(path.join(os.tmpdir(), "tools-"));
+  var jpeg = path.join(JPEG_DIR, "420.jpg");
+  // gdbus and dbus-send exist and write the capture; busctl does not exist on this "TV"
+  fs.writeFileSync(path.join(dir, "gdbus"), '#!/bin/sh\ncp "' + jpeg + '" /dev/shm/nuvio-tool-probe.jpg\necho "(0, 480, 270, \'x\')"\n', { mode: 493 });
+  fs.writeFileSync(path.join(dir, "dbus-send"), '#!/bin/sh\ncp "' + jpeg + '" /dev/shm/nuvio-tool-probe.jpg\n', { mode: 493 });
+  var originalPath = process.env.PATH;
+  process.env.PATH = dir + path.delimiter + "/nonexistent-bin";
+  try {
+    var result = (await call("/ambilight/capture-tools?count=3")).body;
+    var byName = {};
+    result.tools.forEach(function (t) { byName[t.name] = t; });
+    assert.equal(byName["gdbus (current)"].available, true);
+    assert.equal(byName["gdbus (current)"].ok, 3);
+    assert.equal(byName["gdbus (lean GIO environment)"].available, true);
+    assert.equal(byName["dbus-send"].ok, 3);
+    assert.equal(byName["busctl"].available, false);
+    assert.ok(byName["dbus-send"].cpuVsCurrentPercent >= 0);
+  } finally {
+    process.env.PATH = originalPath;
+    try { fs.unlinkSync("/dev/shm/nuvio-tool-probe.jpg"); } catch (_) {}
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("dbus-where reports what the service can see without failing", async function () {
+  var result = (await call("/ambilight/dbus-where")).body;
+  assert.equal(result.ok, true);
+  assert.ok(result.dirs && typeof result.dirs === "object");
+  assert.ok(Array.isArray(result.unixSockets));
+});
