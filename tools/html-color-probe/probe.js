@@ -216,6 +216,8 @@
       var x = new XMLHttpRequest();
       x.open("GET", url, true);
       x.responseType = type;
+      x.timeout = 20000;
+      x.ontimeout = function () { reject(new Error("XHR timeout for " + url)); };
       x.onload = function () { (x.status === 200 || x.status === 0) && x.response ? resolve(x.response) : reject(new Error("HTTP " + x.status + " for " + url)); };
       x.onerror = function () { reject(new Error("XHR failed for " + url)); };
       x.send();
@@ -291,7 +293,7 @@
       (function poll() {
         if (v.error) return reject(new Error("media error " + v.error.code + (v.error.message ? " " + v.error.message : "")));
         if (!v.paused && v.currentTime > 0.3 && v.readyState >= 3) return resolve(Math.round(now() - t0));
-        if (now() - t0 > ms) return reject(new Error("no playback after " + ms + " ms (readyState " + v.readyState + ", t=" + v.currentTime.toFixed(2) + ")"));
+        if (now() - t0 > ms) return reject(new Error("no playback after " + ms + " ms (readyState " + v.readyState + ", networkState " + v.networkState + ", paused " + v.paused + ", t=" + v.currentTime.toFixed(2) + ")"));
         setTimeout(poll, 100);
       })();
     });
@@ -330,8 +332,7 @@
     return attachSource(t.source, video).then(function (src) {
       cleanup = src.cleanup;
       res.isPattern = src.isPattern;
-      return video.play && video.play();
-    }).then(function () {
+      try { var pp = video.play && video.play(); if (pp && pp.catch) pp.catch(function () { /* AbortError on cleanup is expected */ }); } catch (e) { /* ignore */ }
       return waitPlaying(video, 15000);
     }).then(function (startMs) {
       res.startMs = startMs;
@@ -599,7 +600,7 @@
     attachSource(srcName, video).then(function (s) {
       live.cleanup = s.cleanup;
       video.loop = true;
-      return video.play();
+      try { var lp = video.play(); if (lp && lp.catch) lp.catch(function () {}); } catch (e) { /* ignore */ }
     }).then(function () { return waitPlaying(video, 15000); }).then(function () {
       live.grabber = makeGrabber(live.method, video);
       var frames = 0, t0 = now(), hz = 0, ms = 0;
