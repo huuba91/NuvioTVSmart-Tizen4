@@ -82,6 +82,17 @@ shows the format and picture size in use. Any three JPEG failures in a row (the 
 that cannot be decoded) switch back to PNG. `/ambilight/jpeg-sample` takes one JPEG now, keeps it as
 `/dev/shm/nuvio-sample.jpg`, and reports its structure (frame type, sampling, scans), whether it decodes and how long it took.
 
+## Direct system-bus access (experiment)
+
+Each capture currently spawns `gdbus`, which on the TV is likely the largest CPU cost (the status line showed
+~270% of one core, of which the service's own decode and analysis is under half a core).
+`runtime/dbus-lite.cjs` is a small D-Bus client (EXTERNAL auth, int/string calls) that would keep one connection open
+and call `RequestCaptureToFileSync` on it instead. It was verified against a real `dbus-daemon` and byte-exact
+messages from an independent implementation, but not yet on the TV, where the open question is whether the service
+sandbox may open the system bus socket. `GET /ambilight/dbus-probe?count=10` answers that: it reports the socket
+files, whether connecting and authenticating works, and time and CPU per capture for the direct path against `gdbus`
+(run it with no session active so the figures are not mixed with a session's own captures). Nothing uses the client yet.
+
 ## Finding out what the capture service can do
 
 `GET /ambilight/introspect` (any time Nuvio's service is running) lists the methods and arguments of

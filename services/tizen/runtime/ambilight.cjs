@@ -27,6 +27,7 @@
 //   GET /ambilight/state                         diagnostics (incl. capture timing, CPU, eco mode)
 //   GET /ambilight/eco?mode=on|off               slow captures down on still pictures (default on)
 //   GET /ambilight/capture-sweep?w=64&h=36&modes=0,1,2,3,4&comps=0,1,2,3   try dcapture modes/formats
+//   GET /ambilight/dbus-probe?count=10               direct system-bus capture vs gdbus: time and CPU per capture
 //   GET /ambilight/jpeg-sample?quality=60            one JPEG capture: structure, decode result and timing
 //   GET /ambilight/periodic-probe?ms=300&seconds=2   does StartPeriodicCapture write files, and where
 //   GET /ambilight/capture-format?mode=png|jpeg&quality=60   capture as small JPEG (default) or PNG
@@ -59,6 +60,7 @@ var TICK_MS = 50; // colour updates per bulb between pictures: 20/s (the PC sync
 var FLIP_BACK_AFTER = 500; // anti-flicker: no straight return to the colour just left within this time
 
 var jpegDc = require("./jpeg-dc.cjs");
+var dbusLite = require("./dbus-lite.cjs");
 var colourEngine = require("./ambilight-colour.cjs");
 var stripOutput = require("./ambilight-strip.cjs");
 
@@ -986,6 +988,97 @@ function jpegSample(query, done) {
   });
 }
 
+// Can the service talk to the system bus itself, and would that be cheaper than spawning gdbus for every
+// capture? Opens one connection, makes `count` JPEG captures over it, then the same number through gdbus, and
+// reports time and CPU per capture for both (read + decode included in both). Run it with no session active:
+// a running session's own captures would be counted in the CPU figures.
+function dbusProbe(query, done) {
+  var fs = require("fs"), cp = require("child_process");
+  var count = Math.max(1, Math.min(20, Math.round(Number(query.count)) || 10));
+  var out = { ok: true, count: count, sessionActive: !!(session && !session.stopped), uid: typeof process.getuid === "function" ? process.getuid() : null,
+    env: process.env.DBUS_SYSTEM_BUS_ADDRESS || null, sockets: [], connect: null, direct: null, gdbus: null };
+  dbusLite.systemBusPaths().forEach(function (p) {
+    try {
+      var st = fs.statSync(p);
+      out.sockets.push({ path: p, exists: true, mode: (st.mode & 4095).toString(8), uid: st.uid, gid: st.gid });
+    } catch (error) {
+      out.sockets.push({ path: p, exists: false, error: describeError(error) });
+    }
+  });
+  var file = CAPTURE_DIR + "/nuvio-dbus-probe.jpg", name = "nuvio-dbus-probe";
+
+  function readAndDecode() {
+    jpegDc.decodeJpegDc(fs.readFileSync(file));
+  }
+  function measure(label, runOne, cb) {
+    var result = { calls: [], errors: [], ok: 0 }, cpu0 = cpuSeconds(), t0 = Date.now(), n = 0;
+    (function next() {
+      if (n >= count) {
+        var wall = Date.now() - t0, cpu1 = cpuSeconds();
+        result.wallMs = wall;
+        result.msPerCapture = Math.round(wall / count);
+        result.cpuMsPerCapture = cpu1 !== null && cpu0 !== null ? Math.round((cpu1 - cpu0) * 1000 / count) : null;
+        cb(result);
+        return;
+      }
+      n++;
+      var began = Date.now();
+      runOne(function (error) {
+        result.calls.push(Date.now() - began);
+        if (error) { if (result.errors.length < 3) result.errors.push(String(error.message || error).slice(0, 160)); }
+        else result.ok++;
+        next();
+      });
+    })();
+  }
+  function viaGdbus(cb) {
+    cp.execFile("gdbus", ["call", "--system", "--timeout", "4", "--dest", "samsung.tizen.dcapture", "--object-path", "/samsung/tizen/dcapture",
+      "--method", "samsung.tizen.dcapture.RequestCaptureToFileSync", "0", "2", "1", String(CAPTURE_SIZE[0]), String(CAPTURE_SIZE[1]),
+      String(jpegQuality), CAPTURE_DIR, name], { timeout: 5000 }, function (error) {
+      if (error) { cb(error); return; }
+      try { readAndDecode(); cb(null); } catch (problem) { cb(problem); }
+    });
+  }
+  function finish(connection) {
+    if (connection) connection.close();
+    try { fs.unlinkSync(file); } catch (_) {}
+    if (out.direct && out.gdbus && out.direct.ok && out.gdbus.ok) {
+      out.summary = {
+        msPerCapture: { direct: out.direct.msPerCapture, gdbus: out.gdbus.msPerCapture },
+        cpuMsPerCapture: { direct: out.direct.cpuMsPerCapture, gdbus: out.gdbus.cpuMsPerCapture },
+        cpuSavedPercent: out.direct.cpuMsPerCapture !== null && out.gdbus.cpuMsPerCapture ? Math.round((1 - out.direct.cpuMsPerCapture / out.gdbus.cpuMsPerCapture) * 100) : null,
+        note: out.sessionActive ? "a session was running: CPU figures include its own captures" : "idle"
+      };
+    }
+    done(out);
+  }
+  var candidates = out.sockets.filter(function (x) { return x.exists; }).map(function (x) { return x.path; });
+  (function tryPath(i) {
+    if (i >= candidates.length) {
+      out.connect = out.connect || { error: "no system bus socket found" };
+      measure("gdbus", viaGdbus, function (r) { out.gdbus = r; finish(null); });
+      return;
+    }
+    var connection = new dbusLite.Connection({ path: candidates[i], timeoutMs: 4000 }), began = Date.now();
+    connection.open(function (error) {
+      out.connect = { path: candidates[i], ms: Date.now() - began, error: error ? String(error.message || error) : null, uniqueName: connection.uniqueName };
+      if (error) { tryPath(i + 1); return; }
+      measure("direct", function (cb) {
+        connection.call({ dest: "samsung.tizen.dcapture", path: "/samsung/tizen/dcapture", iface: "samsung.tizen.dcapture",
+          member: "RequestCaptureToFileSync", signature: "iiiiiiss", args: [0, 2, 1, CAPTURE_SIZE[0], CAPTURE_SIZE[1], jpegQuality, CAPTURE_DIR, name] },
+        function (callError, reply) {
+          if (callError) { cb(callError); return; }
+          if (reply.args[0] !== 0) { cb(new Error("capture returned " + reply.args[0])); return; }
+          try { if (reply.args[3] && reply.args[3] !== file && !fs.existsSync(file)) file = reply.args[3]; readAndDecode(); cb(null); } catch (problem) { cb(problem); }
+        });
+      }, function (r) {
+        out.direct = r;
+        measure("gdbus", viaGdbus, function (r2) { out.gdbus = r2; finish(connection); });
+      });
+    });
+  })(0);
+}
+
 // Does StartPeriodicCapture produce files on its own, and where? Starts it for a moment, compares a few
 // directories before and after, and always ends it again.
 var PERIODIC_DIRS = ["/dev/shm", "/tmp", "/var/tmp", "/home/owner/share/tmp", "/opt/usr/media", "/opt/usr/home/owner/share/tmp"];
@@ -1081,6 +1174,9 @@ function handleRequest(request, response) {
         return;
       case "/ambilight/capture-sweep":
         captureSweep(query, function (result) { sendJson(response, 200, result); });
+        return;
+      case "/ambilight/dbus-probe":
+        dbusProbe(query, function (result) { sendJson(response, 200, result); });
         return;
       case "/ambilight/jpeg-sample":
         jpegSample(query, function (result) { sendJson(response, 200, result); });
