@@ -406,9 +406,11 @@
     { id: "c2d-remote", name: "canvas 2D · remote CORS URL", method: "canvas2d", source: "remote" },
     { id: "gl-blob", name: "WebGL texImage2D · blob URL", method: "webgl", source: "blob" },
     { id: "gl-mse", name: "WebGL texImage2D · MSE", method: "webgl", source: "mse" },
-    { id: "bmp-blob", name: "createImageBitmap · blob URL", method: "bitmap", source: "blob" },
-    { id: "c2d-blob-full", name: "canvas 2D · blob · 1080p fullscreen", method: "canvas2d", source: "blob", display: "full" },
-    { id: "c2d-blob-hint", name: "canvas 2D · blob · compositing hints", method: "canvas2d", source: "blob", display: "hint" }
+    { id: "c2d-full", name: "canvas 2D · packaged · 1080p fullscreen", method: "canvas2d", source: "packaged", display: "full" },
+    { id: "c2d-hint", name: "canvas 2D · packaged · compositing hints", method: "canvas2d", source: "packaged", display: "hint" },
+    { id: "c2d-mse-full", name: "canvas 2D · MSE · 1080p fullscreen", method: "canvas2d", source: "mse", display: "full" },
+    // Last on purpose: createImageBitmap(video) crashed the app on the NU7100.
+    { id: "bmp-blob", name: "createImageBitmap · blob URL (may crash app)", method: "bitmap", source: "blob" }
   ];
 
   // ---------------------------------------------------------------- UI
@@ -442,7 +444,7 @@
     if (pass.length) {
       var best = pass.slice().sort(function (a, b) { return a.msGrab - b.msGrab; })[0];
       var hz = best.msGrab > 0 ? Math.min(100, Math.round(1000 / best.msGrab)) : 100;
-      var fullOk = results.some(function (r) { return r.id === "c2d-blob-full" && r.status === "pass"; });
+      var fullOk = results.some(function (r) { return r.id === "c2d-full" && r.status === "pass"; });
       setVerdict("ok", "READBACK WORKS: " + pass.length + "/" + real.length + " pattern tests pass. Fastest: " + best.name +
         " at " + best.msGrab + " ms/grab (~" + hz + " Hz)" + (fullOk ? "" : " — NOT proven at 1080p fullscreen!") +
         " → HTML playback + page-side ambilight looks viable.");

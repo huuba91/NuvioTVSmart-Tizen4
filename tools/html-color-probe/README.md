@@ -22,8 +22,8 @@ at the *expected* time, not just "something non-black".
 | canvas 2D, remote CORS URL | `crossOrigin=anonymous` over the network |
 | WebGL `texImage2D` + `readPixels` | different path from 2D canvas |
 | `createImageBitmap` | third path |
-| canvas 2D, 1080p fullscreen | real playback geometry (small windows can use a different pipeline) |
-| canvas 2D, compositing hints | `transform`/`filter`/`will-change` can force a GPU-composited texture instead of the hardware plane |
+| canvas 2D, packaged + MSE, 1080p fullscreen | real playback geometry (small windows can use a different pipeline) |
+| canvas 2D, packaged, compositing hints | `transform`/`filter`/`will-change` can force a GPU-composited texture instead of the hardware plane |
 
 Statuses: **PASS** (colours follow the video), **BLANK** (all pixels 0: the video is on a hardware
 plane the page cannot read), **TAINTED** (origin rules), **FROZEN** (readback never changes),
