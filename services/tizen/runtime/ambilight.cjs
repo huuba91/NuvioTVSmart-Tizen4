@@ -38,6 +38,7 @@
 //   GET /ambilight/jpeg-sample?quality=60            one JPEG capture: structure, decode result and timing
 //   GET /ambilight/periodic-probe?ms=300&seconds=2   does StartPeriodicCapture write files, and where
 //   GET /ambilight/capture-format?mode=png|jpeg&quality=60   capture as small JPEG (default) or PNG
+//   GET /ambilight/capture-mode?mode=0|1|2|3         which dcapture mode the ambilight captures (3 = video only, default)
 //   GET /ambilight/capture-tool?mode=busctl-sh|busctl|gdbus   how the capture call is made (busctl-sh default, falls back down the list)
 //   GET /ambilight/introspect                    what samsung.tizen.dcapture offers (also written to /dev/shm)
 
@@ -64,6 +65,11 @@ var CAPTURE_FORMATS = { png: { comp: 0, ext: "png" }, jpeg: { comp: 1, ext: "jpg
 var captureFormat = "jpeg";
 var jpegQuality = 40; // the DC-only decoder never reconstructs detail; 40 keeps the block averages within ~1.3 levels
 var jpegFailures = 0;
+// dcapture capture_mode (see docs): 0 = everything on screen incl. Nuvio's controls, 1 = picture with the screen's letterbox
+// bars, 2 and 3 = the video picture only (~31 ms; 0 and 1 take ~67 ms). 3 is the default: it looked the same as 2 on the TV
+// and is believed to leave out subtitles too (/ambilight/capture-mode?mode=2 switches live, /ambilight/capture-compare
+// shows the modes side by side).
+var captureMode = 3;
 // How the capture call is made. The TV's system bus is kdbus (kernel), which Node cannot speak, so a command-line tool
 // is started for every capture. Measured on the UE49NU7100 (10 captures, idle): gdbus 105 ms / 199 ms CPU,
 // dbus-send 97 / 184, busctl 57 / 99. busctl is used first; three failures in a row (or no busctl) fall back to gdbus.
@@ -581,9 +587,9 @@ function CaptureShell() {
   this.start();
 }
 
-var SHELL_SCRIPT = 'while read -r comp quality w h dir name; do ' +
+var SHELL_SCRIPT = 'while read -r mode comp quality w h dir name; do ' +
   'busctl --system call samsung.tizen.dcapture /samsung/tizen/dcapture samsung.tizen.dcapture RequestCaptureToFileSync ' +
-  'iiiiiiss 0 2 "$comp" "$w" "$h" "$quality" "$dir" "$name" 2>&1; echo "__DONE__ $?"; done';
+  'iiiiiiss 0 "$mode" "$comp" "$w" "$h" "$quality" "$dir" "$name" 2>&1; echo "__DONE__ $?"; done';
 
 CaptureShell.prototype.start = function () {
   var self = this;
@@ -627,7 +633,7 @@ CaptureShell.prototype.run = function (comp, quality, name, cb) {
   if (this.pending) { cb(new Error("capture shell is busy")); return; }
   if (!/^[A-Za-z0-9_.-]+$/.test(name)) { cb(new Error("bad capture name")); return; }
   this.pending = { cb: cb, timer: setTimeout(function () { self.kill(); }, 5000) };
-  var line = [Math.round(Number(comp)), Math.round(Number(quality)), CAPTURE_SIZE[0], CAPTURE_SIZE[1], CAPTURE_DIR, name].join(" ") + "\n";
+  var line = [Math.round(Number(captureMode)), Math.round(Number(comp)), Math.round(Number(quality)), CAPTURE_SIZE[0], CAPTURE_SIZE[1], CAPTURE_DIR, name].join(" ") + "\n";
   try { this.child.stdin.write(line); } catch (error) { this.fail(error); }
 };
 
@@ -644,10 +650,10 @@ function captureCommand(tool, comp, quality, name) {
   var w = String(CAPTURE_SIZE[0]), h = String(CAPTURE_SIZE[1]);
   if (tool === "busctl") {
     return { cmd: "busctl", args: ["--system", "call", CAPTURE_DEST, CAPTURE_PATH, CAPTURE_DEST, CAPTURE_METHOD, "iiiiiiss",
-      "0", "2", String(comp), w, h, String(quality), CAPTURE_DIR, name] };
+      "0", String(captureMode), String(comp), w, h, String(quality), CAPTURE_DIR, name] };
   }
   return { cmd: "gdbus", args: ["call", "--system", "--timeout", "4", "--dest", CAPTURE_DEST, "--object-path", CAPTURE_PATH,
-    "--method", CAPTURE_DEST + "." + CAPTURE_METHOD, "0", "2", String(comp), w, h, String(quality), CAPTURE_DIR, name] };
+    "--method", CAPTURE_DEST + "." + CAPTURE_METHOD, "0", String(captureMode), String(comp), w, h, String(quality), CAPTURE_DIR, name] };
 }
 
 // busctl prints the reply as: iiis 0 480 270 "/dev/shm/name.jpg"
@@ -981,11 +987,12 @@ Session.prototype.describe = function () {
       workers: CAPTURE_WORKERS,
       eco: ecoEnabled,
       tool: captureTool,
+      mode: captureMode,
       format: captureFormat,
       jpegQuality: jpegQuality,
       jpegFailures: jpegFailures,
       picture: this.prevImage ? this.prevImage.w + "x" + this.prevImage.h : null,
-      mode: this.mode,
+      activityMode: this.mode,
       modePercent: this.modePercent(),
       activity: Math.round(this.activity * 100) / 100,
       captureMs: this.timing.captureMs === null ? null : Math.round(this.timing.captureMs),
@@ -1766,6 +1773,12 @@ function handleRequest(request, response) {
         var q = Number(query.quality);
         if (isFinite(q) && q >= 10 && q <= 95) jpegQuality = Math.round(q);
         sendJson(response, 200, { ok: true, format: captureFormat, jpegQuality: jpegQuality });
+        return;
+      }
+      case "/ambilight/capture-mode": {
+        var wanted = Number(query.mode);
+        if (query.mode !== undefined && isFinite(wanted) && wanted >= 0 && wanted <= 3 && wanted === Math.round(wanted)) captureMode = wanted;
+        sendJson(response, 200, { ok: true, captureMode: captureMode });
         return;
       }
       case "/ambilight/capture-tool": {

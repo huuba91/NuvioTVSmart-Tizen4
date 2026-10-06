@@ -108,7 +108,8 @@ service is only on the system bus.
 - **mode 0:** everything on screen, including Nuvio's controls (and the screen's letterbox bars); ~67 ms per capture.
 - **mode 1:** the picture with the screen's letterbox bars, no controls; ~67 ms.
 - **modes 2 and 3:** the video picture only, full-frame, no controls and no screen bars; identical to each other; ~31 ms.
-Mode 2 is what the ambilight uses, so it already follows only the video, and it is also the fast one.
+The ambilight uses mode 3 (default; mode 2 looked identical and was used before), so it follows only the video, and it is the fast one.
+`/ambilight/capture-mode?mode=N` switches it live.
 
 ## Ideas not yet tried
 

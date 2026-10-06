@@ -165,7 +165,7 @@ format exists, would let us skip the PNG inflate.
 
 ## Known limits
 
-- Capture mode 2 (the one in use) is the video picture only: on a paused frame with the player controls on screen, modes 2 and 3
+- Capture mode 3 (now the default; it looked identical to mode 2 and is believed to also leave out subtitles) is the video picture only: on a paused frame with the player controls on screen, modes 2 and 3
   showed the picture full-frame without controls and without the screen's letterbox bars, while mode 0 includes the controls
   and mode 1 the letterbox bars (`/ambilight/capture-compare`, UE49NU7100). So Nuvio's controls do not count towards the colours.
   (Whether subtitles drawn by Nuvio are excluded too was not checked separately; bars baked into the video file itself still

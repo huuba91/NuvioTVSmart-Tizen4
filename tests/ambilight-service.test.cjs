@@ -923,3 +923,32 @@ test("capture-compare serves a page with the four modes side by side", async fun
   assert.match(page.headers.type, /text\/html/);
   [0, 1, 2, 3].forEach(function (m) { assert.ok(page.html.indexOf("capture-image?mode=" + m + "&quality=80") > 0, "mode " + m); });
 });
+
+test("the capture mode is switchable and reaches both the shell and the command line tools", { skip: process.platform !== "linux" || !fs.existsSync("/dev/shm") }, async function () {
+  var os = require("node:os");
+  var dir = fs.mkdtempSync(path.join(os.tmpdir(), "mode-"));
+  var log = path.join(dir, "args.log");
+  // fake busctl: logs the capture_mode argument (9th: after --system call dest path iface method sig app_type)
+  fs.writeFileSync(path.join(dir, "busctl"),
+    '#!/bin/sh\necho "mode=${9}" >> "' + log + '"\nfor last; do :; done\neval "dir=\\${$(($# - 1))}"\n/bin/cp "' + path.join(JPEG_DIR, "420.jpg") + '" "$dir/$last.jpg"\necho "iiis 0 480 270 \\"$dir/$last.jpg\\""\n', { mode: 493 });
+  var originalPath = process.env.PATH;
+  process.env.PATH = dir + path.delimiter + originalPath;
+  try {
+    assert.equal((await call("/ambilight/capture-mode")).body.captureMode, 3, "3 is the default");
+    assert.equal((await call("/ambilight/capture-mode?mode=2")).body.captureMode, 2);
+    assert.equal((await call("/ambilight/capture-mode?mode=9")).body.captureMode, 2, "out of range is ignored");
+    assert.equal((await call("/ambilight/capture-mode?mode=1.5")).body.captureMode, 2);
+    assert.equal((await call("/ambilight/capture-mode?mode=3")).body.captureMode, 3);
+    // through a long-lived shell
+    var shell = new internals.CaptureShell();
+    var viaShell = await new Promise(function (resolve) { shell.run(1, 40, "mode-test", function (error, text) { resolve({ error: error, text: text }); }); });
+    shell.kill();
+    assert.equal(viaShell.error, null);
+    assert.match(fs.readFileSync(log, "utf8"), /mode=3/);
+  } finally {
+    await call("/ambilight/capture-mode?mode=3");
+    process.env.PATH = originalPath;
+    try { fs.unlinkSync("/dev/shm/mode-test.jpg"); } catch (_) {}
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
