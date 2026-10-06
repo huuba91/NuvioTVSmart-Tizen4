@@ -90,22 +90,27 @@ export const AmbilightController = {
   },
 
   // One line about the strip for the settings screen, from the TV service's own state.
+  // While nothing plays it reports the session that ended last (Settings cannot be opened during playback).
   async describeStrip() {
     const baseUrl = await ensureService();
     const body = await request(baseUrl, "/ambilight/state");
-    const strip = body?.state?.strip;
-    if (!body?.active || !strip) {
-      return "Not running. Play a video with the strip switched on, then check again.";
+    const active = !!body?.active && !!body?.state?.strip;
+    const state = active ? body.state : body?.last;
+    const strip = state?.strip;
+    if (!strip) {
+      return "No session yet. Play a video with the strip switched on, close the player, then select this again.";
     }
+    const capture = state.capture;
+    const share = capture?.modePercent;
+    const captureNote = capture
+      ? ` Capture: ${state.perSecond ?? "?"}/s (${active ? capture.mode : `still ${share?.static ?? 0}% / calm ${share?.calm ?? 0}% / moving ${share?.active ?? 0}%`}${capture.eco ? ", eco" : ", eco off"}), ${capture.cpuPercent ?? "?"}% CPU, gdbus ${capture.captureMs ?? "?"} ms + decode ${capture.decodeMs ?? "?"} ms.`
+      : "";
     const counted = strip.health?.available
       ? `strip counted ${strip.health.moved ?? "?"} packets in the last check`
       : strip.health?.error || "no packet count from the strip yet";
     const problem = strip.errors?.length ? ` Last problem: ${strip.errors[strip.errors.length - 1]}` : "";
-    const capture = body.state.capture;
-    const captureNote = capture
-      ? ` Capture: ${body.state.perSecond ?? "?"}/s (${capture.mode}${capture.eco ? ", eco" : ""}), ${capture.cpuPercent ?? "?"}% CPU, gdbus ${capture.captureMs ?? "?"} ms + decode ${capture.decodeMs ?? "?"} ms.`
-      : "";
-    return `Sending ${strip.method} to ${strip.ip}: ${strip.sent} frames, ${counted}.${captureNote}${problem}`;
+    const prefix = active ? "" : `Last session (${state.seconds ?? "?"} s, ended: ${state.endReason ?? "?"}): `;
+    return `${prefix}Sending ${strip.method} to ${strip.ip}: ${strip.sent} frames, ${counted}.${captureNote}${problem}`;
   },
 
   // Called whenever the player reports real playback; repeated calls are cheap.

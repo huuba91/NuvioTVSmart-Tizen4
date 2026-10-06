@@ -534,6 +534,7 @@ function captureOnce(name, done) {
 
 // ---- session ---------------------------------------------------------------------------------------
 var session = null;
+var lastSession = null; // describe() of the session that ended last, so Settings can show it after playback
 
 function publicBulb(b) {
   return { id: b.id, name: b.name, pos: b.pos };
@@ -561,6 +562,7 @@ function Session(bulbs, level, stripConfig) {
   this.activity = 255; // the first pictures count as moving
   this.mode = "active";
   this.timing = { captureMs: null, decodeMs: null, analyseMs: null };
+  this.modeSeconds = { static: 0, calm: 0, active: 0 };
   this.cpuAtStart = cpuSeconds();
 }
 
@@ -681,6 +683,7 @@ Session.prototype.analyse = function (image) {
   this.prevImage = image;
   this.activity = Math.max(change, this.activity * ECO.decay);
   this.mode = modeForActivity(this.activity);
+  this.modeSeconds[this.mode] += dt;
   var summary = this.analyser.analyse(image, dt, !!this.strip), regions = this.regions;
   POSITIONS.forEach(function (pos) { regions[pos].setGoal(summary[pos]); });
   if (this.strip && summary.zones) {
@@ -719,6 +722,12 @@ Session.prototype.stop = function (reason) {
   this.stopped = true;
   this.running = false;
   this.endReason = reason;
+  try {
+    lastSession = this.describe();
+    lastSession.endReason = reason;
+    lastSession.seconds = Math.round((Date.now() - this.startedAt) / 1000);
+    lastSession.endedAt = Date.now();
+  } catch (_) { /* diagnostics only */ }
   clearInterval(this.watchdog);
   clearInterval(this.ticker);
   var fs = require("fs"), bulbs = this.bulbs;
@@ -729,6 +738,12 @@ Session.prototype.stop = function (reason) {
   if (this.strip) this.strip.close();
   setTimeout(function () { bulbs.forEach(function (b) { b.close(); }); }, 1200);
   if (session === this) session = null;
+};
+
+Session.prototype.modePercent = function () {
+  var m = this.modeSeconds, total = m.static + m.calm + m.active;
+  if (!total) return { static: 0, calm: 0, active: 0 };
+  return { static: Math.round(m.static / total * 100), calm: Math.round(m.calm / total * 100), active: Math.round(m.active / total * 100) };
 };
 
 // Service plus gdbus CPU since the session began, as a share of one core; null when /proc is unreadable.
@@ -749,6 +764,7 @@ Session.prototype.describe = function () {
       workers: CAPTURE_WORKERS,
       eco: ecoEnabled,
       mode: this.mode,
+      modePercent: this.modePercent(),
       activity: Math.round(this.activity * 100) / 100,
       captureMs: this.timing.captureMs === null ? null : Math.round(this.timing.captureMs),
       decodeMs: this.timing.decodeMs === null ? null : Math.round(this.timing.decodeMs),
@@ -875,7 +891,7 @@ function handleRequest(request, response) {
         introspectCapture(function (result) { sendJson(response, 200, result); });
         return;
       case "/ambilight/state":
-        sendJson(response, 200, { ok: true, active: !!session, state: session ? session.describe() : null });
+        sendJson(response, 200, { ok: true, active: !!session, state: session ? session.describe() : null, last: lastSession });
         return;
       default:
         sendJson(response, 404, { ok: false });
