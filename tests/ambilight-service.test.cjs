@@ -819,3 +819,39 @@ test("bus-proxy-probe reports when no proxy binary exists", { skip: process.plat
     internals.setProxyCandidates(null);
   }
 });
+
+test("capture-bench tries each setting, reports what came back and skips refused ones", { skip: process.platform !== "linux" || !fs.existsSync("/dev/shm") }, async function () {
+  var os = require("node:os");
+  var dir = fs.mkdtempSync(path.join(os.tmpdir(), "bench-"));
+  // a fake busctl: refuses app_type 3, otherwise writes a JPEG and answers like busctl does
+  fs.writeFileSync(path.join(dir, "busctl"),
+    '#!/bin/sh\nfor last; do :; done\neval "dir=\\\${$(($# - 1))}"\n' +
+    'if [ "${8}" = 3 ]; then echo "refused" >&2; exit 1; fi\n' +
+    '/bin/cp "' + path.join(JPEG_DIR, "420.jpg") + '" "$dir/$last.jpg"\necho "iiis 0 480 270 \\"$dir/$last.jpg\\""\n', { mode: 493 });
+  var originalPath = process.env.PATH;
+  process.env.PATH = dir + path.delimiter + originalPath;
+  try {
+    var result = (await call("/ambilight/capture-bench?group=modes&count=2")).body;
+    assert.equal(result.rows.length, 7);
+    var ok = result.rows.filter(function (r) { return !r.error; });
+    assert.equal(ok.length, 6);
+    assert.equal(ok[0].got, "480x270");
+    assert.equal(ok[0].format, "JPEG");
+    assert.ok(ok[0].dcDecodeMs >= 0);
+    assert.ok(ok[0].msPerCapture >= 0);
+    var refused = result.rows.filter(function (r) { return r.error; });
+    assert.equal(refused.length, 1);
+    assert.equal(refused[0].appType, 3);
+  } finally {
+    process.env.PATH = originalPath;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("fb-check lists the graphics device files and tries to open the framebuffer without failing", async function () {
+  var result = (await call("/ambilight/fb-check")).body;
+  assert.equal(result.ok, true);
+  assert.ok(Array.isArray(result.devices));
+  assert.equal(result.opens.length, 4);
+  assert.ok(result.opens.every(function (o) { return typeof o.opened === "boolean"; }));
+});

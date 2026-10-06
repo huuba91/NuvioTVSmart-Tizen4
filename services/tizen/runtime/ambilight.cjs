@@ -29,6 +29,8 @@
 //   GET /ambilight/capture-sweep?w=64&h=36&modes=0,1,2,3,4&comps=0,1,2,3   try dcapture modes/formats
 //   GET /ambilight/capture-tools?count=10            gdbus vs dbus-send vs busctl: time and CPU per capture
 //   GET /ambilight/dbus-where                        how the system bus is reached (paths, sockets, kdbus)
+//   GET /ambilight/capture-bench?group=sizes|quality|modes|all&count=8   cost and result of other sizes, qualities, modes, app types
+//   GET /ambilight/fb-check                          can the service read /dev/fb0 or /dev/dri directly
 //   GET /ambilight/bus-proxy-probe?count=10          is systemd-bus-proxyd on the TV, and can dbus-lite use it for captures
 //   GET /ambilight/dbus-probe?count=10               direct system-bus capture vs gdbus: time and CPU per capture
 //   GET /ambilight/jpeg-sample?quality=60            one JPEG capture: structure, decode result and timing
@@ -106,6 +108,17 @@ function procCpuSeconds(pid) {
   } catch (_) {
     return null;
   }
+}
+
+// The same total, split into Node itself (with the children it has waited for) and the live capture shells.
+function cpuParts() {
+  var node = procCpuSeconds("self");
+  if (node === null) return null;
+  var shells = 0;
+  shellRunners.forEach(function (runner) {
+    if (runner.pid) { var c = procCpuSeconds(runner.pid); if (c !== null) shells += c; }
+  });
+  return { node: node, shells: shells };
 }
 
 // This service, the children it has already waited for, and the capture shells still running (their busctl children
@@ -699,6 +712,7 @@ function Session(bulbs, level, stripConfig) {
   this.timing = { captureMs: null, decodeMs: null, analyseMs: null };
   this.modeSeconds = { static: 0, calm: 0, active: 0 };
   this.cpuAtStart = cpuSeconds();
+  this.cpuPartsAtStart = cpuParts();
 }
 
 // The long-lived capture shell of one worker (made on first use, again if it died); null when not using shells.
@@ -912,6 +926,13 @@ Session.prototype.stop = function (reason) {
   if (session === this) session = null;
 };
 
+// Share of one core used by Node itself and by the capture shells (busctl), since the session began.
+Session.prototype.cpuSplit = function () {
+  var now = cpuParts(), start = this.cpuPartsAtStart, seconds = (Date.now() - this.startedAt) / 1000;
+  if (!now || !start || seconds < 1) return null;
+  return { node: Math.round((now.node - start.node) / seconds * 1000) / 10, shells: Math.round((now.shells - start.shells) / seconds * 1000) / 10 };
+};
+
 Session.prototype.modePercent = function () {
   var m = this.modeSeconds, total = m.static + m.calm + m.active;
   if (!total) return { static: 0, calm: 0, active: 0 };
@@ -946,7 +967,8 @@ Session.prototype.describe = function () {
       captureMs: this.timing.captureMs === null ? null : Math.round(this.timing.captureMs),
       decodeMs: this.timing.decodeMs === null ? null : Math.round(this.timing.decodeMs),
       analyseMs: this.timing.analyseMs === null ? null : Math.round(this.timing.analyseMs),
-      cpuPercent: this.cpuPercent()
+      cpuPercent: this.cpuPercent(),
+      cpuSplit: this.cpuSplit()
     },
     errors: this.errors,
     strip: this.strip ? this.strip.describe() : null,
@@ -1269,6 +1291,102 @@ function dbusWhere(done) {
     out.tools = error ? "error " + describeError(error) : String(stdout).split("\n").slice(0, 30);
     userBusCheck(out, done);
   });
+}
+
+// ---- capture parameter bench ------------------------------------------------------------------------
+// RequestCaptureToFileSync(app_type, capture_mode, comp_type, width, height, quality, dir, name). What do sizes bigger or
+// smaller than 480x270, other qualities, modes and app types cost, and what comes back? Each setting is called `count`
+// times from one small shell (so process starts are not what is measured) and the file is inspected.
+function captureBench(query, done) {
+  var cp = require("child_process"), fs = require("fs");
+  var count = Math.max(2, Math.min(15, Math.round(Number(query.count)) || 8)), group = String(query.group || "all");
+  var name = "nuvio-bench", configs = [];
+  function add(appType, mode, comp, w, h, q) { configs.push({ appType: appType, mode: mode, comp: comp, w: w, h: h, q: q }); }
+  if (group === "sizes" || group === "all") [[64, 36], [160, 90], [240, 135], [480, 270], [960, 540], [1920, 1080]].forEach(function (z) { add(0, 2, 1, z[0], z[1], 60); });
+  if (group === "quality" || group === "all") [10, 30, 60, 90].forEach(function (q) { add(0, 2, 1, 480, 270, q); });
+  if (group === "modes" || group === "all") {
+    [0, 1, 2, 3].forEach(function (m) { add(0, m, 1, 480, 270, 60); });
+    [1, 2, 3].forEach(function (t) { add(t, 2, 1, 480, 270, 60); });
+  }
+  var out = { ok: true, count: count, group: group, sessionActive: !!(session && !session.stopped), rows: [] };
+  function argsFor(c) {
+    return ["--system", "call", CAPTURE_DEST, CAPTURE_PATH, CAPTURE_DEST, CAPTURE_METHOD, "iiiiiiss",
+      String(c.appType), String(c.mode), String(c.comp), String(c.w), String(c.h), String(c.q), CAPTURE_DIR, name];
+  }
+  (function next(i) {
+    if (i >= configs.length) {
+      ["jpg", "png"].forEach(function (ext) { try { fs.unlinkSync(CAPTURE_DIR + "/" + name + "." + ext); } catch (_) {} });
+      done(out);
+      return;
+    }
+    var c = configs[i], row = { appType: c.appType, mode: c.mode, asked: c.w + "x" + c.h, quality: c.q };
+    out.rows.push(row);
+    cp.execFile("busctl", argsFor(c), { timeout: 8000 }, function (error, stdout, stderr) {
+      if (error) { row.error = (describeError(error) + " " + String(stderr || "")).slice(0, 160); next(i + 1); return; }
+      var reply = parseBusctlReply(stdout);
+      if (reply) { row.ret = reply.ret; row.got = reply.w + "x" + reply.h; }
+      if (!reply || reply.ret !== 0) { row.reply = String(stdout).trim().slice(0, 100); next(i + 1); return; }
+      try {
+        var data = fs.readFileSync(reply.path);
+        row.bytes = data.length; row.format = sniffFormat(data);
+        if (row.format === "JPEG") {
+          var t0 = Date.now(), k;
+          for (k = 0; k < 3; k++) jpegDc.decodeJpegDc(data);
+          row.dcDecodeMs = Math.round((Date.now() - t0) / 3 * 10) / 10;
+        }
+      } catch (problem) { row.fileError = describeError(problem).slice(0, 120); }
+      var loop = "i=0; while [ $i -lt " + count + " ]; do busctl " + argsFor(c).join(" ") + " >/dev/null || exit 1; i=$((i+1)); done";
+      var cpu0 = cpuSeconds(), t1 = Date.now();
+      cp.execFile("sh", ["-c", loop], { timeout: 60000 }, function (loopError) {
+        var wall = Date.now() - t1, cpu1 = cpuSeconds();
+        if (loopError) row.loopError = describeError(loopError).slice(0, 100);
+        row.msPerCapture = Math.round(wall / count * 10) / 10;
+        row.cpuMsPerCapture = cpu0 !== null && cpu1 !== null ? Math.round((cpu1 - cpu0) * 1000 / count) : null;
+        next(i + 1);
+      });
+    });
+  })(0);
+}
+
+// ---- framebuffer / DRM check --------------------------------------------------------------------------
+// Can the service read the screen from the kernel directly? Lists the graphics-related device files with their
+// permissions, kernel graphics info, and tries to open and read a few bytes of /dev/fb0 and /dev/dri/card0.
+function fbCheck(done) {
+  var fs = require("fs");
+  var out = { ok: true, uid: typeof process.getuid === "function" ? process.getuid() : null, gid: typeof process.getgid === "function" ? process.getgid() : null,
+    groups: null, devices: [], dri: null, sys: {}, proc: {}, opens: [] };
+  try { out.groups = typeof process.getgroups === "function" ? process.getgroups() : null; } catch (_) {}
+  var names = [];
+  try { names = fs.readdirSync("/dev"); } catch (error) { out.devError = describeError(error); }
+  names.filter(function (n) { return /^(fb|video|dri|card|render|ion|tbm|tdm|vd|vdec|vpu|hdmi|gpu|mali|pvr|galcore|dma|cma|graphics|mem|kmem|dcap|cap|scal|disp|osd|vo|vi)/i.test(n); }).slice(0, 80).forEach(function (n) {
+    try { var st = fs.statSync("/dev/" + n); out.devices.push({ name: n, mode: (st.mode & 4095).toString(8), type: st.isCharacterDevice() ? "char" : st.isDirectory() ? "dir" : "other", uid: st.uid, gid: st.gid }); }
+    catch (error) { out.devices.push({ name: n, error: describeError(error).slice(0, 80) }); }
+  });
+  try { out.dri = fs.readdirSync("/dev/dri"); } catch (error) { out.dri = "error " + describeError(error).slice(0, 80); }
+  ["/sys/class/graphics", "/sys/class/drm", "/sys/class/video4linux"].forEach(function (d) {
+    try { out.sys[d] = fs.readdirSync(d).slice(0, 40); } catch (error) { out.sys[d] = "error " + describeError(error).slice(0, 80); }
+  });
+  ["/sys/class/graphics/fb0/virtual_size", "/sys/class/graphics/fb0/bits_per_pixel", "/sys/class/graphics/fb0/name", "/sys/class/graphics/fb0/stride"].forEach(function (f) {
+    try { out.sys[f] = fs.readFileSync(f, "utf8").trim().slice(0, 80); } catch (error) { out.sys[f] = "error " + describeError(error).slice(0, 60); }
+  });
+  ["/proc/fb", "/proc/devices"].forEach(function (f) {
+    try { out.proc[f] = fs.readFileSync(f, "utf8").split("\n").filter(function (l) { return f === "/proc/fb" || /fb|dri|video|drm|tbm|ion|gpu|mali|pvr/i.test(l); }).slice(0, 40); }
+    catch (error) { out.proc[f] = "error " + describeError(error).slice(0, 60); }
+  });
+  ["/dev/fb0", "/dev/fb1", "/dev/dri/card0", "/dev/dri/renderD128"].forEach(function (f) {
+    var entry = { path: f };
+    try {
+      var fd = fs.openSync(f, "r");
+      entry.opened = true;
+      if (/fb/.test(f)) {
+        try { var buf = new Buffer(64); var n = fs.readSync(fd, buf, 0, 64, 0); entry.read = n + " bytes: " + buf.slice(0, Math.min(n, 32)).toString("hex"); }
+        catch (error) { entry.readError = describeError(error).slice(0, 80); }
+      }
+      fs.closeSync(fd);
+    } catch (error) { entry.opened = false; entry.error = describeError(error).slice(0, 100); }
+    out.opens.push(entry);
+  });
+  done(out);
 }
 
 // ---- kdbus proxy experiment -------------------------------------------------------------------------
@@ -1596,6 +1714,12 @@ function handleRequest(request, response) {
         return;
       case "/ambilight/dbus-where":
         dbusWhere(function (result) { sendJson(response, 200, result); });
+        return;
+      case "/ambilight/capture-bench":
+        captureBench(query, function (result) { sendJson(response, 200, result); });
+        return;
+      case "/ambilight/fb-check":
+        fbCheck(function (result) { sendJson(response, 200, result); });
         return;
       case "/ambilight/bus-proxy-probe":
         busProxyProbe(query, function (result) { sendJson(response, 200, result); });

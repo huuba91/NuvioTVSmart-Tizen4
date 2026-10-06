@@ -137,6 +137,24 @@ reporting each attempt's stage, the proxy's stderr, time per capture and CPU of 
 proxy and bus (not against kdbus, and on a newer Node than the TV's 4.4.3). Other ideas considered: a persistent C bridge
 (needs a binary built for the TV and permission to execute it) and an FFI library such as Koffi (needs N-API, Node 8+; the TV has Node 4).
 
+### Reconsidered ideas (parameters, native decode, framebuffer, DC coefficients)
+
+- **Smaller picture / raw pixels from the capture service.** Width and height are not honoured (a request for 64x36 returned 480x270
+  for every mode tried) and `comp_type` 2 and 3 fail with -6, so the sweep found no raw format. Not yet tried: sizes other than
+  64x36, other `app_type` values, quality below 60. `GET /ambilight/capture-bench?group=sizes|quality|modes|all` measures all of
+  these from one shell (time and CPU per capture, size and format of what comes back, DC-decode time). Note that the service's
+  idle cost per capture is ~30 ms for the whole call, so JPEG encoding is not necessarily the dominant part.
+- **Decode and averaging in a native bridge.** The decode half is already cheap: `jpeg-dc.cjs` reads only each block's DC
+  coefficient (14 ms on the TV; the Huffman pass over the AC coefficients cannot be skipped because it is how the next DC is
+  found). A C bridge with libjpeg-turbo's 1/8 scaling would take that to ~1-2 ms, but needs a toolchain, the TV's libraries and
+  permission to run our binary, for a saving of roughly 25-35 ms of ~120 ms CPU per picture. The analysis is also not a plain
+  average of 8 zones (dominant colour, black bars, Oklab smoothing), so a 24-byte result would lose that unless it were ported too.
+- **Framebuffer / DRM.** `GET /ambilight/fb-check` lists the graphics device files and permissions and tries to open `/dev/fb0` and
+  `/dev/dri/card0`. Even if readable, video is drawn on a separate hardware plane, so the framebuffer is expected to lack the
+  picture (the same reason canvas readback is black); this settles it cheaply.
+- **JPEG DC coefficients.** Already in use (`jpeg-dc.cjs`), see Capture format.
+- The status line now splits CPU into Node and the capture shells.
+
 ## Finding out what the capture service can do
 
 `GET /ambilight/introspect` (any time Nuvio's service is running) lists the methods and arguments of
