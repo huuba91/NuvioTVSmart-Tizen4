@@ -31,6 +31,10 @@
 //   GET /ambilight/dbus-where                        how the system bus is reached (paths, sockets, kdbus)
 //   GET /ambilight/capture-compare                   a page with modes 0-3 side by side, for a paused picture
 //   GET /ambilight/capture-image?mode=0&app=0&size=480x270&quality=60   one capture as an image to view in a browser
+//   GET /ambilight/research-start                    runs capture-floor, native-check, capture-hunt and other-services in the background
+//   GET /ambilight/research-result                   progress and the combined result (poll until done)
+//   GET /ambilight/capture-hunt                      call the other capture methods and look for where their pictures go
+//   GET /ambilight/native-check                      CPU/ABI, exec permission in RAM disks, graphics and bus libraries: could a native helper run
 //   GET /ambilight/capture-floor?count=20            client start vs Ping vs real capture: how much a permanent connection could save
 //   GET /ambilight/capture-bench?group=sizes|quality|modes|all&count=8   cost and result of other sizes, qualities, modes, app types
 //   GET /ambilight/fb-check                          can the service read /dev/fb0 or /dev/dri directly
@@ -1554,6 +1558,261 @@ function captureFloor(query, done) {
   })(0);
 }
 
+// ---- where do the other capture methods deliver their pictures? ---------------------------------------------
+// RequestCapture, RequestCapture_SYNC, the WithoutAppInfo variants and the periodic capture have no output arguments and no file
+// path: their pictures go somewhere else (a file in an unknown place, a hidden device node, a handle inside the service).
+// This calls each of them, and after each call looks for what appeared anywhere on the file system (files newer than a marker),
+// in /dev/video* and /sys/class/video4linux, and what the capture service process has open (if that may be read).
+function listVideoNodes() {
+  var fs = require("fs"), out = [];
+  try { fs.readdirSync("/dev").forEach(function (n) { if (/^video/.test(n)) out.push(n); }); } catch (_) {}
+  try { fs.readdirSync("/sys/class/video4linux").forEach(function (n) { out.push("sys:" + n); }); } catch (_) {}
+  return out.sort();
+}
+
+function findCaptureDaemon() {
+  var fs = require("fs"), found = [];
+  try {
+    fs.readdirSync("/proc").forEach(function (n) {
+      if (!/^\d+$/.test(n)) return;
+      try {
+        var cmd = fs.readFileSync("/proc/" + n + "/cmdline", "utf8").split("\0")[0];
+        if (/dcapture|capture/i.test(cmd) && !/ambilight|nuvio/i.test(cmd)) found.push({ pid: Number(n), cmd: cmd.slice(0, 120) });
+      } catch (_) { /* gone or not readable */ }
+    });
+  } catch (_) {}
+  return found.slice(0, 5);
+}
+
+var huntDelays = { marker: 1100, short: 300, long: 2000 };
+
+function captureHunt(query, done) {
+  var cp = require("child_process"), fs = require("fs");
+  var marker = CAPTURE_DIR + "/nuvio-hunt-marker", id = "nuvio-hunt", w = String(CAPTURE_SIZE[0]), h = String(CAPTURE_SIZE[1]), mode = String(captureMode);
+  var out = { ok: true, sessionActive: !!(session && !session.stopped), captureMode: captureMode, daemons: findCaptureDaemon(), videoBefore: listVideoNodes(), steps: [] };
+  var calls = [
+    { name: "RequestCapture_SYNC", method: "RequestCapture_SYNC", sig: "iiiiss", args: ["0", mode, w, h, id, "nuvio"] },
+    { name: "RequestCaptureWithoutAppInfo_SYNC", method: "RequestCaptureWithoutAppInfo_SYNC", sig: "iiiis", args: ["0", mode, w, h, id] },
+    { name: "RequestCapture (asynchronous)", method: "RequestCapture", sig: "iiiiss", args: ["0", mode, w, h, id, "nuvio"], wait: "short" },
+    { name: "RequestCaptureWithoutAppInfo (asynchronous)", method: "RequestCaptureWithoutAppInfo", sig: "iiiis", args: ["0", mode, w, h, id], wait: "short" },
+    { name: "StartPeriodicCapture (300 ms)", method: "StartPeriodicCapture", sig: "iiiissi", args: ["0", mode, w, h, id, "nuvio", "300"], wait: "long",
+      stop: { method: "EndPeriodicCapture", sig: "isi", args: ["0", id, "0"] } },
+    { name: "StartPeriodicCaptureWithoutAppInfo (300 ms)", method: "StartPeriodicCaptureWithoutAppInfo", sig: "iiiisi", args: ["0", mode, w, h, id, "300"], wait: "long",
+      stop: { method: "EndPeriodicCapture", sig: "isi", args: ["0", id, "0"] } }
+  ];
+  function bus(method, sig, args, cb) {
+    var cmd = busMethodCommand("busctl", method, sig, args);
+    cp.execFile(cmd.cmd, cmd.args, { timeout: 8000 }, function (error, stdout, stderr) {
+      cb(error ? "error " + (describeError(error) + " " + String(stderr || "")).slice(0, 160) : String(stdout).trim().slice(0, 160));
+    });
+  }
+  function newFiles(cb) {
+    // where pictures would plausibly be written; the read-only system folders (/usr, /lib, /bin) are left out to keep this quick
+    var find = "find /tmp /dev/shm /run /var /opt /home /mnt -type f -newer " + marker + " ! -path " + marker + " -print 2>/dev/null | head -60";
+    cp.execFile("sh", ["-c", find], { timeout: 45000, maxBuffer: 256 * 1024 }, function (error, stdout) {
+      var files = String(stdout || "").split("\n").filter(Boolean).map(function (f) {
+        var size = null;
+        try { size = fs.statSync(f).size; } catch (_) {}
+        return { file: f, bytes: size };
+      });
+      cb(files);
+    });
+  }
+  function daemonFds() {
+    var result = [];
+    out.daemons.forEach(function (d) {
+      try { result.push({ pid: d.pid, fds: fs.readdirSync("/proc/" + d.pid + "/fd").map(function (fd) { try { return fs.readlinkSync("/proc/" + d.pid + "/fd/" + fd); } catch (_) { return "?"; } }).slice(0, 40) }); }
+      catch (error) { result.push({ pid: d.pid, error: describeError(error).slice(0, 80) }); }
+    });
+    return result;
+  }
+  (function next(i) {
+    if (i >= calls.length) {
+      out.videoAfter = listVideoNodes();
+      try { fs.unlinkSync(marker); } catch (_) {}
+      done(out);
+      return;
+    }
+    var c = calls[i], step = { name: c.name };
+    out.steps.push(step);
+    try { fs.writeFileSync(marker, String(Date.now())); } catch (_) {}
+    setTimeout(function () { // the marker must be older than anything the call writes
+      var began = Date.now();
+      bus(c.method, c.sig, c.args, function (reply) {
+        step.reply = reply; step.ms = Date.now() - began;
+        setTimeout(function () {
+          if (c.stop) step.fdsWhileRunning = daemonFds();
+          newFiles(function (files) {
+            step.newFiles = files;
+            step.videoNow = listVideoNodes();
+            if (!c.stop) { next(i + 1); return; }
+            bus(c.stop.method, c.stop.sig, c.stop.args, function (ended) { step.stopReply = ended; next(i + 1); });
+          });
+        }, huntDelays[c.wait || "short"]);
+      });
+    }, huntDelays.marker);
+  })(0);
+}
+
+// ---- other bus services that might capture or expose video frames ------------------------------------
+// The bus names list showed services such as com.samsung.tizen.vddmr, org.tizen.tv.avoc, com.samsung.IVideoControl,
+// com.samsung.IAVControl and media.analytics.service. Never looked at. This asks the bus for their object trees and lists any
+// method names that look like capture, screenshot, snapshot, frame, dump, grab or thumbnail.
+function otherServices(done) {
+  var cp = require("child_process");
+  var out = { ok: true, services: [] };
+  var interesting = /vddmr|avoc|IVideoControl|IAVControl|media\.analytics|screen|capture|snapshot|multimedia|\.tbm|\.tdm|thumbnail|mediacontroller/i;
+  var memberPattern = /capture|screen|snap|frame|dump|grab|shot|image|thumbnail|bitmap|pixel/i;
+  cp.execFile("busctl", ["--system", "--no-pager", "list"], { timeout: 8000, maxBuffer: 512 * 1024 }, function (error, stdout) {
+    if (error) { out.error = describeError(error).slice(0, 120); done(out); return; }
+    var names = [];
+    String(stdout).split("\n").forEach(function (line) {
+      var name = line.split(/\s+/)[0];
+      if (name && name.charAt(0) !== ":" && name !== "NAME" && interesting.test(name) && name !== CAPTURE_DEST && names.indexOf(name) < 0) names.push(name);
+    });
+    out.candidates = names.slice(0, 10);
+    (function next(i) {
+      if (i >= out.candidates.length) { done(out); return; }
+      var name = out.candidates[i], row = { name: name, paths: [], methods: [] };
+      out.services.push(row);
+      cp.execFile("busctl", ["--system", "--no-pager", "tree", name], { timeout: 6000, maxBuffer: 256 * 1024 }, function (treeError, tree) {
+        if (treeError) { row.error = describeError(treeError).slice(0, 100); next(i + 1); return; }
+        var paths = (String(tree).match(/\/[A-Za-z0-9_\/]*/g) || []).filter(function (p, k, all) { return all.indexOf(p) === k; });
+        row.paths = paths.slice(0, 12);
+        var targets = paths.slice(0, 4);
+        (function introspect(k) {
+          if (k >= targets.length) { next(i + 1); return; }
+          cp.execFile("busctl", ["--system", "--no-pager", "introspect", name, targets[k]], { timeout: 6000, maxBuffer: 512 * 1024 }, function (e2, text) {
+            if (!e2) {
+              String(text).split("\n").forEach(function (line) {
+                var parts = line.trim().split(/\s+/);
+                if (parts[1] === "method" && memberPattern.test(parts[0]) && row.methods.length < 25) row.methods.push(targets[k] + " " + parts[0] + " " + (parts[2] || ""));
+              });
+            }
+            introspect(k + 1);
+          });
+        })(0);
+      });
+    })(0);
+  });
+}
+
+// ---- everything in one go -----------------------------------------------------------------------------
+// One request starts it, one request reads the result: the steps run in the background in order of how much each one decides, so
+// the person at the TV runs a single script and uploads a single file.
+var research = null;
+var researchStepTimeoutMs = 120000;
+
+function startResearch() {
+  if (research && !research.done) return false;
+  research = { startedAt: Date.now(), done: false, progress: "starting", sessionActive: !!(session && !session.stopped), captureMode: captureMode, results: {}, order: [] };
+  var run = research;
+  var steps = [
+    ["capture-floor", function (cb) { captureFloor({ count: 20 }, cb); }],
+    ["native-check", nativeCheck],
+    ["capture-hunt", function (cb) { captureHunt({}, cb); }],
+    ["other-services", otherServices]
+  ];
+  (function next(i) {
+    if (i >= steps.length) { run.done = true; run.finishedAt = Date.now(); run.progress = "done"; return; }
+    var name = steps[i][0], finished = false;
+    run.progress = name;
+    run.order.push(name);
+    function finish(result) {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      run.results[name] = result;
+      next(i + 1);
+    }
+    var timer = setTimeout(function () { finish({ ok: false, error: "step did not finish within " + (researchStepTimeoutMs / 1000) + " s" }); }, researchStepTimeoutMs);
+    try { steps[i][1](finish); } catch (error) { finish({ ok: false, error: describeError(error) }); }
+  })(0);
+  return true;
+}
+
+function researchSnapshot() {
+  if (!research) return { ok: true, started: false };
+  return { ok: true, started: true, done: research.done, progress: research.progress, elapsedS: Math.round(((research.finishedAt || Date.now()) - research.startedAt) / 1000),
+    sessionActive: research.sessionActive, captureMode: research.captureMode, order: research.order, results: research.results };
+}
+
+// ---- could a native helper run on this TV? -----------------------------------------------------------
+// Every route below the capture service (a permanent bus connection through libsystemd, DRM, TDM, Wayland screen capture) needs a
+// small native program. This checks what the TV would run: the CPU architecture and float ABI (from the ELF headers of programs and
+// libraries that are already there), whether files in the RAM disks may be executed, and which graphics and bus libraries exist.
+function readElfInfo(file) {
+  var fs = require("fs"), fd = null;
+  try {
+    fd = fs.openSync(file, "r");
+    var head = new Buffer(64), n = fs.readSync(fd, head, 0, 64, 0);
+    if (n < 52 || head.readUInt32BE(0) !== 0x7f454c46) return { file: file, error: "not an ELF file" };
+    var is64 = head[4] === 2, little = head[5] === 1, machine = head.readUInt16LE(18);
+    var info = { file: file, bits: is64 ? 64 : 32, little: little, machine: machine === 40 ? "ARM" : machine === 183 ? "AArch64" : machine === 62 ? "x86-64" : machine === 3 ? "x86" : String(machine) };
+    if (machine === 40 && !is64) {
+      var flags = head.readUInt32LE(36);
+      info.armFlags = "0x" + flags.toString(16);
+      info.floatAbi = (flags & 0x400) ? "hard-float (armhf)" : (flags & 0x200) ? "soft-float" : "softfp / unspecified";
+      info.eabi = flags >>> 24;
+    }
+    var phoff = is64 ? Number(head.readUInt32LE(32)) : head.readUInt32LE(28), phentsize = head.readUInt16LE(is64 ? 54 : 42), phnum = head.readUInt16LE(is64 ? 56 : 44);
+    var ph = new Buffer(phentsize * phnum);
+    fs.readSync(fd, ph, 0, ph.length, phoff);
+    for (var i = 0; i < phnum; i++) {
+      var at = i * phentsize;
+      if (ph.readUInt32LE(at) === 3) { // PT_INTERP
+        var off = is64 ? Number(ph.readUInt32LE(at + 8)) : ph.readUInt32LE(at + 4), size = is64 ? Number(ph.readUInt32LE(at + 32)) : ph.readUInt32LE(at + 16);
+        var buf = new Buffer(Math.min(size, 128));
+        fs.readSync(fd, buf, 0, buf.length, off);
+        info.interpreter = buf.toString("utf8").replace(/\0.*$/, "");
+      }
+    }
+    return info;
+  } catch (error) {
+    return { file: file, error: describeError(error).slice(0, 80) };
+  } finally {
+    if (fd !== null) { try { fs.closeSync(fd); } catch (_) {} }
+  }
+}
+
+function nativeCheck(done) {
+  var cp = require("child_process"), fs = require("fs");
+  var out = { ok: true, elf: [], exec: [], mounts: [], libs: [], cpu: [] };
+  ["/usr/bin/busctl", "/usr/lib/libsystemd.so.0", "/usr/lib/libdbus-1.so.3", "/lib/libc.so.6", "/usr/lib/libc.so.6"].forEach(function (f) { if (fs.existsSync(f)) out.elf.push(readElfInfo(f)); });
+  try { out.mounts = fs.readFileSync("/proc/mounts", "utf8").split("\n").filter(function (l) { return /\s(\/tmp|\/dev\/shm|\/run|\/opt|\/home)[\s\/]/.test(l); }).slice(0, 12); } catch (_) {}
+  try { out.cpu = fs.readFileSync("/proc/cpuinfo", "utf8").split("\n").filter(function (l) { return /^(model name|Processor|Features|CPU architecture|CPU implementer|processor)\s*:/.test(l); }).slice(0, 12); } catch (_) {}
+  ["/usr/lib", "/lib"].forEach(function (d) {
+    try { fs.readdirSync(d).forEach(function (n) { if (/^(libdrm|libtdm|libwayland|libtbm|libefl|libdbus|libgio|libjpeg|libsystemd|libudev|libv4l|libcapi-system|libecore|libevas)/.test(n) && /\.so(\.|$)/.test(n)) out.libs.push(d + "/" + n); }); } catch (_) {}
+  });
+  out.libs = out.libs.sort().slice(0, 90);
+  // Can a file we create in a RAM disk be executed? A shell script, and an ELF copy of a program that is already on the TV.
+  var tests = [];
+  ["/dev/shm", "/tmp"].forEach(function (dir) {
+    tests.push({ label: dir + ": shell script", file: dir + "/nuvio-exec-test.sh", make: function (f) { fs.writeFileSync(f, "#!/bin/sh\necho exec-ok\n"); }, args: [] });
+    if (fs.existsSync("/usr/bin/busctl")) tests.push({ label: dir + ": copy of busctl (ELF)", file: dir + "/nuvio-exec-test.bin", make: function (f) { fs.writeFileSync(f, fs.readFileSync("/usr/bin/busctl")); }, args: ["--version"] });
+  });
+  (function next(i) {
+    if (i >= tests.length) { done(out); return; }
+    var t = tests[i], row = { label: t.label };
+    out.exec.push(row);
+    try {
+      t.make(t.file);
+      fs.chmodSync(t.file, 493);
+      cp.execFile(t.file, t.args, { timeout: 5000 }, function (error, stdout, stderr) {
+        row.ok = !error;
+        row.output = String(stdout || "").split("\n")[0].slice(0, 60);
+        if (error) row.error = (describeError(error) + " " + String(stderr || "")).slice(0, 120);
+        try { fs.unlinkSync(t.file); } catch (_) {}
+        next(i + 1);
+      });
+    } catch (error) {
+      row.ok = false; row.error = describeError(error).slice(0, 100);
+      try { fs.unlinkSync(t.file); } catch (_) {}
+      next(i + 1);
+    }
+  })(0);
+}
+
 // ---- capture parameter bench ------------------------------------------------------------------------
 // RequestCaptureToFileSync(app_type, capture_mode, comp_type, width, height, quality, dir, name). What do sizes bigger or
 // smaller than 480x270, other qualities, modes and app types cost, and what comes back? Each setting is called `count`
@@ -2003,6 +2262,18 @@ function handleRequest(request, response) {
       case "/ambilight/capture-image":
         captureImage(query, response);
         return;
+      case "/ambilight/research-start":
+        sendJson(response, 200, { ok: true, started: startResearch() });
+        return;
+      case "/ambilight/research-result":
+        sendJson(response, 200, researchSnapshot());
+        return;
+      case "/ambilight/capture-hunt":
+        captureHunt(query, function (result) { sendJson(response, 200, result); });
+        return;
+      case "/ambilight/native-check":
+        nativeCheck(function (result) { sendJson(response, 200, result); });
+        return;
       case "/ambilight/capture-floor":
         captureFloor(query, function (result) { sendJson(response, 200, result); });
         return;
@@ -2050,6 +2321,9 @@ module.exports = {
     parseCaptureReply: parseCaptureReply,
     parseBusctlReply: parseBusctlReply,
     CaptureShell: CaptureShell,
+    readElfInfo: readElfInfo,
+    setHuntDelays: function (d) { huntDelays = d; },
+    resetResearch: function () { research = null; },
     paceDelayFor: paceDelayFor,
     decodeJpegChecked: decodeJpegChecked,
     jpegDecoder: jpegDecoder,

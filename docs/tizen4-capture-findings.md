@@ -123,6 +123,28 @@ The ambilight uses mode 3 (default; mode 2 looked identical and was used before)
   native connection (no program started per capture) could save; direct access from Node is impossible (kdbus, no proxy), so it would
   need a native helper using libsystemd/sd-bus (present on the TV).
 
+## Review of further ideas (other suggestions checked against the evidence)
+
+- **Slow file I/O (eMMC instead of RAM):** not the case. Captures are written to `/dev/shm`, a tmpfs, and "Sync" in the method name means
+  the D-Bus call waits for the capture, not an fsync.
+- **File descriptor passing (`h`) / byte arrays (`ay`):** the introspected signatures of `samsung.tizen.dcapture` use only `i`, `u` and
+  `s`; there is no `h` or `ay` anywhere, and the interface declares no signals. A frame-by-frame signal or fd hand-over is not part of
+  this interface (undeclared signals are still possible).
+- **Periodic capture output:** unknown. `/ambilight/capture-hunt` calls every other method (`RequestCapture`, `_SYNC`, `WithoutAppInfo`,
+  periodic) and, after each one, lists new files in the likely folders, new `/dev/video*` nodes and what the capture service process has open.
+- **`app_info`:** its meaning is unknown; the hunt passes an app id and a short info string.
+- **Native helper (libsystemd/sd-bus, libdrm, TDM, Wayland):** all need a program built for the TV and permission to run it. The RAM disks
+  are not mounted noexec (`/dev/shm` and `/tmp` show only `nosuid,nodev` / defaults), so running our own file there is likely allowed.
+  `/ambilight/native-check` reports the CPU architecture and float ABI from the ELF headers of `busctl` and the libraries, whether a
+  script and an ELF copy placed in `/dev/shm` and `/tmp` can be executed, and which libdrm/libtdm/libwayland/libtbm/libsystemd files exist.
+- **DRM:** `/dev/dri/card0` can be opened by the service's user; reading a framebuffer needs libdrm ioctls (native). Video is normally on
+  its own hardware plane, so a primary-plane framebuffer is expected to lack the picture.
+
+All of these can be run together: `/ambilight/research-start` runs, in order of how much each one decides, `capture-floor` (how much of a
+capture call is client start-up), `native-check` (could a native helper run at all), `capture-hunt` (where the other methods deliver
+pictures) and `other-services` (other bus services with capture-like methods), in the background; `/ambilight/research-result` returns
+the combined result.
+
 ## Ideas not yet tried
 
 - A periodic capture that removes the per-picture `gdbus` process (output location unknown; a wider file search

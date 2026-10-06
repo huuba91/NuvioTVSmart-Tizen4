@@ -1180,3 +1180,100 @@ test("a refused capture never re-uses the previous picture, and mode 3 falls bac
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("readElfInfo reads architecture, bits and interpreter from an ELF header", function () {
+  var info = internals.readElfInfo(process.execPath);
+  assert.equal(info.bits, 64);
+  assert.ok(["x86-64", "AArch64"].indexOf(info.machine) >= 0, info.machine);
+  assert.match(info.interpreter, /ld-linux|ld\.so|ld-musl/);
+  assert.equal(internals.readElfInfo(path.join(JPEG_DIR, "420.jpg")).error, "not an ELF file");
+  assert.ok(internals.readElfInfo("/definitely/not/here").error);
+});
+
+test("native-check reports the ELF headers, exec permission and libraries without failing", { skip: process.platform !== "linux" || !fs.existsSync("/dev/shm") }, async function () {
+  var result = (await call("/ambilight/native-check")).body;
+  assert.equal(result.ok, true);
+  assert.ok(Array.isArray(result.elf) && Array.isArray(result.exec) && Array.isArray(result.libs));
+  var script = result.exec.filter(function (r) { return /shell script/.test(r.label); });
+  assert.ok(script.length >= 1);
+  assert.ok(script.some(function (r) { return r.ok === true && r.output === "exec-ok"; }), JSON.stringify(script));
+});
+
+test("capture-hunt calls every capture method and reports files and device nodes that appear", { skip: process.platform !== "linux" || !fs.existsSync("/dev/shm") }, async function () {
+  var os = require("node:os");
+  var dir = fs.mkdtempSync(path.join(os.tmpdir(), "hunt-"));
+  var log = path.join(dir, "calls.log");
+  var made = path.join(dir, "picture-from-sync.raw");
+  // fake busctl: logs each method; RequestCapture_SYNC "writes" a picture. fake find: lists it only when it exists.
+  fs.writeFileSync(path.join(dir, "busctl"),
+    '#!/bin/sh\necho "$6 $7 | $*" >> "' + log + '"\ncase "$6" in RequestCapture_SYNC) echo raw > "' + made + '";; esac\nexit 0\n', { mode: 493 });
+  fs.writeFileSync(path.join(dir, "find"), '#!/bin/sh\nif [ -f "' + made + '" ]; then echo "' + made + '"; fi\n', { mode: 493 });
+  var originalPath = process.env.PATH;
+  process.env.PATH = dir + path.delimiter + originalPath;
+  internals.setHuntDelays({ marker: 50, short: 20, long: 50 });
+  try {
+    var result = (await call("/ambilight/capture-hunt")).body;
+    assert.equal(result.steps.length, 6);
+    var names = result.steps.map(function (s) { return s.name; });
+    assert.ok(names.indexOf("RequestCapture_SYNC") === 0);
+    var sync = result.steps[0];
+    assert.ok(sync.newFiles.some(function (f) { return f.file === made; }), "the picture file is reported for the call that made it");
+    var calls = fs.readFileSync(log, "utf8");
+    assert.match(calls, /RequestCapture_SYNC iiiiss/);
+    assert.match(calls, /RequestCaptureWithoutAppInfo_SYNC iiiis/);
+    assert.match(calls, /StartPeriodicCapture iiiissi/);
+    assert.match(calls, /StartPeriodicCaptureWithoutAppInfo iiiisi/);
+    assert.equal(calls.split("\n").filter(function (l) { return /^EndPeriodicCapture isi/.test(l); }).length, 2, "each periodic capture is ended again");
+    assert.ok(Array.isArray(result.videoBefore) && Array.isArray(result.videoAfter));
+  } finally {
+    internals.setHuntDelays({ marker: 1100, short: 300, long: 2000 });
+    process.env.PATH = originalPath;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
+test("research runs all steps in the background, in order, and returns one combined result", { skip: process.platform !== "linux" || !fs.existsSync("/dev/shm") }, async function () {
+  var os = require("node:os");
+  var dir = fs.mkdtempSync(path.join(os.tmpdir(), "research-"));
+  // fake busctl: answers list/tree/introspect like busctl does, ping/capture/periodic calls with success
+  fs.writeFileSync(path.join(dir, "busctl"),
+    '#!/bin/sh\ncase "$*" in\n' +
+    ' *"--no-pager list"*) printf "NAME PID PROCESS USER CONNECTION UNIT SESSION DESCRIPTION\\ncom.samsung.tizen.vddmr 1 x u :1.1 - - -\\norg.tizen.tv.avoc 2 y u :1.2 - - -\\nsamsung.tizen.dcapture 3 z u :1.3 - - -\\n";;\n' +
+    ' *" tree "*) printf "/\\n  /com/samsung/vddmr\\n";;\n' +
+    ' *" introspect "*) printf "NAME TYPE SIGNATURE RESULT/VALUE FLAGS\\n.CaptureFrame method i i -\\n.Other method s s -\\n";;\n' +
+    ' *--version*) echo "systemd 231";;\n' +
+    ' *RequestCaptureToFileSync*) for last; do :; done; eval "dir=\\${$(($# - 1))}"; /bin/cp "' + path.join(JPEG_DIR, "420.jpg") + '" "$dir/$last.jpg"; echo "iiis 0 480 270 \\"$dir/$last.jpg\\"";;\n' +
+    'esac\nexit 0\n', { mode: 493 });
+  fs.writeFileSync(path.join(dir, "find"), '#!/bin/sh\nexit 0\n', { mode: 493 });
+  var originalPath = process.env.PATH;
+  process.env.PATH = dir + path.delimiter + originalPath;
+  internals.setHuntDelays({ marker: 30, short: 10, long: 30 });
+  internals.resetResearch();
+  try {
+    assert.equal((await call("/ambilight/research-result")).body.started, false, "nothing started yet");
+    var first = (await call("/ambilight/research-start")).body;
+    assert.equal(first.started, true);
+    assert.equal((await call("/ambilight/research-start")).body.started, false, "a second start while running is refused");
+    var result = null, tries;
+    for (tries = 0; tries < 200; tries++) {
+      result = (await call("/ambilight/research-result")).body;
+      if (result.done) break;
+      await new Promise(function (resolve) { setTimeout(resolve, 100); });
+    }
+    assert.equal(result.done, true, "finished: " + result.progress);
+    assert.deepEqual(result.order, ["capture-floor", "native-check", "capture-hunt", "other-services"]);
+    assert.ok(result.results["capture-floor"].derived, "capture-floor figures");
+    assert.ok(result.results["native-check"].exec.length >= 1, "native-check ran");
+    assert.equal(result.results["capture-hunt"].steps.length, 6);
+    var services = result.results["other-services"];
+    assert.deepEqual(services.candidates, ["com.samsung.tizen.vddmr", "org.tizen.tv.avoc"], "the capture service itself is not listed twice");
+    assert.ok(services.services[0].methods.some(function (m) { return /CaptureFrame/.test(m); }), JSON.stringify(services.services[0]));
+  } finally {
+    internals.setHuntDelays({ marker: 1100, short: 300, long: 2000 });
+    internals.resetResearch();
+    process.env.PATH = originalPath;
+    try { fs.unlinkSync("/dev/shm/nuvio-floor.jpg"); } catch (_) {}
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
