@@ -20,6 +20,9 @@ var DEFAULT_BRIGHT = 0.6; // PC strip_sync.py default
 var SATURATION = 1.3; // PC strip_sync.py default
 var WARM_WHITE = [255, 170, 90];
 var STATS_WINDOW = 200;
+// The strip is a lot more responsive than a bulb (one UDP packet, no acknowledgement), so its colours
+// follow the picture much faster than the bulbs' 0.6 s: drifts settle in ~0.15 s, cuts in ~0.05 s.
+var FOLLOW = { smoothing: 0.15, cutSmoothing: 0.05 };
 
 function clamp(value, low, high) {
   return value < low ? low : value > high ? high : value;
@@ -86,7 +89,7 @@ function buildPacket(payload, sequence) {
 function Strip(config) {
   this.configure(config);
   this.regions = {};
-  colourEngine.STRIP_ZONES.forEach(function (name) { this.regions[name] = new colourEngine.Region(); }, this);
+  colourEngine.STRIP_ZONES.forEach(function (name) { this.regions[name] = new colourEngine.Region(FOLLOW); }, this);
   this.socket = null;
   this.method = 0;
   this.closed = false;

@@ -309,7 +309,9 @@ function fromTarget(v) {
 
 // Critically damped spring ("SmoothDamp"): eases in and out, never overshoots, slow for drifts and
 // near-instant for a scene cut.
-function Glide(value) {
+function Glide(value, options) {
+  this.smoothing = (options && options.smoothing) || SMOOTHING;
+  this.cutSmoothing = (options && options.cutSmoothing) || CUT_SMOOTHING;
   this.x = value.slice();
   this.v = value.map(function () { return 0; });
   this.cut = 0;
@@ -318,8 +320,8 @@ function Glide(value) {
 Glide.prototype.step = function (goal, dt) {
   var jump = Math.sqrt(Math.pow(goal[0] - this.x[0], 2) + Math.pow(goal[1] - this.x[1], 2) +
     Math.pow(goal[2] - this.x[2], 2)) + Math.abs(goal[4] - this.x[4]);
-  this.cut = Math.max(Math.min(1, jump / CUT_SIZE), this.cut * Math.exp(-dt / (3 * CUT_SMOOTHING)));
-  var seconds = SMOOTHING + (CUT_SMOOTHING - SMOOTHING) * this.cut;
+  this.cut = Math.max(Math.min(1, jump / CUT_SIZE), this.cut * Math.exp(-dt / (3 * this.cutSmoothing)));
+  var seconds = this.smoothing + (this.cutSmoothing - this.smoothing) * this.cut;
   var omega = 2 / seconds, k = omega * dt, decay = 1 / (1 + k + 0.48 * k * k + 0.235 * k * k * k);
   for (var i = 0; i < goal.length; i++) {
     var change = this.x[i] - goal[i], temp = (this.v[i] + omega * change) * dt;
@@ -358,7 +360,9 @@ function wantsWhite(region, wasWhite) {
 }
 
 // One screen part (left / center / right): analysed goals in, smoothed bulb state out.
-function Region() {
+// options: { smoothing, cutSmoothing } seconds, to follow the picture faster than the bulbs do.
+function Region(options) {
+  this.options = options || null;
   this.glide = null;
   this.goal = null;
   this.white = false;
@@ -366,7 +370,7 @@ function Region() {
 
 Region.prototype.setGoal = function (summary) {
   this.goal = toTarget(summary);
-  if (!this.glide) this.glide = new Glide(this.goal);
+  if (!this.glide) this.glide = new Glide(this.goal, this.options);
 };
 
 // Returns { mode: "colour", hsv } or { mode: "white" }, or null before the first picture.
