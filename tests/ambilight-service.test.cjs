@@ -746,6 +746,7 @@ test("a session captures through long-lived capture shells and the CPU figure in
   process.env.PATH = dir + path.delimiter + originalPath;
   var bulb = await startFakeBulb();
   fs.writeFileSync(BULBS_FILE, JSON.stringify([{ id: "a", name: "Desk left", key: KEY, ip: "127.0.0.1", pos: "center" }]));
+  internals.setVerifyTiming({ first: 1e9, every: 1e9 }); // the mode cross-check starts busctl from Node itself; not what this test counts
   try {
     await call("/ambilight/capture-format?mode=jpeg");
     await call("/ambilight/capture-tool?mode=busctl-sh");
@@ -762,6 +763,7 @@ test("a session captures through long-lived capture shells and the CPU figure in
     assert.ok(Object.keys(distinct).length <= 3, "from at most one shell per capture worker, not from Node: " + Object.keys(distinct).join(","));
     assert.ok(distinct[String(process.pid)] === undefined, "Node itself never started busctl");
   } finally {
+    internals.setVerifyTiming({ first: 2000, every: 6000 });
     await call("/ambilight/stop");
     process.env.PATH = originalPath;
     try { fs.unlinkSync(BULBS_FILE); } catch (_) {}
@@ -1274,6 +1276,113 @@ test("research runs all steps in the background, in order, and returns one combi
     internals.resetResearch();
     process.env.PATH = originalPath;
     try { fs.unlinkSync("/dev/shm/nuvio-floor.jpg"); } catch (_) {}
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("centreMean averages the middle of a picture", function () {
+  var image = { w: 4, h: 4, bpp: 3, data: new Uint8Array(4 * 4 * 3) };
+  for (var i = 0; i < image.data.length; i += 3) { image.data[i] = 10; image.data[i + 1] = 20; image.data[i + 2] = 30; }
+  // the 2x2 middle is set to something else; the border stays (10,20,30)
+  [[1, 1], [2, 1], [1, 2], [2, 2]].forEach(function (xy) { var p = (xy[1] * 4 + xy[0]) * 3; image.data[p] = 200; image.data[p + 1] = 100; image.data[p + 2] = 50; });
+  assert.deepEqual(internals.centreMean(image), [200, 100, 50]);
+  assert.equal(internals.centreMean(null), null);
+});
+
+function modeDependentBusctl(dir, working) {
+  // working: the picture returned for modes 2 and 3; mode 1 always returns the half red / half blue picture (the real screen)
+  fs.writeFileSync(path.join(dir, "busctl"),
+    '#!/bin/sh\nfor last; do :; done\neval "dir=\\${$(($# - 1))}"\n' +
+    'if [ "${9}" = 1 ]; then pic="' + path.join(JPEG_DIR, "halves.jpg") + '"; else pic="' + path.join(JPEG_DIR, working) + '"; fi\n' +
+    '/bin/cp "$pic" "$dir/$last.jpg"\necho "iiis 0 480 270 \\"$dir/$last.jpg\\""\n', { mode: 493 });
+}
+
+test("a working mode whose pictures do not match the screen is replaced by mode 1", { skip: process.platform !== "linux" || !fs.existsSync("/dev/shm") }, async function () {
+  var os = require("node:os");
+  var dir = fs.mkdtempSync(path.join(os.tmpdir(), "verify-"));
+  modeDependentBusctl(dir, "green.jpg"); // modes 2 and 3 return a constant green picture, as if garbled
+  var originalPath = process.env.PATH;
+  process.env.PATH = dir + path.delimiter + originalPath;
+  var bulb = await startFakeBulb();
+  fs.writeFileSync(BULBS_FILE, JSON.stringify([{ id: "a", name: "Desk left", key: KEY, ip: "127.0.0.1", pos: "center" }]));
+  internals.setVerifyTiming({ first: 300, every: 400 });
+  try {
+    await call("/ambilight/capture-format?mode=jpeg");
+    await call("/ambilight/capture-tool?mode=busctl");
+    await call("/ambilight/capture-mode?mode=3");
+    await call("/ambilight/start?level=100&assign=a:left:100");
+    await new Promise(function (resolve) { setTimeout(resolve, 3500); });
+    var state = (await call("/ambilight/state")).body.state;
+    assert.equal(state.capture.mode, 1, "switched to mode 1: " + JSON.stringify(state.capture.verify));
+    assert.ok(state.errors.some(function (e) { return /do not match the screen.*switched to mode 1/.test(e); }), JSON.stringify(state.errors));
+    assert.ok(state.capture.verify.checks >= 2);
+    assert.ok(state.capture.verify.last.difference > 45 || state.capture.mode === 1);
+    // after the switch the lights get the real picture: red on the left edge
+    var hues = bulb.received.filter(function (m) { return m.command === 7 && m.dps["5"]; });
+    assert.ok(hues.length > 0, "the bulb received colours");
+  } finally {
+    internals.setVerifyTiming({ first: 2000, every: 6000 });
+    await call("/ambilight/stop");
+    await call("/ambilight/capture-mode?mode=3");
+    await call("/ambilight/capture-tool?mode=busctl-sh");
+    process.env.PATH = originalPath;
+    try { fs.unlinkSync(BULBS_FILE); } catch (_) {}
+    await new Promise(function (resolve) { setTimeout(resolve, 1500); });
+    bulb.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a working mode that matches the screen stays", { skip: process.platform !== "linux" || !fs.existsSync("/dev/shm") }, async function () {
+  var os = require("node:os");
+  var dir = fs.mkdtempSync(path.join(os.tmpdir(), "verify-"));
+  modeDependentBusctl(dir, "halves.jpg"); // every mode returns the same real picture
+  var originalPath = process.env.PATH;
+  process.env.PATH = dir + path.delimiter + originalPath;
+  var bulb = await startFakeBulb();
+  fs.writeFileSync(BULBS_FILE, JSON.stringify([{ id: "a", name: "Desk left", key: KEY, ip: "127.0.0.1", pos: "center" }]));
+  internals.setVerifyTiming({ first: 300, every: 400 });
+  try {
+    await call("/ambilight/capture-format?mode=jpeg");
+    await call("/ambilight/capture-tool?mode=busctl");
+    await call("/ambilight/capture-mode?mode=3");
+    await call("/ambilight/start?level=100&assign=a:left:100");
+    await new Promise(function (resolve) { setTimeout(resolve, 3000); });
+    var state = (await call("/ambilight/state")).body.state;
+    assert.equal(state.capture.mode, 3, "no false alarm: " + JSON.stringify(state.capture.verify));
+    assert.ok(state.capture.verify.checks >= 2, "it did check");
+    assert.ok(state.capture.verify.last.difference < 10);
+  } finally {
+    internals.setVerifyTiming({ first: 2000, every: 6000 });
+    await call("/ambilight/stop");
+    await call("/ambilight/capture-mode?mode=3");
+    await call("/ambilight/capture-tool?mode=busctl-sh");
+    process.env.PATH = originalPath;
+    try { fs.unlinkSync(BULBS_FILE); } catch (_) {}
+    await new Promise(function (resolve) { setTimeout(resolve, 1500); });
+    bulb.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("capture-series records zone colours, size and checksum of each picture", { skip: process.platform !== "linux" || !fs.existsSync("/dev/shm") }, async function () {
+  var os = require("node:os");
+  var dir = fs.mkdtempSync(path.join(os.tmpdir(), "series-"));
+  modeDependentBusctl(dir, "green.jpg");
+  var originalPath = process.env.PATH;
+  process.env.PATH = dir + path.delimiter + originalPath;
+  try {
+    var green = (await call("/ambilight/capture-series?mode=3&seconds=1")).body;
+    assert.ok(green.samples.length >= 3, "several pictures: " + green.samples.length);
+    var first = green.samples[0];
+    assert.ok(first.L[1] > 200 && first.L[0] < 30 && first.C[1] > 200 && first.R[1] > 200, "all zones green: " + JSON.stringify(first));
+    assert.equal(new Set(green.samples.map(function (x) { return x.bytes + ":" + x.sum; })).size, 1, "a constant picture has one size and checksum");
+    var real = (await call("/ambilight/capture-series?mode=1&seconds=1")).body;
+    var s1 = real.samples[0];
+    assert.ok(s1.L[0] > 150 && s1.R[2] > 70 && s1.R[0] < 40, "mode 1 gives the half red, half blue screen: " + JSON.stringify(s1));
+    assert.ok(real.perSecond > 0);
+  } finally {
+    process.env.PATH = originalPath;
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

@@ -33,6 +33,7 @@
 //   GET /ambilight/capture-image?mode=0&app=0&size=480x270&quality=60   one capture as an image to view in a browser
 //   GET /ambilight/research-start                    runs capture-floor, native-check, capture-hunt and other-services in the background
 //   GET /ambilight/research-result                   progress and the combined result (poll until done)
+//   GET /ambilight/capture-series?mode=3&seconds=6   pictures of one mode over time: zone colours, size, checksum (for a video of known colours)
 //   GET /ambilight/capture-hunt                      call the other capture methods and look for where their pictures go
 //   GET /ambilight/native-check                      CPU/ABI, exec permission in RAM disks, graphics and bus libraries: could a native helper run
 //   GET /ambilight/capture-floor?count=20            client start vs Ping vs real capture: how much a permanent connection could save
@@ -642,13 +643,13 @@ CaptureShell.prototype.fail = function (error) {
   if (pending) { clearTimeout(pending.timer); pending.cb(error); }
 };
 
-CaptureShell.prototype.run = function (comp, quality, name, cb) {
+CaptureShell.prototype.run = function (comp, quality, name, cb, modeOverride) {
   var self = this;
   if (this.dead || !this.child) { cb(this.startError || new Error("capture shell is not running")); return; }
   if (this.pending) { cb(new Error("capture shell is busy")); return; }
   if (!/^[A-Za-z0-9_.-]+$/.test(name)) { cb(new Error("bad capture name")); return; }
   this.pending = { cb: cb, timer: setTimeout(function () { self.kill(); }, 5000) };
-  var line = [Math.round(Number(captureMode)), Math.round(Number(comp)), Math.round(Number(quality)), CAPTURE_SIZE[0], CAPTURE_SIZE[1], CAPTURE_DIR, name].join(" ") + "\n";
+  var line = [Math.round(Number(modeOverride === undefined ? captureMode : modeOverride)), Math.round(Number(comp)), Math.round(Number(quality)), CAPTURE_SIZE[0], CAPTURE_SIZE[1], CAPTURE_DIR, name].join(" ") + "\n";
   try { this.child.stdin.write(line); } catch (error) { this.fail(error); }
 };
 
@@ -691,17 +692,62 @@ function decodeJpegChecked(bytes) {
   return image;
 }
 
+// Cross-check of the capture mode. Modes 2 and 3 read the video picture directly; if the service ever returns a wrong picture for
+// them (seen on the TV: one constant blue/green block picture, 32132 bytes every time, with a success reply), nothing in the picture
+// itself says so. Mode 1 is the screen as it is shown, so every few seconds one mode 1 capture is taken and the middle of its picture is
+// compared with the middle of the latest picture of the working mode. Two disagreements in a row switch the working mode to 1.
+var VERIFY_TOLERANCE = 45; // largest difference of the middle region's mean R, G or B (0-255) that still counts as the same picture
+var verifyTiming = { first: 2000, every: 6000 };
+
+function centreMean(image) {
+  if (!image || !image.data || !image.data.length) return null;
+  var x0 = Math.floor(image.w * 0.25), x1 = Math.max(x0 + 1, Math.floor(image.w * 0.75));
+  var y0 = Math.floor(image.h * 0.25), y1 = Math.max(y0 + 1, Math.floor(image.h * 0.75));
+  var sum = [0, 0, 0], n = 0, x, y, p, bpp = image.bpp;
+  for (y = y0; y < y1; y++) {
+    for (x = x0; x < x1; x++) {
+      p = (y * image.w + x) * bpp;
+      sum[0] += image.data[p]; sum[1] += image.data[bpp >= 3 ? p + 1 : p]; sum[2] += image.data[bpp >= 3 ? p + 2 : p]; n++;
+    }
+  }
+  return n ? [sum[0] / n, sum[1] / n, sum[2] / n] : null;
+}
+
+function largestDifference(a, b) {
+  return Math.max(Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1]), Math.abs(a[2] - b[2]));
+}
+
+// One JPEG capture in mode 1, decoded; cb(error, image). Not through the long-lived shells: it runs every few seconds only.
+function captureVerifyPicture(cb) {
+  var cp = require("child_process"), fs = require("fs");
+  var name = "nuvio-verify", file = CAPTURE_DIR + "/" + name + ".jpg";
+  try { fs.unlinkSync(file); } catch (_) {}
+  var command = captureCommand(captureTool === "gdbus" ? "gdbus" : "busctl", 1, jpegQuality, name, 1);
+  cp.execFile(command.cmd, command.args, { timeout: 5000 }, function (error, stdout) {
+    if (error) { cb("verify capture " + describeError(error)); return; }
+    var reply = parseAnyCaptureReply(stdout);
+    if (reply && reply.ret !== 0) { cb("verify capture refused " + reply.ret); return; }
+    try {
+      var path = reply && reply.path && !fs.existsSync(file) ? reply.path : file;
+      var image = decodeJpegChecked(fs.readFileSync(path));
+      try { fs.unlinkSync(file); } catch (_) {}
+      cb(null, image);
+    } catch (problem) { cb("verify decode " + describeError(problem)); }
+  });
+}
+
 var CAPTURE_DEST = "samsung.tizen.dcapture", CAPTURE_PATH = "/samsung/tizen/dcapture", CAPTURE_METHOD = "RequestCaptureToFileSync";
 
 // { cmd, args } for one RequestCaptureToFileSync(0, 2, comp_type, w, h, quality, dir, name) call with the given tool.
-function captureCommand(tool, comp, quality, name) {
+function captureCommand(tool, comp, quality, name, modeOverride) {
   var w = String(CAPTURE_SIZE[0]), h = String(CAPTURE_SIZE[1]);
+  var mode = modeOverride === undefined ? captureMode : modeOverride;
   if (tool === "busctl") {
     return { cmd: "busctl", args: ["--system", "call", CAPTURE_DEST, CAPTURE_PATH, CAPTURE_DEST, CAPTURE_METHOD, "iiiiiiss",
-      "0", String(captureMode), String(comp), w, h, String(quality), CAPTURE_DIR, name] };
+      "0", String(mode), String(comp), w, h, String(quality), CAPTURE_DIR, name] };
   }
   return { cmd: "gdbus", args: ["call", "--system", "--timeout", "4", "--dest", CAPTURE_DEST, "--object-path", CAPTURE_PATH,
-    "--method", CAPTURE_DEST + "." + CAPTURE_METHOD, "0", String(captureMode), String(comp), w, h, String(quality), CAPTURE_DIR, name] };
+    "--method", CAPTURE_DEST + "." + CAPTURE_METHOD, "0", String(mode), String(comp), w, h, String(quality), CAPTURE_DIR, name] };
 }
 
 // busctl prints the reply as: iiis 0 480 270 "/dev/shm/name.jpg"
@@ -772,6 +818,7 @@ function Session(bulbs, level, stripConfig) {
   this.lastPicture = 0;
   this.lastTick = 0;
   this.shells = {};
+  this.verify = { running: false, checks: 0, mismatches: 0, errors: 0, last: null, lastAt: 0 };
   this.serviceErrors = 0; // captures the service refused, and the last reply code it gave
   this.lastReturn = null;
   this.active = {}; // capture loops running, by worker index
@@ -991,6 +1038,33 @@ Session.prototype.analyse = function (image) {
 };
 
 // Runs between pictures too, so every bulb fades through intermediate colours instead of stepping.
+// Compares the working mode's latest picture with one mode 1 capture (see VERIFY_TOLERANCE); two disagreements in a row switch to mode 1.
+Session.prototype.verifyMode = function () {
+  var self = this, v = this.verify, modeUsed = captureMode, primary = centreMean(this.prevImage);
+  v.running = true;
+  v.lastAt = Date.now();
+  captureVerifyPicture(function (error, image) {
+    v.running = false;
+    if (self.stopped) return;
+    var reference = error ? null : centreMean(image);
+    if (error || !primary || !reference) { v.errors++; if (error && v.errors <= 2) self.note(error); return; }
+    var diff = largestDifference(primary, reference);
+    v.checks++;
+    v.last = { mode: modeUsed, difference: Math.round(diff), working: primary.map(Math.round), screen: reference.map(Math.round) };
+    if (modeUsed !== captureMode) return; // the mode changed while the check ran
+    if (diff > VERIFY_TOLERANCE) {
+      v.mismatches++;
+      if (v.mismatches >= 2) {
+        captureMode = 1;
+        v.mismatches = 0;
+        self.note("mode " + modeUsed + " pictures do not match the screen (middle colour differs by " + Math.round(diff) + "), switched to mode 1");
+      }
+    } else {
+      v.mismatches = 0;
+    }
+  });
+};
+
 Session.prototype.takeSample = function (now) {
   var parts = cpuParts();
   this.lastSample = now;
@@ -1022,6 +1096,8 @@ Session.prototype.tick = function () {
   var now = Date.now(), dt = Math.max(0.001, Math.min(0.25, (now - this.lastTick) / 1000)), states = {}, level = this.level;
   this.lastTick = now;
   if (now - this.lastSample >= 1000) this.takeSample(now);
+  if (!this.verify.running && captureMode !== 1 && this.prevImage &&
+      now - (this.verify.lastAt || this.startedAt - verifyTiming.every + verifyTiming.first) >= verifyTiming.every) this.verifyMode();
   var regions = this.regions;
   POSITIONS.forEach(function (pos) { states[pos] = regions[pos].step(dt); });
   this.bulbs.forEach(function (b) {
@@ -1123,6 +1199,7 @@ Session.prototype.describe = function () {
       eco: ecoEnabled,
       tool: captureTool,
       mode: captureMode,
+      verify: { checks: this.verify.checks, mismatches: this.verify.mismatches, errors: this.verify.errors, last: this.verify.last },
       serviceErrors: this.serviceErrors,
       lastReturn: this.lastReturn,
       jpegDecoder: { decoder: jpegDecoder.useReference ? "reference" : "fast", checked: jpegDecoder.checked, mismatch: jpegDecoder.mismatch },
@@ -1813,6 +1890,52 @@ function nativeCheck(done) {
   })(0);
 }
 
+// ---- what does a capture mode return over time? -----------------------------------------------------
+// Captures in a given mode as fast as one shell allows for a few seconds and records, per picture, the mean colour of the left fifth,
+// the middle and the right fifth, the file size and a checksum of the bytes. With a video of known colours playing (the lab app) this
+// shows whether a mode returns the right colours, a constant wrong picture (same size and checksum every time) or black.
+function captureSeries(query, done) {
+  var fs = require("fs");
+  var seconds = Math.max(1, Math.min(30, Number(query.seconds) || 6)), max = Math.max(1, Math.min(300, Math.round(Number(query.max)) || 120));
+  var mode = Math.round(Number(query.mode));
+  if (!isFinite(mode) || mode < 0 || mode > 3) mode = captureMode;
+  var name = "nuvio-series", file = CAPTURE_DIR + "/" + name + ".jpg", runner = new CaptureShell();
+  var out = { ok: true, mode: mode, seconds: seconds, startEpoch: Date.now(), samples: [], errors: [] };
+  var began = Date.now();
+  function zoneMean(image, x0, x1) {
+    var sum = [0, 0, 0], n = 0, x, y, p, bpp = image.bpp;
+    for (y = 0; y < image.h; y++) for (x = x0; x < x1; x++) {
+      p = (y * image.w + x) * bpp;
+      sum[0] += image.data[p]; sum[1] += image.data[bpp >= 3 ? p + 1 : p]; sum[2] += image.data[bpp >= 3 ? p + 2 : p]; n++;
+    }
+    return n ? [Math.round(sum[0] / n), Math.round(sum[1] / n), Math.round(sum[2] / n)] : [0, 0, 0];
+  }
+  function finish() {
+    try { runner.kill(); } catch (_) {}
+    try { fs.unlinkSync(file); } catch (_) {}
+    out.perSecond = Math.round(out.samples.length / ((Date.now() - began) / 1000) * 10) / 10;
+    done(out);
+  }
+  (function next() {
+    if (Date.now() - began >= seconds * 1000 || out.samples.length >= max) { finish(); return; }
+    try { fs.unlinkSync(file); } catch (_) {}
+    var t = Date.now() - began;
+    runner.run(1, jpegQuality, name, function (error, stdout) {
+      if (error) { if (out.errors.length < 5) out.errors.push(String(error.message || error).slice(0, 120)); setTimeout(next, 50); return; }
+      var reply = parseAnyCaptureReply(stdout);
+      if (reply && reply.ret !== 0) { if (out.errors.length < 5) out.errors.push("service returned " + reply.ret); setTimeout(next, 50); return; }
+      try {
+        var bytes = fs.readFileSync(reply && reply.path && !fs.existsSync(file) ? reply.path : file), sum = 0, i;
+        for (i = 0; i < bytes.length; i++) sum = (sum + bytes[i] * ((i % 251) + 1)) % 65521;
+        var image = decodeJpegChecked(bytes), w = image.w;
+        out.samples.push({ t: t, L: zoneMean(image, 0, Math.max(1, Math.floor(w * 0.2))), C: zoneMean(image, Math.floor(w * 0.3), Math.max(Math.floor(w * 0.3) + 1, Math.ceil(w * 0.7))),
+          R: zoneMean(image, Math.min(w - 1, Math.floor(w * 0.8)), w), bytes: bytes.length, sum: sum });
+      } catch (problem) { if (out.errors.length < 5) out.errors.push("decode " + describeError(problem)); }
+      next();
+    }, mode);
+  })();
+}
+
 // ---- capture parameter bench ------------------------------------------------------------------------
 // RequestCaptureToFileSync(app_type, capture_mode, comp_type, width, height, quality, dir, name). What do sizes bigger or
 // smaller than 480x270, other qualities, modes and app types cost, and what comes back? Each setting is called `count`
@@ -2268,6 +2391,9 @@ function handleRequest(request, response) {
       case "/ambilight/research-result":
         sendJson(response, 200, researchSnapshot());
         return;
+      case "/ambilight/capture-series":
+        captureSeries(query, function (result) { sendJson(response, 200, result); });
+        return;
       case "/ambilight/capture-hunt":
         captureHunt(query, function (result) { sendJson(response, 200, result); });
         return;
@@ -2321,6 +2447,8 @@ module.exports = {
     parseCaptureReply: parseCaptureReply,
     parseBusctlReply: parseBusctlReply,
     CaptureShell: CaptureShell,
+    setVerifyTiming: function (t) { verifyTiming = t; },
+    centreMean: centreMean,
     readElfInfo: readElfInfo,
     setHuntDelays: function (d) { huntDelays = d; },
     resetResearch: function () { research = null; },
