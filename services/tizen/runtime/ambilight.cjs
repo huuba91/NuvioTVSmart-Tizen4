@@ -529,25 +529,19 @@ Session.prototype.begin = function () {
     if (Date.now() - self.lastPing > WATCHDOG_MS) self.stop("watchdog");
   }, 1000);
   if (this.strip) this.strip.open();
+  // Capturing (and with it the strip) starts at once. Bulbs join as they connect: one that is switched
+  // off or unreachable must not hold the picture back, which it used to do for up to ~14 s.
   function startCapture() {
     if (self.stopped) return;
-    self.bulbs.forEach(function (x) { if (x.dps) x.original = JSON.parse(JSON.stringify(x.dps)); });
     self.running = true;
-    self.bulbs.forEach(function (x) {
-      x.autoReconnect = true;
-      if (!x.connected) x.reconnectLater(); // not reachable at the start: keep trying
-    });
     self.lastTick = Date.now();
     self.ticker = setInterval(function () { self.tick(); }, TICK_MS);
     for (var w = 0; w < CAPTURE_WORKERS; w++) {
       (function (index) { setTimeout(function () { self.loop(index); }, index * 60); })(w);
     }
   }
-  if (!waiting) {
-    if (this.strip) startCapture(); // strip only: nothing to connect first
-    else this.stop("no-bulbs");
-    return;
-  }
+  if (!waiting && !this.strip) { this.stop("no-bulbs"); return; }
+  startCapture();
   var discovery = null;
   function rediscover(cb) {
     if (!discovery) {
@@ -584,9 +578,14 @@ Session.prototype.begin = function () {
   }
   this.bulbs.forEach(function (b) {
     connectBulb(b, 1, false, function () {
-      if (--waiting > 0) return;
-      // give the status replies a moment, remember how each bulb was set, then start capturing
-      setTimeout(startCapture, 1500);
+      // give its status reply a moment and remember how the bulb was set before the first colour goes out
+      setTimeout(function () {
+        if (self.stopped) return;
+        if (b.dps) b.original = JSON.parse(JSON.stringify(b.dps));
+        b.armed = true;
+        b.autoReconnect = true;
+        if (!b.connected) b.reconnectLater(); // not reachable at the start: keep trying
+      }, 1500);
     });
   });
 };
@@ -634,7 +633,7 @@ Session.prototype.tick = function () {
   var regions = this.regions;
   POSITIONS.forEach(function (pos) { states[pos] = regions[pos].step(dt); });
   this.bulbs.forEach(function (b) {
-    if (b.pos !== "off" && states[b.pos]) b.show(states[b.pos], level);
+    if (b.armed && b.pos !== "off" && states[b.pos]) b.show(states[b.pos], level);
     b.heartbeat(now);
   });
   if (this.strip) this.strip.tick(dt, level);
