@@ -211,4 +211,49 @@ function decodeJpegDc(data) {
   return { w: outW, h: outH, bpp: bpp, data: out };
 }
 
-module.exports = { decodeJpegDc: decodeJpegDc };
+// Structure of a JPEG for diagnostics: which markers, the frame type and sampling, and how many scans and
+// restart markers it holds. Used to find out why a file from the TV cannot be decoded.
+function describeJpeg(data) {
+  var out = { bytes: data.length, markers: [], frame: null, scans: 0, restartMarkers: 0, dri: 0, notes: [] };
+  var pos = 2, i;
+  if (data.length < 4 || data[0] !== 0xff || data[1] !== 0xd8) { out.notes.push("no SOI"); return out; }
+  while (pos + 4 <= data.length) {
+    if (data[pos] !== 0xff) { pos++; continue; }
+    var marker = data[pos + 1];
+    if (marker === 0xff) { pos++; continue; }
+    pos += 2;
+    if (marker === 0xd8 || marker === 0x01 || marker === 0x00 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+    if (marker === 0xd9) { out.markers.push("EOI"); break; }
+    var len = (data[pos] << 8) | data[pos + 1], p = pos + 2;
+    var name = marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc ? "SOF" + (marker - 0xc0)
+      : marker === 0xc4 ? "DHT" : marker === 0xdb ? "DQT" : marker === 0xda ? "SOS" : marker === 0xdd ? "DRI"
+      : marker >= 0xe0 && marker <= 0xef ? "APP" + (marker - 0xe0) : marker === 0xfe ? "COM" : "0x" + marker.toString(16);
+    if (out.markers.length < 40) out.markers.push(name + "(" + len + ")");
+    if (name.indexOf("SOF") === 0) {
+      var comps = [];
+      for (i = 0; i < data[p + 5]; i++) comps.push({ id: data[p + 6 + i * 3], h: data[p + 7 + i * 3] >> 4, v: data[p + 7 + i * 3] & 15, tq: data[p + 8 + i * 3] });
+      out.frame = { type: name, precision: data[p], h: (data[p + 1] << 8) | data[p + 2], w: (data[p + 3] << 8) | data[p + 4], comps: comps };
+    } else if (name === "DRI") {
+      out.dri = (data[p] << 8) | data[p + 1];
+    } else if (name === "APP14") {
+      out.notes.push("Adobe marker (colour transform " + data[p + 11] + ")");
+    }
+    if (name === "SOS") {
+      out.scans++;
+      out.scanComponents = data[p];
+      // entropy-coded data follows: count what is in it, then look for another SOS
+      var q = pos + len;
+      while (q + 1 < data.length) {
+        if (data[q] === 0xff && data[q + 1] >= 0xd0 && data[q + 1] <= 0xd7) out.restartMarkers++;
+        if (data[q] === 0xff && data[q + 1] === 0xda) { out.scans++; }
+        if (data[q] === 0xff && data[q + 1] === 0xd9) break;
+        q++;
+      }
+      break;
+    }
+    pos += len;
+  }
+  return out;
+}
+
+module.exports = { decodeJpegDc: decodeJpegDc, describeJpeg: describeJpeg };

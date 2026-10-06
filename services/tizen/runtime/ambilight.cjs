@@ -27,6 +27,7 @@
 //   GET /ambilight/state                         diagnostics (incl. capture timing, CPU, eco mode)
 //   GET /ambilight/eco?mode=on|off               slow captures down on still pictures (default on)
 //   GET /ambilight/capture-sweep?w=64&h=36&modes=0,1,2,3,4&comps=0,1,2,3   try dcapture modes/formats
+//   GET /ambilight/jpeg-sample?quality=60            one JPEG capture: structure, decode result and timing
 //   GET /ambilight/periodic-probe?ms=300&seconds=2   does StartPeriodicCapture write files, and where
 //   GET /ambilight/capture-format?mode=png|jpeg&quality=60   capture as PNG (default) or small JPEG
 //   GET /ambilight/introspect                    what samsung.tizen.dcapture offers (also written to /dev/shm)
@@ -661,12 +662,14 @@ Session.prototype.loop = function (worker) {
   var begun = Date.now();
   captureOnce(CAPTURE_PREFIX + worker, function (error, image, timing) {
     if (self.stopped) return;
-    if (error && /^decode jpeg/.test(error)) {
+    if (error && captureFormat === "jpeg") {
+      // Any failure while capturing JPEG (the service refuses it, or the file cannot be decoded) counts; three in a
+      // row put the capture back on PNG, which the ambilight was validated with, instead of leaving the lights idle.
       jpegFailures++;
       self.note(error);
-      if (jpegFailures >= 3 && captureFormat === "jpeg") {
+      if (jpegFailures >= 3) {
         captureFormat = "png";
-        self.note("jpeg capture switched off after " + jpegFailures + " decode failures");
+        self.note("jpeg capture switched off after " + jpegFailures + " failures in a row");
       }
       setTimeout(function () { self.loop(worker); }, 50);
       return;
@@ -679,6 +682,7 @@ Session.prototype.loop = function (worker) {
       return;
     }
     self.captures++;
+    if (captureFormat === "jpeg") jpegFailures = 0;
     if (timing) {
       self.timing.captureMs = ema(self.timing.captureMs, timing.captureMs);
       self.timing.decodeMs = ema(self.timing.decodeMs, timing.decodeMs);
@@ -943,6 +947,44 @@ function captureSweep(query, done) {
   })();
 }
 
+// One JPEG capture, taken now and kept as /dev/shm/nuvio-sample.jpg: reports its structure, whether
+// jpeg-dc can decode it, and how fast. For finding out why a TV JPEG fails or looks wrong.
+function jpegSample(query, done) {
+  var cp = require("child_process"), fs = require("fs");
+  var quality = Number(query.quality), q = isFinite(quality) && quality >= 10 && quality <= 95 ? Math.round(quality) : jpegQuality;
+  var out = { ok: true, quality: q, file: CAPTURE_DIR + "/nuvio-sample.jpg" };
+  var began = Date.now();
+  cp.execFile("gdbus", ["call", "--system", "--timeout", "4", "--dest", "samsung.tizen.dcapture", "--object-path", "/samsung/tizen/dcapture",
+    "--method", "samsung.tizen.dcapture.RequestCaptureToFileSync", "0", "2", "1", String(CAPTURE_SIZE[0]), String(CAPTURE_SIZE[1]),
+    String(q), CAPTURE_DIR, "nuvio-sample"], { timeout: 5000 }, function (error, stdout, stderr) {
+    out.captureMs = Date.now() - began;
+    if (error) { out.error = describeError(error) + " " + String(stderr || "").slice(0, 160); done(out); return; }
+    out.reply = String(stdout).trim().slice(0, 160);
+    var reply = parseCaptureReply(stdout), file = CAPTURE_DIR + "/nuvio-sample.jpg";
+    if (reply && reply.path && !fs.existsSync(file)) file = reply.path;
+    try {
+      var data = fs.readFileSync(file);
+      out.structure = jpegDc.describeJpeg(data);
+      out.head = data.slice(0, 24).toString("hex");
+      var t0 = Date.now();
+      try {
+        var image = jpegDc.decodeJpegDc(data);
+        out.decodeMs = Date.now() - t0;
+        var sum = [0, 0, 0], n = 0, i;
+        for (i = 0; i + 2 < image.data.length; i += image.bpp) { sum[0] += image.data[i]; sum[1] += image.data[i + 1]; sum[2] += image.data[i + 2]; n++; }
+        out.decoded = { w: image.w, h: image.h, bpp: image.bpp, mean: n ? sum.map(function (v) { return Math.round(v / n); }) : null,
+          firstPixels: Array.prototype.slice.call(image.data, 0, 12) };
+      } catch (problem) {
+        out.decodeError = describeError(problem);
+      }
+      if (fs.existsSync(file) && file !== CAPTURE_DIR + "/nuvio-sample.jpg") { try { fs.writeFileSync(CAPTURE_DIR + "/nuvio-sample.jpg", data); } catch (_) {} }
+    } catch (problem) {
+      out.error = "read " + describeError(problem);
+    }
+    done(out);
+  });
+}
+
 // Does StartPeriodicCapture produce files on its own, and where? Starts it for a moment, compares a few
 // directories before and after, and always ends it again.
 var PERIODIC_DIRS = ["/dev/shm", "/tmp", "/var/tmp", "/home/owner/share/tmp", "/opt/usr/media", "/opt/usr/home/owner/share/tmp"];
@@ -1038,6 +1080,9 @@ function handleRequest(request, response) {
         return;
       case "/ambilight/capture-sweep":
         captureSweep(query, function (result) { sendJson(response, 200, result); });
+        return;
+      case "/ambilight/jpeg-sample":
+        jpegSample(query, function (result) { sendJson(response, 200, result); });
         return;
       case "/ambilight/periodic-probe":
         periodicProbe(query, function (result) { sendJson(response, 200, result); });

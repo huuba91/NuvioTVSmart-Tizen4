@@ -499,3 +499,64 @@ test("a session on JPEG capture colours the bulb and reports its format", { skip
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("describeJpeg reports frame type, sampling and scans", function () {
+  var info = jpegDc.describeJpeg(fs.readFileSync(path.join(JPEG_DIR, "420.jpg")));
+  assert.equal(info.frame.type, "SOF0");
+  assert.equal(info.frame.w, 480);
+  assert.deepEqual(info.frame.comps.map(function (c) { return c.h + "x" + c.v; }), ["2x2", "1x1", "1x1"]);
+  assert.equal(info.scans, 1);
+  assert.equal(jpegDc.describeJpeg(fs.readFileSync(path.join(JPEG_DIR, "prog.jpg"))).frame.type, "SOF2");
+  assert.ok(jpegDc.describeJpeg(fs.readFileSync(path.join(JPEG_DIR, "rst.jpg"))).restartMarkers > 0);
+});
+
+test("jpeg-sample route captures one JPEG and reports structure and decode result", { skip: process.platform !== "linux" || !fs.existsSync("/dev/shm") }, async function () {
+  var os = require("node:os");
+  var dir = fs.mkdtempSync(path.join(os.tmpdir(), "ambilight-"));
+  fs.writeFileSync(path.join(dir, "gdbus"),
+    '#!/bin/sh\nfor last; do :; done\neval "dir=\\${$(($# - 1))}"\ncp "' + path.join(JPEG_DIR, "420.jpg") + '" "$dir/$last.jpg"\necho "(0, 480, 270, \'$dir/$last.jpg\')"\n', { mode: 493 });
+  var originalPath = process.env.PATH;
+  process.env.PATH = dir + path.delimiter + originalPath;
+  try {
+    var result = (await call("/ambilight/jpeg-sample")).body;
+    assert.equal(result.ok, true);
+    assert.equal(result.structure.frame.type, "SOF0");
+    assert.equal(result.decoded.w, 60);
+    assert.ok(result.decodeMs >= 0);
+    assert.equal(result.decodeError, undefined);
+  } finally {
+    process.env.PATH = originalPath;
+    try { fs.unlinkSync("/dev/shm/nuvio-sample.jpg"); } catch (_) {}
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a failing JPEG capture falls back to PNG after three failures in a row", { skip: process.platform !== "linux" || !fs.existsSync("/dev/shm") }, async function () {
+  var os = require("node:os");
+  var dir = fs.mkdtempSync(path.join(os.tmpdir(), "ambilight-"));
+  var picture = path.join(dir, "capture.png");
+  fs.writeFileSync(picture, png(8, 4, function (x) { return x < 4 ? [200, 0, 0] : [0, 0, 100]; }));
+  // refuses JPEG (comp_type 1), serves PNG
+  fs.writeFileSync(path.join(dir, "gdbus"),
+    '#!/bin/sh\nfor last; do :; done\neval "dir=\\${$(($# - 1))}"\n' +
+    'if [ "${13}" = 1 ]; then echo "capture refused" >&2; exit 1; fi\ncp "' + picture + '" "$dir/$last.png"\necho "(0, 320, 180, \'x\')"\n', { mode: 493 });
+  var originalPath = process.env.PATH;
+  process.env.PATH = dir + path.delimiter + originalPath;
+  fs.writeFileSync(BULBS_FILE, JSON.stringify([{ id: "a", name: "Desk left", key: KEY, ip: "127.0.0.1", pos: "center" }]));
+  try {
+    await call("/ambilight/capture-format?mode=jpeg");
+    await call("/ambilight/start?level=100&assign=a:left:100");
+    await new Promise(function (resolve) { setTimeout(resolve, 1500); });
+    var snapshot = (await call("/ambilight/state")).body.state;
+    assert.equal(snapshot.capture.format, "png");
+    assert.ok(snapshot.errors.some(function (e) { return /switched off/.test(e); }), "the switch is noted");
+    assert.ok(snapshot.captures > 0, "pictures keep arriving on PNG");
+  } finally {
+    await call("/ambilight/stop");
+    await call("/ambilight/capture-format?mode=png");
+    process.env.PATH = originalPath;
+    try { fs.unlinkSync(BULBS_FILE); } catch (_) {}
+    await new Promise(function (resolve) { setTimeout(resolve, 1500); });
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -78,7 +78,9 @@ service uses `0, 2, comp_type, 64, 36, quality`. The size is ignored (always 480
 (default), 1 is JPEG (~10x smaller, captured faster). JPEG is decoded by `runtime/jpeg-dc.cjs`, which reads
 only each 8x8 block's DC coefficient (60x34 picture). Switch with `/ambilight/capture-format?mode=jpeg|png&quality=60`
 (reset when the service restarts); three decode failures switch back to PNG on their own. The Strip status line
-shows the format and picture size in use.
+shows the format and picture size in use. Any three JPEG failures in a row (the service refusing it, or a file
+that cannot be decoded) switch back to PNG. `/ambilight/jpeg-sample` takes one JPEG now, keeps it as
+`/dev/shm/nuvio-sample.jpg`, and reports its structure (frame type, sampling, scans), whether it decodes and how long it took.
 
 ## Finding out what the capture service can do
 
