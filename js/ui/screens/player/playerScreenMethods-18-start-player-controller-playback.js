@@ -38,7 +38,10 @@ export function createPlayerScreenMethods18() {
       const requestHeaders = { ...candidateHeaders, ...contextHeaders };
       const playbackContext = {
         ...(context && typeof context === "object" ? context : {}),
-        ...(Object.keys(requestHeaders).length ? { requestHeaders } : {})
+        ...(Object.keys(requestHeaders).length ? { requestHeaders } : {}),
+        // Metadata only: PlayerController inspects it (codec/HDR/size hints)
+        // for getPlaybackInfo(); it never changes the URL or headers.
+        stream: sourceCandidate || this.getStreamCandidateByUrl(playbackUrl) || null
       };
       PlayerController.setStartupPresentationAudioMuted?.(true);
       return Promise.resolve(PlayerController.play(playbackUrl, playbackContext)).catch(async (error) => {

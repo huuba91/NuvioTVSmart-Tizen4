@@ -2,128 +2,20 @@
 import * as internals from "./playerController.js";
 
 export function createPlayerControllerMethods12() {
-  const { Platform, nativeVideoEngine, WEBOS_MEDIA_TYPE_PROBE_TIMEOUT_MS } = internals;
+  const {
+    Platform,
+    nativeVideoEngine,
+    WEBOS_MEDIA_TYPE_PROBE_TIMEOUT_MS,
+    computePlaybackEngineCandidates,
+    isEngineFsUrl,
+    isRemoteDirectHttpUrl
+  } = internals;
 
   return {
     getPlaybackEngineCandidates(url, sourceType = null, itemType = this.currentItemType) {
-      const normalizedSourceType = String(sourceType || this.guessMediaMimeType(url) || "").trim();
-      const avplayEngine = this.getPlatformAvplayEngineName();
-      const isTizenRuntime = Platform.isTizen();
-      const isLivePlayback = this.isLivePlaybackItemType(itemType);
-      const canUseAvPlay = this.canUseAvPlay();
-      const preferTvNative = this.shouldPreferTvNativePipeline();
-      const canUseHlsJs = this.canUseHlsJs();
-      const canUseDashJs = this.canUseDashJs();
-      const canPlayNativeHls = this.canPlayNatively("application/vnd.apple.mpegurl");
-      const canPlayNativeDash = this.canPlayNatively("application/dash+xml");
-      const canPlayNativeSmooth = this.canPlayNatively("application/vnd.ms-sstr+xml");
-      const pushCandidate = (target, candidate) => {
-        const normalized = String(candidate || "").trim();
-        if (!normalized || target.includes(normalized)) {
-          return;
-        }
-        target.push(normalized);
-      };
-
-      if (this.isLikelyHlsMimeType(normalizedSourceType)) {
-        const candidates = [];
-        if (isTizenRuntime && canUseHlsJs) {
-          // Match Android's single HLS media pipeline when MSE is available.
-          // This also avoids the long AVPlay connection-failure path observed
-          // on affected Samsung TVs. AVPlay and native HLS remain fallbacks.
-          pushCandidate(candidates, "hls.js");
-        }
-        if (isTizenRuntime && canUseAvPlay) {
-          pushCandidate(candidates, avplayEngine);
-        }
-        if (preferTvNative && canUseAvPlay) {
-          pushCandidate(candidates, avplayEngine);
-        }
-        if (isTizenRuntime && isLivePlayback) {
-          // Keep hls.js in the live fallback ladder even when feature detection
-          // is unavailable; the normal path above has already preferred it when
-          // MSE support was confirmed.
-          pushCandidate(candidates, "hls.js");
-        }
-        if (!isTizenRuntime) {
-          // Android opens HLS through HlsMediaSource, which reports manifest
-          // failures directly. Prefer the equivalent hls.js pipeline here; if
-          // MSE is unavailable, playWithHlsJs falls back to native playback.
-          pushCandidate(candidates, "hls.js");
-        }
-        if (canPlayNativeHls) {
-          pushCandidate(candidates, "native-hls");
-        }
-        if (isLivePlayback && (canUseHlsJs || isTizenRuntime)) {
-          pushCandidate(candidates, "hls.js");
-        }
-        if (isTizenRuntime && !isLivePlayback) {
-          pushCandidate(candidates, "hls.js");
-        }
-        if (canUseAvPlay) {
-          pushCandidate(candidates, avplayEngine);
-        }
-        return candidates;
-      }
-
-      if (this.isLikelyDashMimeType(normalizedSourceType)) {
-        const candidates = [];
-        if (isTizenRuntime && canUseAvPlay) {
-          pushCandidate(candidates, avplayEngine);
-        }
-        if (preferTvNative && canUseAvPlay) {
-          pushCandidate(candidates, avplayEngine);
-        }
-        if (canPlayNativeDash) {
-          pushCandidate(candidates, "native-dash");
-        }
-        if (isLivePlayback && (canUseDashJs || isTizenRuntime)) {
-          pushCandidate(candidates, "dash.js");
-        }
-        if (isTizenRuntime && !isLivePlayback) {
-          pushCandidate(candidates, "dash.js");
-        }
-        if (!isTizenRuntime && canUseDashJs) {
-          pushCandidate(candidates, "dash.js");
-        }
-        if (canUseAvPlay) {
-          pushCandidate(candidates, avplayEngine);
-        }
-        return candidates;
-      }
-
-      if (this.isLikelySmoothStreamingMimeType(normalizedSourceType)) {
-        const candidates = [];
-        if (isTizenRuntime && canUseAvPlay) {
-          pushCandidate(candidates, avplayEngine);
-        }
-        if (canPlayNativeSmooth) {
-          pushCandidate(candidates, "native-file");
-        }
-        if (canUseAvPlay) {
-          pushCandidate(candidates, avplayEngine);
-        }
-        return candidates;
-      }
-
-      const candidates = [];
-      const isRemoteDirectHttpSource = this.isRemoteDirectHttpSource(url);
-      if (isTizenRuntime && canUseAvPlay) {
-        pushCandidate(candidates, avplayEngine);
-      }
-      // Android keeps progressive network playback in a native Media3/OkHttp
-      // pipeline. On Tizen, retrying a remote AVPlay failure with the browser
-      // video element creates a second, misleading CORS/Same-Origin failure.
-      // Keep the HTML fallback for local EngineFS URLs and non-Tizen platforms;
-      // if AVPlay is unavailable, choosePlaybackEngine() keeps the remote source
-      // on the AVPlay path and reports a controlled platform error.
-      if (!isTizenRuntime || !isRemoteDirectHttpSource) {
-        pushCandidate(candidates, "native-file");
-      }
-      if (!isTizenRuntime && canUseAvPlay) {
-        pushCandidate(candidates, avplayEngine);
-      }
-      return candidates;
+      // The ladder itself lives in backends/engineCandidates.js so that
+      // decidePlayback() and this method can never disagree.
+      return computePlaybackEngineCandidates(this.getPlaybackSourceTraits(url, sourceType, itemType), this.getPlaybackEngineFlags());
     },
     getAlternativePlaybackEngine(
       url = this.currentPlaybackUrl,
@@ -146,26 +38,10 @@ export function createPlayerControllerMethods12() {
       return candidates.find((candidate) => candidate !== currentEngine && !attemptedEngines.has(candidate)) || null;
     },
     isEngineFsPlaybackUrl(url = "") {
-      try {
-        const parsedUrl = new URL(String(url || ""));
-        return /\/([0-9a-f]{40})\/\d+(?:\/|$)/i.test(parsedUrl.pathname);
-      } catch (_) {
-        return false;
-      }
+      return isEngineFsUrl(url);
     },
     isRemoteDirectHttpSource(url = "") {
-      const normalizedUrl = String(url || "").trim();
-      if (!/^https?:\/\//i.test(normalizedUrl)) {
-        return false;
-      }
-      try {
-        const hostname = String(new URL(normalizedUrl).hostname || "")
-          .toLowerCase()
-          .replace(/^\[|\]$/g, "");
-        return !["127.0.0.1", "localhost", "::1"].includes(hostname);
-      } catch (_) {
-        return !/^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?(?:\/|$)/i.test(normalizedUrl);
-      }
+      return isRemoteDirectHttpUrl(url);
     },
     getPlaybackCapabilities() {
       const supports = (mimeType) => this.canPlayNatively(mimeType);

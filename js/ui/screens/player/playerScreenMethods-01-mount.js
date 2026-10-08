@@ -255,7 +255,7 @@ export function createPlayerScreenMethods01() {
           }
           this.handlePlaybackEnded();
         };
-        PlayerController.video?.addEventListener("ended", this.endedHandler);
+        PlayerController.on("ended", this.endedHandler);
         this.setControlsVisible(true, { focus: true });
       } else {
         this.loadingVisible = false;

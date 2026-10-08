@@ -52,7 +52,7 @@ export function createPlayerScreenMethods72() {
         return null;
       }
 
-      const hasCapabilityProbe = Boolean(PlayerController?.video);
+      const hasCapabilityProbe = PlayerController.hasMediaElement();
       const isWebOsRuntime = Environment.isWebOS();
       const capabilities =
         hasCapabilityProbe && typeof PlayerController.getPlaybackCapabilities === "function"

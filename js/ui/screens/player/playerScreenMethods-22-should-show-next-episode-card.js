@@ -44,9 +44,8 @@ export function createPlayerScreenMethods22() {
       return shouldShow;
     },
     hasFatalPlaybackError() {
-      const controllerErrorCode =
-        typeof PlayerController.getLastPlaybackErrorCode === "function" ? Number(PlayerController.getLastPlaybackErrorCode() || 0) : 0;
-      const nativeErrorCode = Number(PlayerController.video?.error?.code || 0);
+      const controllerErrorCode = Number(PlayerController.getLastPlaybackErrorCode() || 0);
+      const nativeErrorCode = PlayerController.getMediaElementErrorCode();
       return (
         this.isStartupErrorVisible() || Boolean(String(this.sourcesError || "").trim()) || controllerErrorCode > 0 || nativeErrorCode > 0
       );

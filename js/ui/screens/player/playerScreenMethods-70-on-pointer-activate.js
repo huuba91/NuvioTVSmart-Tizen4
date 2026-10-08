@@ -165,6 +165,7 @@ export function createPlayerScreenMethods70() {
         return;
       }
       this.showAspectToast(t("player_engine_switching_title", {}, "Switching player"));
+      PlayerController.recordPlaybackFallback?.(PlayerController.playbackEngine, targetEngine, "user-requested-engine-switch");
       void this.playStreamByUrl(this.activePlaybackUrl, {
         preservePlaybackState: true,
         resetSilentAudioState: false,

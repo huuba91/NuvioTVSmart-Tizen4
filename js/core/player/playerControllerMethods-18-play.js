@@ -2,7 +2,16 @@
 import * as internals from "./playerController.js";
 
 export function createPlayerControllerMethods18() {
-  const { Platform, TizenPlaybackProxy, WebOsPlaybackProxy, logEngineFsDebug, logTizenAvPlayDebug, logWebOsPlaybackDebug, canFallbackFromPlaybackEngine, buildTizenAddonHlsProxyUrl } = internals;
+  const {
+    Platform,
+    TizenPlaybackProxy,
+    WebOsPlaybackProxy,
+    logEngineFsDebug,
+    logTizenAvPlayDebug,
+    logWebOsPlaybackDebug,
+    canFallbackFromPlaybackEngine,
+    buildTizenAddonHlsProxyUrl
+  } = internals;
 
   return {
     async play(
@@ -27,7 +36,8 @@ export function createPlayerControllerMethods18() {
         cloudSessionToken = null,
         preserveTrackSelections = false,
         addonId = null,
-        addonBaseUrl = null
+        addonBaseUrl = null,
+        stream = null
       } = {}
     ) {
       if (!this.video) return;
@@ -38,6 +48,7 @@ export function createPlayerControllerMethods18() {
         : directRequestedUrl;
       const playToken = Number(this.playRequestToken || 0) + 1;
       this.playRequestToken = playToken;
+      this.emitPlayerEvent("loading", { url: directRequestedUrl, forceEngine: forceEngine || null });
       this.stopProgressSaving();
       this.cancelProgressSyncAfterSeek();
 
@@ -98,7 +109,11 @@ export function createPlayerControllerMethods18() {
           return;
         }
       }
-      let preferredEngine = forceEngine || this.choosePlaybackEngine(url, sourceType, itemType);
+      // Inspection + decision are computed once per load and kept on the
+      // controller (getPlaybackInfo()). decision.preferredEngine is exactly
+      // what choosePlaybackEngine() returns for the same input.
+      const playbackDecision = this.preparePlaybackDecision({ url, sourceType, itemType, stream, forceEngine });
+      let preferredEngine = forceEngine || playbackDecision.preferredEngine;
       await this.ensureAdaptiveLibrariesForSource(sourceType, preferredEngine);
       if (!this.isPlaybackRequestActive(playToken, requestedUrl)) {
         return;
@@ -131,6 +146,7 @@ export function createPlayerControllerMethods18() {
           if (canFallbackToAvPlay) {
             // AVPlay can carry Cookie/User-Agent natively. Use the existing
             // Tizen HLS fallback only when it preserves every declared header.
+            this.recordPlaybackFallback(preferredEngine, avplayEngine, "tizen-playback-proxy-unavailable");
             preferredEngine = avplayEngine;
             tizenAvPlayFallbackForProxyUnavailable = true;
           } else {
@@ -244,17 +260,19 @@ export function createPlayerControllerMethods18() {
             });
             return;
           }
+          this.recordPlaybackFallback(this.getPlatformAvplayEngineName(), nativeFallbackEngine, "avplay-start-failed");
           this.applyNativeSource(playbackUrl, sourceType || null, nativeFallbackEngine);
           this.attemptVideoPlay({
             warningLabel: "Playback start rejected",
             playToken,
             beforePlay: () => this.waitForNativeMediaId(),
-          onRejected: (error) => {
-            if (!canFallbackFromPlaybackEngine(forceEngine) || !this.isUnsupportedSourceError(error) || !this.canUseAvPlay()) {
+            onRejected: (error) => {
+              if (!canFallbackFromPlaybackEngine(forceEngine) || !this.isUnsupportedSourceError(error) || !this.canUseAvPlay()) {
                 return false;
               }
               const fallbackStarted = this.playWithAvPlay(playbackUrl, requestHeaders, sourceType, playToken);
               if (fallbackStarted) {
+                this.recordPlaybackFallback(nativeFallbackEngine, this.getPlatformAvplayEngineName(), "native-source-unsupported");
                 this.isPlaying = true;
               }
               return fallbackStarted;
@@ -275,6 +293,7 @@ export function createPlayerControllerMethods18() {
             });
             return;
           }
+          this.recordPlaybackFallback("hls.js", "native-hls", "hls.js-start-failed");
           this.applyNativeSource(playbackUrl, sourceType || "application/vnd.apple.mpegurl", "native-hls");
           this.attemptVideoPlay({
             warningLabel: "Playback start rejected",
@@ -285,6 +304,7 @@ export function createPlayerControllerMethods18() {
       } else if (preferredEngine === "dash.js") {
         const dashStarted = this.playWithDashJs(playbackUrl, playToken);
         if (!dashStarted) {
+          this.recordPlaybackFallback("dash.js", "native-dash", "dash.js-start-failed");
           this.applyNativeSource(playbackUrl, sourceType || "application/dash+xml", "native-dash");
         }
         this.attemptVideoPlay({
@@ -304,6 +324,7 @@ export function createPlayerControllerMethods18() {
             }
             const fallbackStarted = this.playWithHlsJs(playbackUrl, requestHeaders, playToken);
             if (fallbackStarted) {
+              this.recordPlaybackFallback("native-hls", "hls.js", "native-source-unsupported");
               this.isPlaying = true;
             }
             return fallbackStarted;
@@ -321,6 +342,7 @@ export function createPlayerControllerMethods18() {
             }
             const fallbackStarted = this.playWithDashJs(playbackUrl, playToken);
             if (fallbackStarted) {
+              this.recordPlaybackFallback("native-dash", "dash.js", "native-source-unsupported");
               this.isPlaying = true;
             }
             return fallbackStarted;
@@ -345,11 +367,17 @@ export function createPlayerControllerMethods18() {
           playToken,
           beforePlay: shouldStageWebOsNativePlayback ? null : () => this.waitForNativeMediaId(),
           onRejected: (error) => {
-            if (!canFallbackFromPlaybackEngine(forceEngine) || !this.isUnsupportedSourceError(error) || !this.canUseAvPlay() || !this.isLikelyDirectFileUrl(playbackUrl)) {
+            if (
+              !canFallbackFromPlaybackEngine(forceEngine) ||
+              !this.isUnsupportedSourceError(error) ||
+              !this.canUseAvPlay() ||
+              !this.isLikelyDirectFileUrl(playbackUrl)
+            ) {
               return false;
             }
             const fallbackStarted = this.playWithAvPlay(playbackUrl, requestHeaders, sourceType, playToken);
             if (fallbackStarted) {
+              this.recordPlaybackFallback("native-file", this.getPlatformAvplayEngineName(), "native-source-unsupported");
               this.isPlaying = true;
             }
             return fallbackStarted;

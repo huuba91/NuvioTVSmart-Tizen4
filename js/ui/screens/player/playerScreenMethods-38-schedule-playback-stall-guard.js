@@ -31,10 +31,7 @@ export function createPlayerScreenMethods38() {
           return;
         }
 
-        const readyState =
-          typeof PlayerController.getPlaybackReadyState === "function"
-            ? Number(PlayerController.getPlaybackReadyState() || 0)
-            : Number(PlayerController.video?.readyState || 0);
+        const readyState = Number(PlayerController.getPlaybackReadyState() || 0);
         if (startup) {
           if (this.markPlaybackPresentedAfterAdvance()) {
             this.loadingVisible = false;
@@ -72,7 +69,7 @@ export function createPlayerScreenMethods38() {
         }
 
         const startupMediaErrorCode = Number(PlayerController.getLastPlaybackErrorCode?.() || 0);
-        const networkState = Number(PlayerController.video?.networkState ?? 0);
+        const networkState = PlayerController.getMediaNetworkState();
         const startupHlsError =
           startup && typeof PlayerController.getLastHlsErrorDetail === "function" ? PlayerController.getLastHlsErrorDetail() : "";
         const lastHlsErrorDiagnostic =
@@ -179,11 +176,11 @@ export function createPlayerScreenMethods38() {
             ? PlayerController.getAlternativePlaybackEngine(this.activePlaybackUrl)
             : null;
         if (targetEngine && !skipAutomaticPlaybackRecovery) {
-          console.warn("Playback stalled; switching player engine", {
-            url: this.activePlaybackUrl,
-            from: PlayerController.playbackEngine,
-            to: targetEngine
-          });
+          PlayerController.recordPlaybackFallback?.(
+            PlayerController.playbackEngine,
+            targetEngine,
+            startup ? "startup-stall" : "playback-stall"
+          );
           void this.playStreamByUrl(this.activePlaybackUrl, {
             preservePlaybackState: true,
             resetSilentAudioState: false,

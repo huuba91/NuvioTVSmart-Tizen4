@@ -21,20 +21,11 @@ export function createPlayerScreenMethods31() {
       this.updateLoadingVisibility();
       this.prepareBitmapSubtitleForSeek(this.seekLoadingTargetSeconds);
       this.prepareWebOsEmbeddedTextSubtitleForSeek(this.seekLoadingTargetSeconds);
-      if (typeof PlayerController.seekToSeconds === "function") {
-        const didSeek = Boolean(PlayerController.seekToSeconds(seconds));
-        if (!didSeek) {
-          this.clearSeekLoading();
-        }
-        return didSeek;
-      }
-      const video = PlayerController.video;
-      if (!video) {
+      const didSeek = Boolean(PlayerController.seekToSeconds(seconds));
+      if (!didSeek) {
         this.clearSeekLoading();
-        return false;
       }
-      video.currentTime = Number(seconds || 0);
-      return true;
+      return didSeek;
     },
     finalizePendingPlaybackRestore(restore = this.pendingPlaybackRestore) {
       if (!restore || this.pendingPlaybackRestore !== restore) {
