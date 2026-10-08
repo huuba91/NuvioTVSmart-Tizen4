@@ -2,7 +2,7 @@
 import * as internals from "./playerController.js";
 
 export function createPlayerControllerMethods16() {
-  const { Platform, loadStreamingLibs, WATCH_PROGRESS_SAVE_INTERVAL_MS } = internals;
+  const { Platform, loadStreamingLibs, WATCH_PROGRESS_SAVE_INTERVAL_MS, choosePreferredPlaybackEngine } = internals;
 
   return {
     setWebOsEmbeddedSubtitleTrack(trackIndex, selectedTrackIndex = trackIndex) {
@@ -92,9 +92,12 @@ export function createPlayerControllerMethods16() {
           }
           this.applyStartupAudioGateToVideo();
           const playPromise = this.video.play();
-          return this.handleNativePlayStartedUnderStartupGate(playPromise);
+          // Wrapped so the chain does not adopt the play() promise: its rejection must reach
+          // onRejected below (the engine fallbacks), not the generic catch at the end.
+          return { playPromise: this.handleNativePlayStartedUnderStartupGate(playPromise) };
         })
-        .then((playPromise) => {
+        .then((started) => {
+          const playPromise = started ? started.playPromise : null;
           if (!playPromise || typeof playPromise.catch !== "function") {
             return null;
           }
@@ -128,23 +131,7 @@ export function createPlayerControllerMethods16() {
         });
     },
     choosePlaybackEngine(url, sourceType, itemType = this.currentItemType) {
-      if (Platform.isTizen() && this.canUseAvPlay() && !this.isTizenHlsSource(url, sourceType)) {
-        return this.getPlatformAvplayEngineName();
-      }
-      const candidates = this.getPlaybackEngineCandidates(url, sourceType, itemType);
-      if (candidates.length) {
-        return candidates[0];
-      }
-      if (this.canUseAvPlay()) {
-        return this.getPlatformAvplayEngineName();
-      }
-      if (Platform.isTizen() && this.isRemoteDirectHttpSource(url)) {
-        // Keep remote progressive playback on the AVPlay path even when the
-        // native API is unavailable, so the caller reports a controlled
-        // unsupported-platform error instead of leaking the URL to <video>.
-        return this.getPlatformAvplayEngineName();
-      }
-      return "native-file";
+      return choosePreferredPlaybackEngine(this.getPlaybackSourceTraits(url, sourceType, itemType), this.getPlaybackEngineFlags());
     },
     async ensureAdaptiveLibrariesForSource(sourceType, playbackEngine = null) {
       const normalizedEngine = String(playbackEngine || "").trim();
@@ -265,6 +252,8 @@ export function createPlayerControllerMethods16() {
           this.forceAvPlayFallbackForCurrentSource("native_no_audio_tracks");
         }
       });
+
+      this.bindPlayerEventBridge();
 
       if (!this.lifecycleBound) {
         this.lifecycleBound = true;

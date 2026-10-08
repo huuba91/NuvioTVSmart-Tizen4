@@ -1,5 +1,7 @@
 # Tizen 4 Engineering Log
 
+Research diary, kept for history. The research harnesses it mentions (`MATRIX*` playback matrix, `PKG*` direct-play probes, `scripts/tizen4-media-probe-server.py`, `scripts/tizen4-matrix-collector.py`, the `NUVIO_TIZEN4_MATRIX_*` and `NUVIO_TIZEN4_PROBE_MEDIA_FILE` build variables) were removed from the app in the production cleanup; see [../nuvio-production-cleanup.md](../nuvio-production-cleanup.md).
+
 Target hardware: Samsung UE49NU7100 (2018), Tizen 4.0 / Chromium 56.
 
 ## Baseline (2026-09-25)

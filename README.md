@@ -64,12 +64,15 @@ The script builds from source, packages the WGT with EngineFS and without the un
 
 The signed development artifact is written to `.cache/tizen4-deploy/NuvioTV001_<version>.wgt`. The low-level `scripts/package-tizen.mjs` command now rejects stale frontend output; use `npm run package:tizen` unless a diagnostic workflow has explicitly run `npm run build` first.
 
+`npm run package:tizen` and the deploy script build the production flavour. For the developer-diagnostics flavour (Settings > About > Console debug and the EngineFS `/netcheck` self-test) use `npm run package:tizen:dev` or `deploy-tizen4.ps1 -DevDiagnostics`; see [docs/nuvio-production-cleanup.md](docs/nuvio-production-cleanup.md).
+
 Samsung author/distributor certificates, private keys, profile exports, `local.properties`, generated WGTs, build output, and deployment caches are excluded from Git. The deployment script only references an existing signing profile and never creates or modifies signing identities.
 
 ## Tizen 4 architecture and validation
 
 - [Streaming and P2P architecture](docs/tizen4-streaming-architecture.md)
-- [Hardware engineering log](docs/tizen4-engineering-log.md)
+- [Hardware engineering log (research)](docs/research/tizen4-engineering-log.md)
+- [Production cleanup and build flavours](docs/nuvio-production-cleanup.md)
 - [Release validation matrix](docs/tizen4-validation-matrix.md)
 
 The app remains a locally packaged frontend. User-configured Stremio-compatible HTTP add-ons flow through manifest/resource validation, normalized stream objects, resolver selection, and the shared player. Progressive MP4 uses AVPlay first; HLS and DASH use the hardware-tested MSE paths on this TV. Torrent sources use the packaged on-TV EngineFS service and expose a local byte-range stream to AVPlay—no PC, phone, cloud transcoder, or external streaming server is required after installation.

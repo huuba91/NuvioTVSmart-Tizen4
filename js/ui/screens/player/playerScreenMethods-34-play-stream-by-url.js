@@ -135,8 +135,7 @@ export function createPlayerScreenMethods34() {
       this.cancelSeekPreview({ commit: false });
       if (preservePlaybackState) {
         const restoreTimeSeconds = this.getPlaybackCurrentSeconds();
-        const video = PlayerController.video;
-        const usingAvPlay = typeof PlayerController.isUsingAvPlay === "function" ? PlayerController.isUsingAvPlay() : false;
+        const mediaElementPaused = PlayerController.isMediaElementPaused();
         const hasExistingResumeRestore = Boolean(
           this.pendingPlaybackRestore &&
           (Number(this.pendingPlaybackRestore.timeSeconds || 0) > 1 || Number(this.pendingPlaybackRestore.progressPercent || 0) > 0)
@@ -145,7 +144,7 @@ export function createPlayerScreenMethods34() {
         if (!(hasExistingResumeRestore && !hasUsefulCurrentPosition)) {
           this.pendingPlaybackRestore = {
             timeSeconds: Number.isFinite(restoreTimeSeconds) ? restoreTimeSeconds : 0,
-            paused: Boolean(this.paused || (!usingAvPlay && video?.paused)),
+            paused: Boolean(this.paused || mediaElementPaused),
             attempts: 0,
             lastAttemptAt: 0
           };

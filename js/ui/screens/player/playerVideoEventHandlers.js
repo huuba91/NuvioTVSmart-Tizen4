@@ -1,5 +1,6 @@
 /* eslint-disable no-unused-vars */
 import * as internals from "./playerScreenContext.js";
+import { AmbilightController } from "../../../core/ambilight/ambilightController.js";
 
 export function createPlayerVideoEventHandlers(video, isTizenAvPlayPlayback) {
   const { PlayerController, isExpiredStreamUrl, isTerminalHlsHttpStatus, logEngineFsDebug, claimEngineFsPlayback } = internals;
@@ -77,6 +78,7 @@ export function createPlayerVideoEventHandlers(video, isTizenAvPlayPlayback) {
   };
 
   const onError = async (event) => {
+    AmbilightController.blackout(); // lights dark until playback runs again (onPlaying brings them back)
     if (this.isStartupErrorVisible()) {
       return;
     }
@@ -91,9 +93,8 @@ export function createPlayerVideoEventHandlers(video, isTizenAvPlayPlayback) {
     this.lastPlaybackErrorAt = now;
 
     const detailErrorCode = Number(event?.detail?.mediaErrorCode || 0);
-    const controllerErrorCode =
-      typeof PlayerController.getLastPlaybackErrorCode === "function" ? Number(PlayerController.getLastPlaybackErrorCode() || 0) : 0;
-    const mediaErrorCode = detailErrorCode || Number(video?.error?.code || 0) || controllerErrorCode;
+    const controllerErrorCode = Number(PlayerController.getLastPlaybackErrorCode() || 0);
+    const mediaErrorCode = detailErrorCode || PlayerController.getMediaElementErrorCode() || controllerErrorCode;
     const eventDetail = event?.detail && typeof event.detail === "object" ? event.detail : {};
     const playbackErrorDetail = this.getPlaybackEventErrorDetail(eventDetail);
     const terminalHlsHttpFailure = isTerminalHlsHttpStatus(eventDetail.hlsResponseCode);
@@ -208,12 +209,11 @@ export function createPlayerVideoEventHandlers(video, isTizenAvPlayPlayback) {
         this.paused = false;
         this.sourcesError = null;
         this.updateLoadingVisibility();
-        console.warn("Playback failed during startup; switching player engine", {
-          url: this.activePlaybackUrl,
-          mediaErrorCode,
-          from: PlayerController.playbackEngine,
-          to: targetEngine
-        });
+        PlayerController.recordPlaybackFallback?.(
+          PlayerController.playbackEngine,
+          targetEngine,
+          `startup-error mediaErrorCode=${mediaErrorCode}`
+        );
         void this.playStreamByUrl(this.activePlaybackUrl, {
           preservePanel: true,
           resetSilentAudioState: false,

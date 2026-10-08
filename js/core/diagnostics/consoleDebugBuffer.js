@@ -145,4 +145,4 @@ export function subscribeToConsoleDebugEvents(listener) {
   };
 }
 
-installConsoleDebugBuffer();
+// Installed by installDevDiagnostics.js, only in developer-diagnostics builds.

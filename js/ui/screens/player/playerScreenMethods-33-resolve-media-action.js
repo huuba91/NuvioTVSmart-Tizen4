@@ -174,14 +174,18 @@ export function createPlayerScreenMethods33() {
         return;
       }
 
-      const video = PlayerController.video || this.container?.querySelector?.("#videoPlayer");
-      const duration = Number(video?.duration);
-      const position = Number(video?.currentTime);
+      // The media session has only ever described HTML5 playback (the element
+      // carries no duration while AVPlay owns the picture); keep it that way.
+      if (!PlayerController.hasMediaElement() || PlayerController.isUsingAvPlay()) {
+        return;
+      }
+      const duration = Number(PlayerController.getDurationSeconds());
+      const position = Number(PlayerController.getCurrentTimeSeconds());
       if (!Number.isFinite(duration) || duration <= 0 || !Number.isFinite(position)) {
         return;
       }
 
-      const playbackRate = Number(video?.playbackRate);
+      const playbackRate = Number(PlayerController.getPlaybackRate());
       try {
         mediaSession.setPositionState({
           duration,

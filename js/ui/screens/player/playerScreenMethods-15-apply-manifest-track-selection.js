@@ -31,10 +31,8 @@ export function createPlayerScreenMethods15() {
         return;
       }
 
-      const video = PlayerController.video;
       const restoreTimeSeconds = this.getPlaybackCurrentSeconds();
-      const usingAvPlay = typeof PlayerController.isUsingAvPlay === "function" ? PlayerController.isUsingAvPlay() : false;
-      const restorePaused = Boolean(this.paused || (!usingAvPlay && video?.paused));
+      const restorePaused = Boolean(this.paused || PlayerController.isMediaElementPaused());
       this.pendingPlaybackRestore = {
         timeSeconds: Number.isFinite(restoreTimeSeconds) ? restoreTimeSeconds : 0,
         paused: restorePaused,

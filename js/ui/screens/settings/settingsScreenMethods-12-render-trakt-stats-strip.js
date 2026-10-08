@@ -1,10 +1,10 @@
 /* eslint-disable no-unused-vars */
+/* global __NUVIO_DEV_DIAGNOSTICS__ */
 import * as internals from "./settingsScreenContext.js";
 
 export function createSettingsScreenMethods12() {
   const {
     Router,
-    createTizen4DirectPlaybackProbe,
     ScreenUtils,
     renderMemberBrandWordmark,
     bindRootSidebarEvents,
@@ -132,28 +132,9 @@ export function createSettingsScreenMethods12() {
         }
         await this.render({ refreshModel: false });
       });
-      this.actionMap.set("about:debugConsole", () => Router.navigate("debugConsole"));
-      if (globalThis.__NUVIO_FORK_BUILD__) {
-        this.actionMap.set("about:tizen4PlaybackMatrix", () => {
-          Router.navigate("tizen4PlaybackMatrix");
-        });
-        this.actionMap.set("about:tizen4DirectPlay", () => {
-          const stream = createTizen4DirectPlaybackProbe();
-          Router.navigate("player", {
-            streamUrl: stream.url,
-            itemId: null,
-            itemType: "movie",
-            videoId: null,
-            startFromBeginning: true,
-            playerTitle: "Tizen 4 direct-play test (PKG3)",
-            playerSubtitle: "DIAG PKG3 pending · HTML-only packaged H.264 MP4",
-            streamCandidates: [stream],
-            preferredStreamId: stream.id,
-            playbackSourceContext: stream.streamOrigin,
-            forcePlaybackEngine: "native-file",
-            tizen4DiagnosticProbe: true
-          });
-        });
+      // Developer-diagnostics builds only; dropped from production bundles.
+      if (typeof __NUVIO_DEV_DIAGNOSTICS__ !== "undefined" && __NUVIO_DEV_DIAGNOSTICS__) {
+        this.actionMap.set("about:debugConsole", () => Router.navigate("debugConsole"));
       }
 
       return `
@@ -193,29 +174,13 @@ export function createSettingsScreenMethods12() {
                 title: t("about_licenses_attributions", {}, "Licenses & Attribution"),
                 subtitle: t("licenses_attributions_section_data", {}, "Data & services")
               })}
-              ${this.renderActionRow({
-                focusKey: "about:debugConsole",
-                title: t("about_debug_console_title", {}, "Console debug"),
-                subtitle: t("about_debug_console_subtitle", {}, "Show latest error/warning events"),
-                leadingIcon: "terminal"
-              })}
               ${
-                globalThis.__NUVIO_FORK_BUILD__
+                typeof __NUVIO_DEV_DIAGNOSTICS__ !== "undefined" && __NUVIO_DEV_DIAGNOSTICS__
                   ? this.renderActionRow({
-                      focusKey: "about:tizen4PlaybackMatrix",
-                      title: "Tizen 4 playback matrix (MATRIX5)",
-                      subtitle: "Automatically compare packaged MP4, remote MP4, HLS, HTML video and AVPlay",
-                      leadingIcon: "play"
-                    })
-                  : ""
-              }
-              ${
-                globalThis.__NUVIO_FORK_BUILD__
-                  ? this.renderActionRow({
-                      focusKey: "about:tizen4DirectPlay",
-                      title: "Tizen 4 direct-play test (PKG3)",
-                      subtitle: "Isolate the decoder with a small network-free H.264 file",
-                      leadingIcon: "play"
+                      focusKey: "about:debugConsole",
+                      title: t("about_debug_console_title", {}, "Console debug"),
+                      subtitle: t("about_debug_console_subtitle", {}, "Show latest error/warning events"),
+                      leadingIcon: "terminal"
                     })
                   : ""
               }

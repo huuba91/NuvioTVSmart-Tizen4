@@ -213,6 +213,17 @@ function configureRuntimeEnv() {
   });
 }
 
+// The /netcheck network self-test ships only in developer-diagnostics packages.
+// Production packages leave runtime/netcheck.cjs out, and then the route does
+// not exist: the request falls through to EngineFS like any unknown path.
+function hasNetcheckRuntime() {
+  try {
+    return require("fs").existsSync(require("path").join(__dirname, "runtime", "netcheck.cjs"));
+  } catch (_) {
+    return false;
+  }
+}
+
 function startEngineFsRuntime() {
   if (started) {
     diagnostic("start ignored", { reason: "runtime already requested" });
@@ -230,6 +241,7 @@ function startEngineFsRuntime() {
   var originalCreateServer = http.createServer;
   var mediaBridge = require("./runtime/tizen-media-bridge.cjs");
   var ambilight = require("./runtime/ambilight.cjs");
+  var netcheckAvailable = hasNetcheckRuntime();
   http.createServer = function (listener) {
     return originalCreateServer.call(http, function (request, response) {
       var requestUrl = String(request && request.url ? request.url : "");
@@ -237,7 +249,7 @@ function startEngineFsRuntime() {
         ambilight.handleRequest(request, response);
         return;
       }
-      if (requestUrl === "/netcheck") {
+      if (netcheckAvailable && requestUrl === "/netcheck") {
         // Network self-test; a failure to load or run it is reported, never thrown.
         try {
           require("./runtime/netcheck.cjs").handle(response);

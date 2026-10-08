@@ -43,7 +43,7 @@ export function createPlayerScreenMethods17() {
       resolverDetail = ""
     } = {}) {
       const lines = [];
-      const video = PlayerController.video || null;
+      const mediaElement = PlayerController.getMediaElementDiagnostics();
       const candidate =
         streamCandidate || this.getStreamCandidateByUrl(playbackUrl || this.activePlaybackUrl) || this.getCurrentStreamCandidate();
       const raw = candidate?.raw || {};
@@ -51,7 +51,7 @@ export function createPlayerScreenMethods17() {
       const headerNames =
         requestHeaders && typeof requestHeaders === "object" ? Object.keys(requestHeaders).filter(Boolean).join(", ") : "";
       const engineFs = candidate?.engineFs || raw?.engineFs || this.currentEngineFsStream || null;
-      const mediaError = video?.error || null;
+      const mediaError = mediaElement.error;
       const eventErrorDetail = this.getPlaybackEventErrorDetail(eventDetail);
       const avplaySnapshot = eventDetail?.avplaySnapshot || PlayerController.getAvPlayDiagnosticSnapshot?.() || null;
       const avplayErrorDiagnostic = eventDetail?.avplayErrorDetail || PlayerController.getLastAvPlayErrorDiagnostic?.() || null;
@@ -113,9 +113,9 @@ export function createPlayerScreenMethods17() {
         1200
       );
       pushPlaybackDiagnosticLine(lines, "HTML media error", mediaError?.message || mediaError?.code);
-      pushPlaybackDiagnosticLine(lines, "Video readyState", video?.readyState);
-      pushPlaybackDiagnosticLine(lines, "Video networkState", video?.networkState);
-      pushPlaybackDiagnosticLine(lines, "Current src", video?.currentSrc || video?.src, 420);
+      pushPlaybackDiagnosticLine(lines, "Video readyState", mediaElement.readyState);
+      pushPlaybackDiagnosticLine(lines, "Video networkState", mediaElement.networkState);
+      pushPlaybackDiagnosticLine(lines, "Current src", mediaElement.currentSrc, 420);
       pushPlaybackDiagnosticLine(lines, "Playback engine", PlayerController.playbackEngine || "unknown");
       pushPlaybackDiagnosticLine(lines, "Source", sourceLabel);
       pushPlaybackDiagnosticLine(lines, "Source type", sourceType);
