@@ -42,6 +42,7 @@ import {
  */
 
 const PING_INTERVAL_MS = 3000; // the service stops on its own after 10 s without a ping
+const PAUSE_DELAY_MS = 700; // longer than a seek or a short buffering pause
 const REQUEST_TIMEOUT_MS = 4000;
 export const AMBILIGHT_ZONE_COUNT = 8;
 
@@ -136,6 +137,7 @@ function warn(log, message, error) {
  * @param {Object} [deps.doc] document-like (addEventListener, visibilityState) for visibility
  * @param {Object} [deps.nav] navigator-like (sendBeacon) for requests while the page goes away
  * @param {number} [deps.pingIntervalMs]
+ * @param {number} [deps.pauseDelayMs] how long a pause must last before the lights react
  */
 export function createAmbilightController(deps = {}) {
   const fetchImpl = deps.fetchImpl || ((url, init) => fetch(url, init));
@@ -148,6 +150,16 @@ export function createAmbilightController(deps = {}) {
     deps.nav !== undefined ? deps.nav : typeof navigator !== "undefined" ? navigator : null;
   const log = deps.log !== undefined ? deps.log : console;
   const pingIntervalMs = deps.pingIntervalMs || PING_INTERVAL_MS;
+  // A seek or a short buffering hiccup fires a pause that is undone a moment later; only a pause
+  // that lasts this long darkens or holds the lights.
+  const pauseDelayMs = deps.pauseDelayMs !== undefined ? deps.pauseDelayMs : PAUSE_DELAY_MS;
+  let pauseTimer = null;
+  const cancelPendingPause = () => {
+    if (pauseTimer !== null) {
+      clearTimeout(pauseTimer);
+      pauseTimer = null;
+    }
+  };
 
   const state = {
     phase: "idle", // idle | starting | active
@@ -393,6 +405,7 @@ export function createAmbilightController(deps = {}) {
      * @param {{ zoneSource?: AmbilightZoneSource }} [options]
      */
     async start(options = {}) {
+      cancelPendingPause();
       try {
         if (options?.zoneSource) {
           controller.attachZoneSource(options.zoneSource);
@@ -461,16 +474,26 @@ export function createAmbilightController(deps = {}) {
 
     // Player paused: dark or hold the last colour, as the blackoutOnPause setting says.
     pause() {
-      try {
-        state.playerPaused = true;
-        sync();
-      } catch (error) {
-        warn(log, "Ambilight pause failed", error);
+      const apply = () => {
+        try {
+          pauseTimer = null;
+          state.playerPaused = true;
+          sync();
+        } catch (error) {
+          warn(log, "Ambilight pause failed", error);
+        }
+      };
+      cancelPendingPause();
+      if (pauseDelayMs > 0) {
+        pauseTimer = setTimeout(apply, pauseDelayMs);
+      } else {
+        apply();
       }
     },
 
     // Player playing again (also lifts a blackout).
     resume() {
+      cancelPendingPause();
       try {
         state.playerPaused = false;
         state.dark = false;
@@ -491,6 +514,7 @@ export function createAmbilightController(deps = {}) {
     },
 
     stop() {
+      cancelPendingPause();
       try {
         const baseUrl = state.baseUrl;
         resetSession();

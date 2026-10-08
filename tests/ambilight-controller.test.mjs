@@ -27,7 +27,13 @@ function eventTarget(extra = {}) {
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // A controller wired to fakes: fetch records the path of every request and answers like the service.
-function harness({ settings = {}, fetchFails = false, slowZones = false, tizen = true } = {}) {
+function harness({
+  settings = {},
+  fetchFails = false,
+  slowZones = false,
+  tizen = true,
+  pauseDelayMs = 0
+} = {}) {
   const store = createAmbilightSettingsStore(
     memoryBackend({
       enabled: true,
@@ -72,7 +78,8 @@ function harness({ settings = {}, fetchFails = false, slowZones = false, tizen =
     win: env.win,
     nav: env.nav,
     log: { warn() {} },
-    pingIntervalMs: 15
+    pingIntervalMs: 15,
+    pauseDelayMs
   });
   env.paths = () => env.calls.map((path) => path.split("?")[0]);
   env.last = () => env.calls[env.calls.length - 1];
@@ -335,4 +342,24 @@ test("start({ zoneSource }) attaches the source; attaching later switches a runn
     other.calls.find((path) => path.startsWith("/ambilight/start")).includes("source=external")
   );
   other.controller.stop();
+});
+
+test("a pause undone within the pause delay (seek, short buffering) leaves the lights alone", async () => {
+  const env = harness({ pauseDelayMs: 40 });
+  const { controller } = env;
+  await controller.start();
+  controller.pause();
+  controller.resume();
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  await controller.whenSettled();
+  assert.equal(env.calls.filter((path) => path.startsWith("/ambilight/pause")).length, 0);
+
+  controller.pause();
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  await controller.whenSettled();
+  controller.stop();
+  assert.deepEqual(
+    env.calls.filter((path) => path.startsWith("/ambilight/pause")),
+    ["/ambilight/pause?mode=black"]
+  );
 });
