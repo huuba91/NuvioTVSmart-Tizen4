@@ -68,7 +68,7 @@ test("defaults hold the whole configuration, including the strip address and DDP
     start: "bl",
     clockwise: true,
     level: 60,
-    ip: "192.168.129.19",
+    ip: "192.168.129.20",
     port: 4048,
     saturation: 130,
     smoothing: "medium",
@@ -99,7 +99,7 @@ test("a version 1 stored shape migrates with its values kept and the new fields 
     start: "tr",
     clockwise: false,
     level: 40,
-    ip: "192.168.129.19",
+    ip: "192.168.129.20",
     port: 4048,
     saturation: 130,
     smoothing: "medium",
@@ -115,15 +115,15 @@ test("a version 1 stored shape migrates with its values kept and the new fields 
 test("an empty store returns defaults without writing", () => {
   const backend = memoryBackend();
   const store = createAmbilightSettingsStore(backend);
-  assert.equal(store.get().strip.ip, "192.168.129.19");
+  assert.equal(store.get().strip.ip, "192.168.129.20");
   assert.equal(backend.writes, 0);
 });
 
 test("strip fields are validated: address, port, saturation steps, smoothing, layout", () => {
   const strip = (value) => normalizeAmbilightSettings({ strip: value }).strip;
   assert.equal(strip({ ip: " 10.0.0.007 " }).ip, "10.0.0.7");
-  assert.equal(strip({ ip: "300.1.1.1" }).ip, "192.168.129.19");
-  assert.equal(strip({ ip: "strip.local" }).ip, "192.168.129.19");
+  assert.equal(strip({ ip: "300.1.1.1" }).ip, "192.168.129.20");
+  assert.equal(strip({ ip: "strip.local" }).ip, "192.168.129.20");
   assert.equal(strip({ port: 70000 }).port, 4048);
   assert.equal(strip({ port: "4049" }).port, 4049);
   assert.equal(strip({ saturation: 140 }).saturation, 130); // nearest step

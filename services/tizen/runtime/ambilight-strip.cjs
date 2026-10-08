@@ -19,7 +19,7 @@ var ddp = require("./ddp-packet.cjs");
 
 var SEGMENTS = ddp.ZONES;
 var DDP_PORT = 4048;
-var DEFAULT_IP = "192.168.129.19";
+var DEFAULT_IP = "192.168.129.20";
 var GAMMA = 2.2; // LEDs are linear, the screen colours are not
 var DEFAULT_BRIGHT = 0.6; // PC strip_sync.py default
 var DEFAULT_SATURATION = 1.3; // PC strip_sync.py default

@@ -121,7 +121,7 @@ All configuration lives in `js/data/local/ambilightSettingsStore.js` (localStora
 | `blackoutOnPause`            | on              | Dark while paused                           |
 | `positions`, `maxBrightness` | packaged / 100% | one pair of rows per bulb                   |
 | `strip.enabled`              | off             | Surround strip                              |
-| `strip.ip`                   | 192.168.129.19  | Strip address                               |
+| `strip.ip`                   | 192.168.129.20  | Strip address                               |
 | `strip.port`                 | 4048 (DDP)      | not shown                                   |
 | `strip.layout`               | `edges-8`       | Strip layout (8 zones round the edges)      |
 | `strip.start`, `.clockwise`  | bottom left, cw | Strip controller end, Strip direction       |

@@ -92,7 +92,7 @@ test("start sends the stored configuration, then pause/resume/blackout/stop foll
   assert.equal(await controller.start(), true);
   assert.equal(controller.isActive(), true);
   const start = env.calls.find((path) => path.startsWith("/ambilight/start"));
-  assert.ok(start.includes("strip=on&stripIp=192.168.129.19&ddpPort=4048"), start);
+  assert.ok(start.includes("strip=on&stripIp=192.168.129.20&ddpPort=4048"), start);
   assert.ok(start.includes("pause=black&source=capture"), start);
 
   controller.pause();

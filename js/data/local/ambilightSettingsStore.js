@@ -23,7 +23,7 @@ export const AMBILIGHT_SMOOTHING_OPTIONS = ["low", "medium", "high"];
 // Layout presets: zone count plus how the zones sit on the picture. Start segment and direction are
 // separate settings. Only the 8-zone edge layout exists today.
 export const AMBILIGHT_STRIP_LAYOUTS = [{ id: "edges-8", zones: 8 }];
-export const AMBILIGHT_DEFAULT_STRIP_IP = "192.168.129.19";
+export const AMBILIGHT_DEFAULT_STRIP_IP = "192.168.129.20";
 export const AMBILIGHT_DEFAULT_DDP_PORT = 4048;
 
 export const AMBILIGHT_STRIP_DEFAULTS = Object.freeze({
