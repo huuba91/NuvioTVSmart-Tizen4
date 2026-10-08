@@ -765,10 +765,15 @@ Session.prototype.update = function (config, full) {
 };
 
 // Player paused. "black": dark until resume; "hold": keep showing the last colours (the strip
-// repeats them as its keep-alive). Either way no new frames are taken.
+// repeats them as its keep-alive). Either way no new frames are taken. "hold" after a blackout (app
+// shown again while paused) brings the last colours back.
 Session.prototype.pause = function (mode) {
   this.paused = true;
   if ((mode || this.pauseMode) === "black") this.blackout();
+  else if (this.dark) {
+    this.dark = false;
+    if (this.strip) this.strip.resume();
+  }
 };
 
 // Dark now: strip black (several packets), bulbs back to how they were.
