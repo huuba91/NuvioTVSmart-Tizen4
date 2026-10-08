@@ -22,6 +22,10 @@
 //   stay the same size for 3 pictures stop counting straight away.
 // - Vividness: saturation x1.5, faded out on (nearly) black-and-white video so grey scenes give
 //   neutral light instead of a tint from a tiny coloured element (Hyperion "saturation gain").
+// - Strip zones are stripes along the edges (an area statistic, never single pixels) and leave out
+//   small isolated highlights: samples far brighter than the zone's 85th percentile (subtitles, UI
+//   text, logos) do not count, so a few bright text pixels cannot swing a dark zone. The bulbs'
+//   left/center/right keep the untrimmed statistic.
 // - Never fully dark (15% floor) and a small bright highlight on a dark screen still lights the room.
 // - Warm white only for an almost entirely white screen, with hysteresis so it does not flip.
 // - Smoothing: a critically damped spring in Oklab with chroma kept apart, slow for gradual drifts and
@@ -50,6 +54,9 @@ var BAR_FRAMES = 3; // a new bar size must be seen this many pictures in a row
 var HUE_BINS = 24;
 var HUE_WIDTH = 0.125; // pixels this far from the dominant hue (in turns, 45 degrees) no longer count
 var HUE_STICKY = 0.8; // keep the previous dominant hue while it has at least 80% of the strongest one's weight
+var TRIM_BINS = 32; // strip zones: brightness histogram used to find the zone's own light level
+var TRIM_PERCENTILE = 0.85; // features smaller than 15% of a zone cannot move this percentile...
+var TRIM_MARGIN = 0.25; // ...and samples this much brighter than it are left out as highlights
 
 var LINEAR = (function () {
   var table = new Array(256);
@@ -192,15 +199,37 @@ Analyser.prototype.analyse = function (image, dt, withZones) {
 
   var self = this;
   if (!this.peaks) this.peaks = {};
-  function region(name, from, to, top, bottom) {
+  // Strip zones (trim): brightness above the zone's 85th percentile plus a margin is a small isolated
+  // highlight (subtitle or UI text, a logo) rather than the zone's light, and is left out entirely.
+  // A bright area covering more than 15% of the zone raises the percentile itself and still counts.
+  function outlierCut(from, to, y0, y1) {
+    var counts = [], n = 0, j, xx, yy, bin, seen = 0;
+    for (j = 0; j < TRIM_BINS; j++) counts.push(0);
+    for (yy = y0; yy < y1; yy++) {
+      for (xx = from; xx < to; xx++) {
+        j = yy * cols + xx;
+        if (mask[j] <= 0) continue;
+        counts[Math.min(TRIM_BINS - 1, Math.floor(value[j] * TRIM_BINS))]++;
+        n++;
+      }
+    }
+    if (!n) return 2;
+    for (bin = 0; bin < TRIM_BINS; bin++) {
+      seen += counts[bin];
+      if (seen >= TRIM_PERCENTILE * n) break;
+    }
+    return (bin + 1) / TRIM_BINS + TRIM_MARGIN;
+  }
+  function region(name, from, to, top, bottom, trim) {
     var y0 = top === undefined ? 0 : top, y1 = bottom === undefined ? rows : bottom;
+    var cut = trim ? outlierCut(from, to, y0, y1) : 2;
     // pass 1: hue histogram of the vivid pixels -> dominant hue
     var hist = [], cos = [], sin = [], bin, j, xx, yy;
     for (j = 0; j < HUE_BINS; j++) { hist.push(0); cos.push(0); sin.push(0); }
     for (yy = y0; yy < y1; yy++) {
       for (xx = from; xx < to; xx++) {
         j = yy * cols + xx;
-        if (weight[j] <= 0) continue;
+        if (weight[j] <= 0 || value[j] > cut) continue;
         bin = Math.floor(hue[j] * HUE_BINS) % HUE_BINS;
         hist[bin] += weight[j];
         cos[bin] += weight[j] * Math.cos(hue[j] * 2 * Math.PI);
@@ -227,6 +256,7 @@ Analyser.prototype.analyse = function (image, dt, withZones) {
     for (yy = y0; yy < y1; yy++) {
       for (xx = from; xx < to; xx++) {
         j = yy * cols + xx;
+        if (value[j] > cut) continue;
         var m = mask[j], w = weight[j], near = 1;
         if (useHue && w > 0) {
           var dh = Math.abs(hue[j] - peakHue) % 1;
@@ -250,19 +280,57 @@ Analyser.prototype.analyse = function (image, dt, withZones) {
     var w = x1 - x0, h = yb - ya, ex = Math.max(1, Math.round(w * EDGE)), ey = Math.max(1, Math.round(h * EDGE));
     var xs = [x0, x0 + Math.round(w / 3), x0 + Math.round((2 * w) / 3), x1];
     var ys = [ya, ya + Math.round(h / 3), ya + Math.round((2 * h) / 3), yb];
+    // Each zone is a stripe (an area of samples), never single pixels, with highlights trimmed.
     out.zones = {
-      tl: region("tl", xs[0], Math.max(xs[0] + 1, xs[1]), ya, ya + ey),
-      t: region("t", xs[1], Math.max(xs[1] + 1, xs[2]), ya, ya + ey),
-      tr: region("tr", xs[2], Math.max(xs[2] + 1, xs[3]), ya, ya + ey),
-      r: region("r", x1 - ex, x1, ys[1], Math.max(ys[1] + 1, ys[2])),
-      br: region("br", xs[2], Math.max(xs[2] + 1, xs[3]), yb - ey, yb),
-      b: region("b", xs[1], Math.max(xs[1] + 1, xs[2]), yb - ey, yb),
-      bl: region("bl", xs[0], Math.max(xs[0] + 1, xs[1]), yb - ey, yb),
-      l: region("l", x0, x0 + ex, ys[1], Math.max(ys[1] + 1, ys[2]))
+      tl: region("tl", xs[0], Math.max(xs[0] + 1, xs[1]), ya, ya + ey, true),
+      t: region("t", xs[1], Math.max(xs[1] + 1, xs[2]), ya, ya + ey, true),
+      tr: region("tr", xs[2], Math.max(xs[2] + 1, xs[3]), ya, ya + ey, true),
+      r: region("r", x1 - ex, x1, ys[1], Math.max(ys[1] + 1, ys[2]), true),
+      br: region("br", xs[2], Math.max(xs[2] + 1, xs[3]), yb - ey, yb, true),
+      b: region("b", xs[1], Math.max(xs[1] + 1, xs[2]), yb - ey, yb, true),
+      bl: region("bl", xs[0], Math.max(xs[0] + 1, xs[1]), yb - ey, yb, true),
+      l: region("l", x0, x0 + ex, ys[1], Math.max(ys[1] + 1, ys[2]), true)
     };
   }
   return out;
 };
+
+// ---- zones from another source -------------------------------------------------------------------
+// A zone source that already reduced a frame to one sRGB colour per zone (0..255, e.g. a native
+// decoder module) skips the Analyser; this turns such a colour into the same summary a uniform zone
+// of that colour would get from analyse(), so smoothing and outputs behave identically.
+function summaryFromRgb(rgb) {
+  var r = clamp01((Number(rgb && rgb[0]) || 0) / 255), g = clamp01((Number(rgb && rgb[1]) || 0) / 255);
+  var b = clamp01((Number(rgb && rgb[2]) || 0) / 255), hi = Math.max(r, g, b), lo = Math.min(r, g, b);
+  var sat = hi > 0 ? (hi - lo) / hi : 0;
+  return {
+    colour: [Math.pow(r, GAMMA), Math.pow(g, GAMMA), Math.pow(b, GAMMA)],
+    brightness: hi,
+    colourfulness: sat * sat * hi,
+    overall: hi
+  };
+}
+
+function averageRgb(list) {
+  var out = [0, 0, 0];
+  list.forEach(function (c) { for (var k = 0; k < 3; k++) out[k] += (Number(c[k]) || 0) / list.length; });
+  return out;
+}
+
+// 8 sRGB zone colours in STRIP_ZONES order -> { zones: { tl..l }, left, right, center } summaries,
+// the same shape analyse(image, dt, true) returns. The bulbs' left/right are the side zones with
+// their corners, center is all eight.
+function summariesFromZones(zones) {
+  var byName = {}, out = { zones: {} };
+  STRIP_ZONES.forEach(function (name, i) {
+    byName[name] = (zones && zones[i]) || [0, 0, 0];
+    out.zones[name] = summaryFromRgb(byName[name]);
+  });
+  out.left = summaryFromRgb(averageRgb([byName.tl, byName.l, byName.bl]));
+  out.right = summaryFromRgb(averageRgb([byName.tr, byName.r, byName.br]));
+  out.center = summaryFromRgb(averageRgb(STRIP_ZONES.map(function (name) { return byName[name]; })));
+  return out;
+}
 
 // ---- Oklab ------------------------------------------------------------------------------------------
 function cbrt(v) {
@@ -386,6 +454,8 @@ module.exports = {
   Analyser: Analyser,
   Region: Region,
   WHITE_BRIGHTNESS: WHITE_BRIGHTNESS,
+  summaryFromRgb: summaryFromRgb,
+  summariesFromZones: summariesFromZones,
   _internals: {
     summarise: summarise,
     toOklab: toOklab,

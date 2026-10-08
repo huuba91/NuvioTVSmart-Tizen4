@@ -15,15 +15,31 @@
 // service as ambilight-bulbs.json by scripts/make-ambilight-bulbs.py. Keys never
 // leave this process: the HTTP routes only expose ids, names and positions.
 //
+// Zone pipeline: a zone source produces one summary per part of the picture per fresh frame
+// (today the screen capture + Analyser below; a native decoder module in the app can instead post
+// 8 ready zone colours to /ambilight/zones), the summaries become goals of smoothed Regions, and
+// the outputs (Tuya bulbs: left/center/right; strip: 8 zones over DDP) follow those Regions.
+//
+// All configuration comes from the app (js/data/local/ambilightSettingsStore.js) as query parameters
+// of /ambilight/start and /ambilight/config; this file keeps no settings of its own.
+//
 // Routes (served through the EngineFS listener on 2710):
 //   GET /ambilight/bulbs                         configured bulbs, no keys
-//   GET /ambilight/start?assign=id:pos:max,..&level=N start or update a session
-//       &strip=<ip|on>&stripStart=0-7&stripDir=cw|ccw&stripBright=N  also drive the 8-segment surround
-//       strip (ambilight-strip.cjs) over DDP; stripStart is where the strip's controller end sits,
-//       0 = top-left, then clockwise (tl t tr r br b bl l)
+//   GET /ambilight/start?<config>                start a session, or update and resume a running one
+//   GET /ambilight/config?<config>               update a running session live (never starts one)
+//       <config>: assign=id:pos:max,..  level=N  pause=black|hold  source=capture|external
+//       strip=on  stripIp=a.b.c.d  ddpPort=N  stripStart=0-7  stripDir=cw|ccw  stripBright=N
+//       stripSat=N (percent)  stripSmooth=low|medium|high  zones=8
+//       (strip=<ip> is still understood; stripStart is where the strip's controller end sits,
+//       0 = top-left, then clockwise: tl t tr r br b bl l)
 //   GET /ambilight/level?value=N                 change the overall brightness live
+//   GET /ambilight/pause?mode=black|hold         player paused: go dark or hold the last colours
+//   GET /ambilight/resume                        follow the picture again
+//   GET /ambilight/blackout                      go dark now (playback error, app hidden) until resume
+//   GET /ambilight/zones?z=<48 hex>&frame=N&pts=ms  8 zone colours (rrggbb x 8, STRIP_ZONES order)
+//                                                from an external source (session source=external)
 //   GET /ambilight/ping                          keep the session alive
-//   GET /ambilight/stop                          stop and restore the bulbs
+//   GET /ambilight/stop                          stop: strip black, bulbs restored
 //   GET /ambilight/state                         diagnostics
 
 var BULBS_FILE = "ambilight-bulbs.json";
@@ -38,6 +54,7 @@ var WATCHDOG_MS = 10000; // stop when the app stops pinging (player gone, app ki
 var MAX_FAILED_CAPTURES = 6;
 var TICK_MS = 50; // colour updates per bulb between pictures: 20/s (the PC sync sends up to 30/s)
 var FLIP_BACK_AFTER = 500; // anti-flicker: no straight return to the colour just left within this time
+var IDLE_POLL_MS = 250; // capture workers check this often whether they may capture again
 
 var colourEngine = require("./ambilight-colour.cjs");
 var stripOutput = require("./ambilight-strip.cjs");
@@ -118,16 +135,58 @@ function parseAssignments(text) {
   return out;
 }
 
-// "strip=on|ip" (+ stripStart, stripDir, stripBright) -> config for ambilight-strip.cjs, or null for no strip.
+// "strip=on|ip" (+ stripIp, ddpPort, stripStart, stripDir, stripBright, stripSat, stripSmooth) -> config
+// for ambilight-strip.cjs, or null for no strip. The address comes from the app; the strip module's
+// DEFAULT_IP is used only when the request names none.
 function parseStrip(query) {
   var flag = String((query && query.strip) || "");
   if (!flag || flag === "off" || flag === "0") return null;
-  var start = Number(query.stripStart), bright = Number(query.stripBright);
-  return {
-    ip: stripOutput._internals.normalizeIp(flag) || stripOutput.DEFAULT_IP,
+  var start = Number(query.stripStart), bright = Number(query.stripBright), sat = Number(query.stripSat);
+  var normalizeIp = stripOutput._internals.normalizeIp;
+  var config = {
+    ip: normalizeIp(query.stripIp) || normalizeIp(flag) || "",
     start: isFinite(start) ? start : 0,
     clockwise: String(query.stripDir || "cw").toLowerCase() !== "ccw",
     bright: isFinite(bright) && bright > 0 ? Math.min(100, bright) : 0
+  };
+  if (stripOutput._internals.normalizePort(query.ddpPort)) config.ddpPort = stripOutput._internals.normalizePort(query.ddpPort);
+  if (isFinite(sat) && sat > 0) config.saturation = Math.min(250, sat);
+  if (query.stripSmooth) config.smoothing = stripOutput._internals.normalizeSmoothing(query.stripSmooth);
+  return config;
+}
+
+function parsePauseMode(value, fallback) {
+  var text = String(value || "").toLowerCase();
+  return text === "black" || text === "hold" ? text : fallback;
+}
+
+function parseSource(value, fallback) {
+  var text = String(value || "").toLowerCase();
+  return text === "capture" || text === "external" ? text : fallback;
+}
+
+// "rrggbb" x 8 -> [[r, g, b] x 8], or null when malformed.
+function parseZones(text) {
+  var hexText = String(text || "");
+  if (!/^[0-9a-fA-F]{48}$/.test(hexText)) return null;
+  var out = [];
+  for (var i = 0; i < 8; i++) {
+    out.push([parseInt(hexText.substr(i * 6, 2), 16), parseInt(hexText.substr(i * 6 + 2, 2), 16),
+      parseInt(hexText.substr(i * 6 + 4, 2), 16)]);
+  }
+  return out;
+}
+
+// Everything a start or config request can carry. Missing values stay null: "leave as it is".
+function parseConfig(query) {
+  var level = Number(query.level);
+  return {
+    assignments: parseAssignments(query.assign),
+    level: isFinite(level) && level > 0 ? Math.min(100, level) : null,
+    strip: parseStrip(query),
+    hasStrip: query.strip !== undefined,
+    pauseMode: parsePauseMode(query.pause, null),
+    source: parseSource(query.source, null)
   };
 }
 
@@ -423,6 +482,13 @@ Bulb.prototype.restore = function () {
   return any ? this.set(dps) : false;
 };
 
+// Pause to black / blackout: put the bulb back the way it was (as stop does), or switch it off when
+// its earlier state is unknown. The next colour re-enters colour mode (and switches it on again).
+Bulb.prototype.goDark = function () {
+  if (this.inColour && !this.restore()) this.set({ 1: false });
+  this.mode = ""; this.lastHex = ""; this.prevHex = "";
+};
+
 Bulb.prototype.close = function () {
   this.autoReconnect = false;
   try { if (this.socket) this.socket.destroy(); } catch (_) {}
@@ -505,6 +571,13 @@ function Session(bulbs, level, stripConfig) {
   this.level = level;
   this.running = false;
   this.stopped = false;
+  this.paused = false; // player paused: no new frames are taken
+  this.dark = false; // outputs dark (pause to black, blackout) until resume
+  this.pauseMode = "black"; // what /ambilight/pause does without a mode (app setting blackoutOnPause)
+  this.source = "capture"; // "external": zones arrive on /ambilight/zones and the capture idles
+  this.lastFrameId = -1;
+  this.externalFrames = 0;
+  this.staleFrames = 0;
   this.lastPing = Date.now();
   this.shownBegun = 0;
   this.captures = 0;
@@ -595,6 +668,11 @@ Session.prototype.begin = function () {
 Session.prototype.loop = function (worker) {
   var self = this;
   if (this.stopped) return;
+  if (this.captureIdle()) {
+    // paused, dark or fed by an external source: no capture (CPU stays free), check again shortly
+    setTimeout(function () { self.loop(worker); }, IDLE_POLL_MS);
+    return;
+  }
   var begun = Date.now();
   captureOnce(CAPTURE_PREFIX + worker, function (error, image) {
     if (self.stopped) return;
@@ -606,7 +684,8 @@ Session.prototype.loop = function (worker) {
       return;
     }
     self.captures++;
-    if (begun >= self.shownBegun) {
+    // a picture taken before a pause or a newer one must not move the lights afterwards
+    if (begun >= self.shownBegun && !self.captureIdle()) {
       self.shownBegun = begun;
       self.analyse(image);
     }
@@ -614,40 +693,97 @@ Session.prototype.loop = function (worker) {
   });
 };
 
+Session.prototype.captureIdle = function () {
+  return this.paused || this.dark || this.source !== "capture";
+};
+
 // A new picture only moves the goal; tick() glides the bulbs towards it.
 Session.prototype.analyse = function (image) {
   var now = Date.now(), dt = this.lastPicture ? Math.min(1, (now - this.lastPicture) / 1000) : 0.1;
   this.lastPicture = now;
-  var summary = this.analyser.analyse(image, dt, !!this.strip), regions = this.regions;
-  POSITIONS.forEach(function (pos) { regions[pos].setGoal(summary[pos]); });
-  if (this.strip && summary.zones) {
-    this.strip.setGoals(summary.zones);
-    this.strip.record(this.strip.analyseMs, Date.now() - now); // whole picture analysis incl. the 8 zones
+  this.feed(this.analyser.analyse(image, dt, !!this.strip));
+  if (this.strip) this.strip.record(this.strip.analyseMs, Date.now() - now); // whole picture analysis incl. the 8 zones
+};
+
+// The source-independent end of the pipeline: one fresh frame's summaries ({ left, center, right,
+// zones }) become the goals every output glides towards.
+Session.prototype.feed = function (summary) {
+  var regions = this.regions;
+  POSITIONS.forEach(function (pos) { if (summary[pos]) regions[pos].setGoal(summary[pos]); });
+  if (this.strip && summary.zones) this.strip.setGoals(summary.zones);
+};
+
+// 8 ready zone colours from an external source (the app's native decoder module). Older or repeated
+// frame ids are dropped: a late request never moves the lights back to a stale frame.
+Session.prototype.feedZones = function (zones, frameId) {
+  if (this.source !== "external" || this.paused || this.dark) return false;
+  if (isFinite(frameId) && frameId >= 0) {
+    if (frameId <= this.lastFrameId) { this.staleFrames++; return false; }
+    this.lastFrameId = frameId;
   }
+  this.externalFrames++;
+  this.feed(colourEngine.summariesFromZones(zones));
+  return true;
 };
 
 // Runs between pictures too, so every bulb fades through intermediate colours instead of stepping.
 Session.prototype.tick = function () {
   var now = Date.now(), dt = Math.max(0.001, Math.min(0.25, (now - this.lastTick) / 1000)), states = {}, level = this.level;
+  var dark = this.dark;
   this.lastTick = now;
   var regions = this.regions;
   POSITIONS.forEach(function (pos) { states[pos] = regions[pos].step(dt); });
   this.bulbs.forEach(function (b) {
-    if (b.armed && b.pos !== "off" && states[b.pos]) b.show(states[b.pos], level);
+    if (!dark && b.armed && b.pos !== "off" && states[b.pos]) b.show(states[b.pos], level);
     b.heartbeat(now);
   });
-  if (this.strip) this.strip.tick(dt, level);
+  if (this.strip) this.strip.tick(dt, level, now);
 };
 
-Session.prototype.update = function (assignments, level, stripConfig) {
-  if (isFinite(level)) this.level = level;
-  if (stripConfig && this.strip) this.strip.configure(stripConfig);
-  else if (stripConfig) { this.strip = new stripOutput.Strip(stripConfig); this.strip.open(); }
-  else if (this.strip) { this.strip.close(); this.strip = null; }
+// config: parseConfig() output. full (start): a missing strip switches the strip off; otherwise
+// (config) the strip is only touched when the request mentions it.
+Session.prototype.update = function (config, full) {
+  var stripConfig = config.strip, assignments = config.assignments || {};
+  if (config.level !== null && isFinite(config.level)) this.level = config.level;
+  if (config.pauseMode) this.pauseMode = config.pauseMode;
+  if (config.source && config.source !== this.source) {
+    this.source = config.source;
+    this.lastFrameId = -1; // a new source numbers its own frames
+  }
+  if (full || config.hasStrip) {
+    if (stripConfig && this.strip) this.strip.configure(stripConfig);
+    else if (stripConfig) {
+      this.strip = new stripOutput.Strip(stripConfig);
+      this.strip.open();
+      if (this.dark) this.strip.blackout();
+    } else if (this.strip) { this.strip.close(); this.strip = null; }
+  }
   this.bulbs.forEach(function (b) {
     var a = assignments[b.id];
     if (a) { b.pos = a.pos; b.max = a.max; b.lastHex = ""; }
   });
+};
+
+// Player paused. "black": dark until resume; "hold": keep showing the last colours (the strip
+// repeats them as its keep-alive). Either way no new frames are taken.
+Session.prototype.pause = function (mode) {
+  this.paused = true;
+  if ((mode || this.pauseMode) === "black") this.blackout();
+};
+
+// Dark now: strip black (several packets), bulbs back to how they were.
+Session.prototype.blackout = function () {
+  if (this.dark) return;
+  this.dark = true;
+  if (this.strip) this.strip.blackout();
+  this.bulbs.forEach(function (b) { if (b.armed) b.goDark(); });
+};
+
+Session.prototype.resume = function () {
+  var wasDark = this.dark;
+  this.paused = false;
+  this.dark = false;
+  if (wasDark && this.strip) this.strip.resume();
 };
 
 Session.prototype.stop = function (reason) {
@@ -670,8 +806,14 @@ Session.prototype.stop = function (reason) {
 Session.prototype.describe = function () {
   return {
     running: this.running,
+    paused: this.paused,
+    dark: this.dark,
+    pauseMode: this.pauseMode,
+    source: this.source,
     level: this.level,
     captures: this.captures,
+    externalFrames: this.externalFrames,
+    staleFrames: this.staleFrames,
     perSecond: this.captures ? Math.round((this.captures * 10000) / (Date.now() - this.startedAt)) / 10 : 0,
     errors: this.errors,
     strip: this.strip ? this.strip.describe() : null,
@@ -688,21 +830,26 @@ Session.prototype.describe = function () {
   };
 };
 
-function start(assignments, level, stripConfig) {
+// config: parseConfig() output. A running session is updated (and resumed: "start" means run).
+function start(config) {
+  var assignments = config.assignments || {};
   if (session && !session.stopped) {
     session.lastPing = Date.now();
-    session.update(assignments, level, stripConfig);
+    session.update(config, true);
+    session.resume();
     return session;
   }
   // Only bulbs that follow a part of the screen are opened: an "off" bulb stays free for other apps.
   var bulbs = loadBulbs()
-    .map(function (config) {
-      var a = assignments[config.id] || { pos: config.pos, max: 100 };
-      return new Bulb({ id: config.id, name: config.name, key: config.key, ip: config.ip, pos: a.pos, max: a.max,
-        format: config.format });
+    .map(function (entry) {
+      var a = assignments[entry.id] || { pos: entry.pos, max: 100 };
+      return new Bulb({ id: entry.id, name: entry.name, key: entry.key, ip: entry.ip, pos: a.pos, max: a.max,
+        format: entry.format });
     })
     .filter(function (b) { return b.pos !== "off"; });
-  session = new Session(bulbs, level, stripConfig);
+  session = new Session(bulbs, config.level !== null ? config.level : 100, config.strip);
+  if (config.pauseMode) session.pauseMode = config.pauseMode;
+  if (config.source) session.source = config.source;
   session.begin();
   return session;
 }
@@ -735,10 +882,31 @@ function handleRequest(request, response) {
         sendJson(response, 200, { ok: true, bulbs: loadBulbs().map(publicBulb) });
         return;
       case "/ambilight/start": {
-        var level = Number(query.level);
-        var s = start(parseAssignments(query.assign), isFinite(level) && level > 0 ? Math.min(100, level) : 100,
-          parseStrip(query));
-        sendJson(response, 200, { ok: true, state: s.describe() });
+        var s = start(parseConfig(query));
+        sendJson(response, 200, { ok: true, active: !s.stopped, state: s.describe() });
+        return;
+      }
+      case "/ambilight/config":
+        if (session) session.update(parseConfig(query), false);
+        sendJson(response, 200, { ok: true, active: !!session, state: session ? session.describe() : null });
+        return;
+      case "/ambilight/pause":
+        if (session) session.pause(parsePauseMode(query.mode, null));
+        sendJson(response, 200, { ok: true, active: !!session, paused: !!(session && session.paused),
+          dark: !!(session && session.dark) });
+        return;
+      case "/ambilight/resume":
+        if (session) { session.lastPing = Date.now(); session.resume(); }
+        sendJson(response, 200, { ok: true, active: !!session });
+        return;
+      case "/ambilight/blackout":
+        if (session) session.blackout();
+        sendJson(response, 200, { ok: true, active: !!session, dark: !!(session && session.dark) });
+        return;
+      case "/ambilight/zones": {
+        var zones = parseZones(query.z), used = false;
+        if (session && zones) used = session.feedZones(zones, query.frame === undefined ? NaN : Number(query.frame));
+        sendJson(response, zones ? 200 : 400, { ok: !!zones, active: !!session, used: used });
         return;
       }
       case "/ambilight/level": {
@@ -773,11 +941,15 @@ module.exports = {
   isAmbilightRequest: isAmbilightRequest,
   handleRequest: handleRequest,
   stop: stop,
+  // the running session (tests and diagnostics only)
+  current: function () { return session; },
   // exported for tests
   _internals: {
     normalizeBulbList: normalizeBulbList,
     parseAssignments: parseAssignments,
     parseStrip: parseStrip,
+    parseConfig: parseConfig,
+    parseZones: parseZones,
     decodePng: decodePng,
     hsvToRgb255: hsvToRgb255,
     colourHex: colourHex,
