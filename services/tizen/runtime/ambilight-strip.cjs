@@ -4,25 +4,36 @@
 // Surround strip for the TV ambilight: an addressable LED strip (LSC 3 m RGBIC running OpenBeken
 // with the DDP driver) laid round the back of the TV in a rectangle. Each of its 8 segments follows
 // the edge of the picture next to it (ambilight-colour.cjs: STRIP_ZONES), and the colours go out as
-// one DDP packet per update over UDP.
+// one DDP packet per change over UDP (ddp-packet.cjs builds the bytes and paces them).
 //
 // OpenBeken startup command (same as the PC's strip_sync.py):
 //   backlog startDriver SM16703P; SM16703P_Init 16 BRG; startDriver DDP
 // That gives 16 pixels: even ones are the RGB segments 1..8, odd ones are white chips kept off.
+//
+// Everything that can be set (address, port, brightness, saturation, smoothing, layout) comes from
+// the app (js/data/local/ambilightSettingsStore.js) with /ambilight/start or /ambilight/config.
+// DEFAULT_IP is only a last resort for a request that names no address at all.
 
 var colourEngine = require("./ambilight-colour.cjs");
+var ddp = require("./ddp-packet.cjs");
 
-var SEGMENTS = 8;
+var SEGMENTS = ddp.ZONES;
 var DDP_PORT = 4048;
 var DEFAULT_IP = "192.168.129.19";
 var GAMMA = 2.2; // LEDs are linear, the screen colours are not
 var DEFAULT_BRIGHT = 0.6; // PC strip_sync.py default
-var SATURATION = 1.3; // PC strip_sync.py default
+var DEFAULT_SATURATION = 1.3; // PC strip_sync.py default
 var WARM_WHITE = [255, 170, 90];
 var STATS_WINDOW = 200;
-// The strip is a lot more responsive than a bulb (one UDP packet, no acknowledgement), so its colours
-// follow the picture much faster than the bulbs' 0.6 s: drifts settle in ~0.15 s, cuts in ~0.05 s.
-var FOLLOW = { smoothing: 0.15, cutSmoothing: 0.05 };
+var BLACKOUT_DELAYS = [0, 40, 80]; // ms: UDP can drop a packet, so "off" is said three times
+// The strip is a lot more responsive than a bulb (one UDP packet, no acknowledgement), so by default
+// its colours follow the picture much faster than the bulbs' 0.6 s: drifts settle in ~0.15 s, cuts in
+// ~0.05 s ("medium"). "high" is the bulbs' own glide (ambilight-colour.cjs), "low" follows closer still.
+var SMOOTHING = {
+  low: { smoothing: 0.08, cutSmoothing: 0.04 },
+  medium: { smoothing: 0.15, cutSmoothing: 0.05 },
+  high: { smoothing: 0.6, cutSmoothing: 0.08 }
+};
 
 function clamp(value, low, high) {
   return value < low ? low : value > high ? high : value;
@@ -30,7 +41,18 @@ function clamp(value, low, high) {
 
 function normalizeIp(value) {
   var text = String(value || "").trim();
-  return /^\d{1,3}(\.\d{1,3}){3}$/.test(text) ? text : "";
+  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(text)) return "";
+  return text.split(".").every(function (part) { return Number(part) <= 255; }) ? text : "";
+}
+
+function normalizePort(value) {
+  var n = Math.round(Number(value));
+  return isFinite(n) && n >= 1 && n <= 65535 ? n : 0;
+}
+
+function normalizeSmoothing(value) {
+  var text = String(value || "").toLowerCase();
+  return Object.prototype.hasOwnProperty.call(SMOOTHING, text) ? text : "medium";
 }
 
 // "start" is the segment that sits at the strip's controller end, as an index into STRIP_ZONES
@@ -44,14 +66,14 @@ function segmentOrder(start, clockwise) {
 }
 
 // Linear-light colour of a Region state for the strip, 0..255 per channel.
-function stateToRgb(state, level, bright) {
+function stateToRgb(state, level, bright, saturation) {
   var scale = clamp(level, 0, 100) / 100 * bright, hsv, rgb, i;
   if (!state) return [0, 0, 0];
   if (state.mode === "white") {
     var white = colourEngine.WHITE_BRIGHTNESS * 6 * scale; // warm light, a little stronger than the bulbs' 5%
     return [WARM_WHITE[0] * white, WARM_WHITE[1] * white, WARM_WHITE[2] * white];
   }
-  hsv = [state.hsv[0], Math.min(1, state.hsv[1] * SATURATION), state.hsv[2]];
+  hsv = [state.hsv[0], Math.min(1, state.hsv[1] * (saturation > 0 ? saturation : DEFAULT_SATURATION)), state.hsv[2]];
   rgb = hsvToRgb(hsv);
   for (i = 0; i < 3; i++) rgb[i] = 255 * Math.pow(rgb[i], GAMMA) * scale;
   return rgb;
@@ -63,41 +85,22 @@ function hsvToRgb(hsv) {
   return [[v, t, p], [q, v, p], [p, v, t], [p, q, v], [t, p, v], [v, p, q]][i % 6];
 }
 
-// 8 segment colours -> 16 physical pixels (segment, black, segment, black, ...).
-function buildPayload(colours) {
-  var payload = new Buffer(SEGMENTS * 2 * 3), i, k;
-  payload.fill(0);
-  for (i = 0; i < SEGMENTS; i++) {
-    for (k = 0; k < 3; k++) payload[i * 6 + k] = Math.round(clamp(colours[i][k], 0, 255));
-  }
-  return payload;
-}
-
-// DDP v1 with the push flag: 10 byte header, then the pixel data.
-function buildPacket(payload, sequence) {
-  var packet = new Buffer(10 + payload.length);
-  packet[0] = 0x41;
-  packet[1] = sequence & 15 || 1;
-  packet[2] = 0x01; // RGB, 8 bit
-  packet[3] = 1; // default output device
-  packet.writeUInt32BE(0, 4); // offset
-  packet.writeUInt16BE(payload.length, 8);
-  payload.copy(packet, 10);
-  return packet;
-}
+var buildPayload = ddp.buildPayload;
+var buildPacket = ddp.buildPacket;
 
 function Strip(config) {
-  this.configure(config);
   this.regions = {};
-  colourEngine.STRIP_ZONES.forEach(function (name) { this.regions[name] = new colourEngine.Region(FOLLOW); }, this);
+  this.configure(config);
   this.socket = null;
   this.method = 0;
   this.closed = false;
+  this.dark = false;
   this.httpBusy = false;
   this.httpWaiting = null;
   this.sequence = 0;
-  this.last = "";
+  this.pacer = new ddp.Pacer(ddp.KEEP_ALIVE_MS);
   this.sent = 0;
+  this.keepAlives = 0;
   this.skipped = 0;
   this.errors = [];
   this.sendMs = [];
@@ -105,15 +108,29 @@ function Strip(config) {
   this.colours = [];
 }
 
-// Also used while running, when a setting changes mid-playback.
+// Also used while running, when a setting changes mid-playback (/ambilight/config): nothing restarts,
+// the next tick simply uses the new values. A new address or port reopens the socket.
 Strip.prototype.configure = function (config) {
   config = config || {};
-  this.ip = normalizeIp(config.ip) || DEFAULT_IP;
+  var ip = normalizeIp(config.ip), port = normalizePort(config.ddpPort) || DDP_PORT;
+  var moved = this.ip !== undefined && (this.ip !== (ip || DEFAULT_IP) || this.ddpPort !== port);
+  this.ipFallback = !ip; // the app named no address: last-resort default
+  this.ip = ip || DEFAULT_IP;
+  this.ddpPort = port;
   this.order = segmentOrder(config.start, config.clockwise !== false);
   this.bright = clamp(Number(config.bright) > 0 ? Number(config.bright) / 100 : DEFAULT_BRIGHT, 0.05, 1);
-  this.ddpPort = config.ddpPort || DDP_PORT; // ports are only changed by tests
+  this.saturation = clamp(Number(config.saturation) > 0 ? Number(config.saturation) / 100 : DEFAULT_SATURATION, 0.5, 2.5);
+  this.smoothing = normalizeSmoothing(config.smoothing);
   this.webPort = config.webPort || 80;
   this.healthMs = config.healthMs || HEALTH_MS;
+  var follow = SMOOTHING[this.smoothing];
+  colourEngine.STRIP_ZONES.forEach(function (name) {
+    var region = this.regions[name];
+    if (!region) { this.regions[name] = new colourEngine.Region(follow); return; }
+    region.options = follow;
+    if (region.glide) { region.glide.smoothing = follow.smoothing; region.glide.cutSmoothing = follow.cutSmoothing; }
+  }, this);
+  if (moved && this.health && !this.closed) this.openMethod();
 };
 
 Strip.prototype.note = function (text) {
@@ -138,7 +155,7 @@ Strip.prototype.open = function () {
 Strip.prototype.openMethod = function () {
   var self = this, method = METHODS[this.method];
   this.closeSocket();
-  this.last = ""; // the next frame goes out even when it equals the last one
+  this.pacer.reset(); // the next frame goes out even when it equals the last one
   if (method === "udp-fresh" || method === "http") return; // nothing to keep open
   try {
     this.socket = require("dgram").createSocket("udp4");
@@ -221,7 +238,8 @@ Strip.prototype.checkHealth = function () {
   });
 };
 
-// The strip has no connection: the first frame is simply the first packet.
+// New zone goals from a fresh frame (capture or a native zone source). The strip has no
+// connection: the first frame is simply the first packet.
 Strip.prototype.setGoals = function (zones) {
   var regions = this.regions;
   colourEngine.STRIP_ZONES.forEach(function (name) { if (zones[name]) regions[name].setGoal(zones[name]); });
@@ -232,25 +250,34 @@ Strip.prototype.record = function (list, ms) {
   if (list.length > STATS_WINDOW) list.shift();
 };
 
-// Glide every zone one step, then send when the strip would actually look different.
-Strip.prototype.tick = function (dt, level) {
-  var regions = this.regions, order = this.order, bright = this.bright, colours = [], ready = false;
-  order.forEach(function (name) {
+// Glide every zone one step, then send when the strip would actually look different, or once a
+// second as a keep-alive when nothing changed. Dark (paused to black, blacked out): black only.
+Strip.prototype.tick = function (dt, level, now) {
+  var regions = this.regions, bright = this.bright, saturation = this.saturation, colours = [], ready = false;
+  if (this.dark) {
+    this.send(buildPayload(ddp.blackZones()), false, now);
+    return;
+  }
+  this.order.forEach(function (name) {
     var state = regions[name].step(dt);
     if (state) ready = true;
-    colours.push(stateToRgb(state, level, bright));
+    colours.push(stateToRgb(state, level, bright, saturation));
   });
   if (!ready) return;
   this.colours = colours;
-  this.send(buildPayload(colours), false);
+  this.send(buildPayload(colours), false, now);
 };
 
-Strip.prototype.send = function (payload, force) {
-  var key = payload.toString("hex"), method = this.currentMethod();
+// Paced send of the newest frame (there is no queue, so nothing stale is ever sent): a changed frame
+// goes at once, an identical one only as the keep-alive. force: always (black on blackout/close).
+Strip.prototype.send = function (payload, force, now) {
+  var key = payload.toString("hex"), method = this.currentMethod(), decision, packet;
   if (this.closed) return false;
-  if (!force && key === this.last) { this.skipped++; return false; }
-  var begun = Date.now(), self = this, packet;
-  this.sequence = this.sequence % 15 + 1;
+  now = now || Date.now();
+  decision = force ? "send" : this.pacer.decide(key, now);
+  if (decision === "skip") { this.skipped++; return false; }
+  var begun = Date.now(), self = this;
+  this.sequence = ddp.nextSequence(this.sequence);
   try {
     if (method === "http") {
       this.sendHttp(payload);
@@ -277,7 +304,8 @@ Strip.prototype.send = function (payload, force) {
     return false;
   }
   this.record(this.sendMs, Date.now() - begun);
-  this.last = key;
+  this.pacer.sent(key, now);
+  if (decision === "keepalive") this.keepAlives++;
   this.sent++;
   return true;
 };
@@ -308,18 +336,38 @@ Strip.prototype.sendHttp = function (payload) {
   }
 };
 
-// UDP can drop a packet: say "off" a few times.
-Strip.prototype.close = function () {
-  var self = this, black = buildPayload([[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]]);
-  clearInterval(this.healthTimer);
+// Goes dark now: a few black packets a few tens of ms apart, then black keep-alives from tick()
+// until resume().
+Strip.prototype.blackout = function () {
+  var self = this, black = buildPayload(ddp.blackZones());
+  this.dark = true;
   if (this.closed) return;
   if (this.currentMethod() === "http") {
     this.httpWaiting = null;
     this.send(black, true);
+    return;
+  }
+  BLACKOUT_DELAYS.forEach(function (delay) {
+    if (!delay) { self.send(black, true); return; }
+    setTimeout(function () { if (self.dark) self.send(black, true); }, delay);
+  });
+};
+
+// Back to following the picture; the first frame goes out even if it equals the last one sent.
+Strip.prototype.resume = function () {
+  this.dark = false;
+  this.pacer.reset();
+};
+
+Strip.prototype.close = function () {
+  var self = this;
+  clearInterval(this.healthTimer);
+  if (this.closed) return;
+  this.blackout();
+  if (this.currentMethod() === "http") {
     setTimeout(function () { self.closed = true; }, 600);
     return;
   }
-  [0, 40, 80].forEach(function (delay) { setTimeout(function () { self.send(black, true); }, delay); });
   setTimeout(function () { self.closed = true; self.closeSocket(); }, 200);
 };
 
@@ -332,9 +380,15 @@ function median(list) {
 Strip.prototype.describe = function () {
   return {
     ip: this.ip,
+    ipFallback: this.ipFallback,
+    port: this.ddpPort,
     order: this.order,
     bright: Math.round(this.bright * 100),
+    saturation: Math.round(this.saturation * 100),
+    smoothing: this.smoothing,
+    dark: this.dark,
     sent: this.sent,
+    keepAlives: this.keepAlives,
     unchanged: this.skipped,
     errors: this.errors,
     method: this.currentMethod(),
@@ -349,11 +403,15 @@ Strip.prototype.describe = function () {
 module.exports = {
   Strip: Strip,
   DEFAULT_IP: DEFAULT_IP,
+  DDP_PORT: DDP_PORT,
+  SMOOTHING: SMOOTHING,
   _internals: {
     segmentOrder: segmentOrder,
     stateToRgb: stateToRgb,
     buildPayload: buildPayload,
     buildPacket: buildPacket,
-    normalizeIp: normalizeIp
+    normalizeIp: normalizeIp,
+    normalizePort: normalizePort,
+    normalizeSmoothing: normalizeSmoothing
   }
 };

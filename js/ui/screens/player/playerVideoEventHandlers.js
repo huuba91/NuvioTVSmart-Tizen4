@@ -1,5 +1,6 @@
 /* eslint-disable no-unused-vars */
 import * as internals from "./playerScreenContext.js";
+import { AmbilightController } from "../../../core/ambilight/ambilightController.js";
 
 export function createPlayerVideoEventHandlers(video, isTizenAvPlayPlayback) {
   const { PlayerController, isExpiredStreamUrl, isTerminalHlsHttpStatus, logEngineFsDebug, claimEngineFsPlayback } = internals;
@@ -77,6 +78,7 @@ export function createPlayerVideoEventHandlers(video, isTizenAvPlayPlayback) {
   };
 
   const onError = async (event) => {
+    AmbilightController.blackout(); // lights dark until playback runs again (onPlaying brings them back)
     if (this.isStartupErrorVisible()) {
       return;
     }

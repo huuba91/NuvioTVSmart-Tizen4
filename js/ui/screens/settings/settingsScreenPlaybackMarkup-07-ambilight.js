@@ -1,5 +1,10 @@
 import * as internals from "./settingsScreenContext.js";
-import { AmbilightSettingsStore, getBulbMaxBrightness, getBulbPosition } from "../../../data/local/ambilightSettingsStore.js";
+import {
+  AmbilightSettingsStore,
+  getBulbMaxBrightness,
+  getBulbPosition,
+  getStripLayout
+} from "../../../data/local/ambilightSettingsStore.js";
 
 export function ambilightPositionLabel(position) {
   const { t } = internals;
@@ -22,6 +27,18 @@ export function ambilightStripStartLabel(start) {
     l: t("settings.playback.ambilight.strip.start.l", {}, "Left")
   };
   return labels[start] || labels.bl;
+}
+
+export function ambilightSmoothingLabel(smoothing) {
+  const { t } = internals;
+  if (smoothing === "low") return t("settings.playback.ambilight.strip.smoothing.low", {}, "Low (quickest)");
+  if (smoothing === "high") return t("settings.playback.ambilight.strip.smoothing.high", {}, "High (calmest, like the bulbs)");
+  return t("settings.playback.ambilight.strip.smoothing.medium", {}, "Medium");
+}
+
+export function ambilightLayoutLabel(layout) {
+  const { t } = internals;
+  return t("settings.playback.ambilight.strip.layout.edges", { count: layout.zones }, `${layout.zones} zones round the edges`);
 }
 
 export function renderPlaybackAmbilightBody() {
@@ -72,6 +89,16 @@ export function renderPlaybackAmbilightBody() {
               value: `${settings.level}%`
             })}
             ${this.renderToggleRow({
+              focusKey: "playback:ambilightBlackoutOnPause",
+              title: t("settings.playback.ambilight.blackoutOnPause.title", {}, "Dark while paused"),
+              subtitle: t(
+                "settings.playback.ambilight.blackoutOnPause.subtitle",
+                {},
+                "On: the lights go dark when you pause. Off: they keep the last colour."
+              ),
+              checked: settings.blackoutOnPause
+            })}
+            ${this.renderToggleRow({
               focusKey: "playback:ambilightStripEnabled",
               title: t("settings.playback.ambilight.strip.enabled.title", {}, "Surround strip"),
               subtitle: t(
@@ -80,6 +107,18 @@ export function renderPlaybackAmbilightBody() {
                 "The 8-segment LED strip round the back of the TV follows the edges of the picture."
               ),
               checked: settings.strip.enabled
+            })}
+            ${this.renderActionRow({
+              focusKey: "playback:ambilightStripIp",
+              title: t("settings.playback.ambilight.strip.ip.title", {}, "Strip address"),
+              subtitle: t("settings.playback.ambilight.strip.ip.subtitle", {}, "IP address of the OpenBeken strip controller."),
+              value: settings.strip.ip
+            })}
+            ${this.renderActionRow({
+              focusKey: "playback:ambilightStripLayout",
+              title: t("settings.playback.ambilight.strip.layout.title", {}, "Strip layout"),
+              subtitle: t("settings.playback.ambilight.strip.layout.subtitle", {}, "How the strip's segments sit round the picture."),
+              value: ambilightLayoutLabel(getStripLayout(settings))
             })}
             ${this.renderActionRow({
               focusKey: "playback:ambilightStripStart",
@@ -104,6 +143,22 @@ export function renderPlaybackAmbilightBody() {
               title: t("settings.playback.ambilight.strip.level.title", {}, "Strip max brightness"),
               subtitle: t("settings.playback.ambilight.strip.level.subtitle", {}, "Cap for the strip, on top of the overall brightness."),
               value: `${settings.strip.level}%`
+            })}
+            ${this.renderActionRow({
+              focusKey: "playback:ambilightStripSaturation",
+              title: t("settings.playback.ambilight.strip.saturation.title", {}, "Strip saturation"),
+              subtitle: t("settings.playback.ambilight.strip.saturation.subtitle", {}, "How vivid the strip's colours are."),
+              value: `${settings.strip.saturation}%`
+            })}
+            ${this.renderActionRow({
+              focusKey: "playback:ambilightStripSmoothing",
+              title: t("settings.playback.ambilight.strip.smoothing.title", {}, "Strip smoothing"),
+              subtitle: t(
+                "settings.playback.ambilight.strip.smoothing.subtitle",
+                {},
+                "How gently the strip follows changes in the picture."
+              ),
+              value: ambilightSmoothingLabel(settings.strip.smoothing)
             })}
             ${this.renderActionRow({
               focusKey: "playback:ambilightStripStatus",
