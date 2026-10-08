@@ -183,7 +183,7 @@ export function createPlayerVideoLifecycleHandlers(video, isTizenAvPlayPlayback)
       this.updateMediaSessionPlaybackState();
       return;
     }
-    const ended = typeof PlayerController.isPlaybackEnded === "function" ? PlayerController.isPlaybackEnded() : Boolean(video.ended);
+    const ended = PlayerController.isPlaybackEnded();
     if (ended) {
       return;
     }

@@ -24,20 +24,16 @@ export function createPlayerScreenMethods20() {
         return false;
       }
 
-      const video = PlayerController.video;
-      if (!video?.paused) {
+      if (!PlayerController.isMediaElementPaused()) {
         return false;
       }
 
-      const readyState =
-        typeof PlayerController.getPlaybackReadyState === "function"
-          ? Number(PlayerController.getPlaybackReadyState() || 0)
-          : Number(video.readyState || 0);
+      const readyState = Number(PlayerController.getPlaybackReadyState() || 0);
       if (readyState < 3) {
         return false;
       }
 
-      const ended = typeof PlayerController.isPlaybackEnded === "function" ? PlayerController.isPlaybackEnded() : Boolean(video.ended);
+      const ended = PlayerController.isPlaybackEnded();
       if (ended) {
         return false;
       }

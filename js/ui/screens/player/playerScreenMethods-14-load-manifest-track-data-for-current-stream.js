@@ -8,7 +8,7 @@ export function createPlayerScreenMethods14() {
     async loadManifestTrackDataForCurrentStream(playbackUrl = this.activePlaybackUrl) {
       const currentCandidate = this.getCurrentStreamCandidate();
       const masterUrl = playbackUrl || currentCandidate?.url || "";
-      const runtimeUrl = String(PlayerController.video?.currentSrc || "").trim();
+      const runtimeUrl = PlayerController.getMediaElementSourceUrl();
       const loadToken = (this.manifestLoadToken || 0) + 1;
       this.manifestLoadAbortController?.abort?.();
       const manifestLoadAbortController = typeof AbortController === "function" ? new AbortController() : null;

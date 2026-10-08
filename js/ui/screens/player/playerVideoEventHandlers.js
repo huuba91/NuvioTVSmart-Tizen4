@@ -91,9 +91,8 @@ export function createPlayerVideoEventHandlers(video, isTizenAvPlayPlayback) {
     this.lastPlaybackErrorAt = now;
 
     const detailErrorCode = Number(event?.detail?.mediaErrorCode || 0);
-    const controllerErrorCode =
-      typeof PlayerController.getLastPlaybackErrorCode === "function" ? Number(PlayerController.getLastPlaybackErrorCode() || 0) : 0;
-    const mediaErrorCode = detailErrorCode || Number(video?.error?.code || 0) || controllerErrorCode;
+    const controllerErrorCode = Number(PlayerController.getLastPlaybackErrorCode() || 0);
+    const mediaErrorCode = detailErrorCode || PlayerController.getMediaElementErrorCode() || controllerErrorCode;
     const eventDetail = event?.detail && typeof event.detail === "object" ? event.detail : {};
     const playbackErrorDetail = this.getPlaybackEventErrorDetail(eventDetail);
     const terminalHlsHttpFailure = isTerminalHlsHttpStatus(eventDetail.hlsResponseCode);

@@ -136,10 +136,7 @@ export function createPlayerScreenMethods30() {
       if (!this.startupAudioGateActive) {
         return false;
       }
-      const readyState =
-        typeof PlayerController.getPlaybackReadyState === "function"
-          ? Number(PlayerController.getPlaybackReadyState() || 0)
-          : Number(PlayerController.video?.readyState || 0);
+      const readyState = Number(PlayerController.getPlaybackReadyState() || 0);
       const gateDeadlineExpired =
         Number(this.startupAudioGateDeadline || 0) > 0 && Date.now() >= Number(this.startupAudioGateDeadline || 0);
       if (
@@ -238,16 +235,10 @@ export function createPlayerScreenMethods30() {
       }, 4200);
     },
     getPlaybackCurrentSeconds() {
-      if (typeof PlayerController.getCurrentTimeSeconds === "function") {
-        return Number(PlayerController.getCurrentTimeSeconds() || 0);
-      }
-      return Number(PlayerController.video?.currentTime || 0);
+      return Number(PlayerController.getCurrentTimeSeconds() || 0);
     },
     getPlaybackDurationSeconds() {
-      if (typeof PlayerController.getDurationSeconds === "function") {
-        return Number(PlayerController.getDurationSeconds() || 0);
-      }
-      return Number(PlayerController.video?.duration || 0);
+      return Number(PlayerController.getDurationSeconds() || 0);
     },
     getPlaybackBufferedSeconds() {
       if (typeof PlayerController.getBufferedTimeSeconds !== "function") {
@@ -257,10 +248,7 @@ export function createPlayerScreenMethods30() {
       return bufferedSeconds == null ? null : Number(bufferedSeconds);
     },
     getPlaybackSpeed() {
-      if (typeof PlayerController.getPlaybackRate === "function") {
-        return Number(PlayerController.getPlaybackRate() || 1);
-      }
-      return Number(PlayerController.video?.playbackRate || 1);
+      return Number(PlayerController.getPlaybackRate() || 1);
     },
     getPlaybackSpeedOptions() {
       if (typeof PlayerController.getSupportedPlaybackRates === "function") {
@@ -276,10 +264,7 @@ export function createPlayerScreenMethods30() {
       return Number.isFinite(durationSeconds) && durationSeconds > 0;
     },
     isPlaybackFrameReady() {
-      const readyState =
-        typeof PlayerController.getPlaybackReadyState === "function"
-          ? Number(PlayerController.getPlaybackReadyState() || 0)
-          : Number(PlayerController.video?.readyState || 0);
+      const readyState = Number(PlayerController.getPlaybackReadyState() || 0);
       return Number.isFinite(readyState) && readyState >= 2;
     },
     clearSeekLoading({ hideBuffering = false } = {}) {

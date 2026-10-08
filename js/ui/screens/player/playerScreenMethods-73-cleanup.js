@@ -46,8 +46,8 @@ export function createPlayerScreenMethods73() {
         this.clearPostPlaySummaryTransition();
         this.postPlayRecommendationController?.stop?.();
         this.unbindVideoEvents();
-        if (this.endedHandler && PlayerController.video) {
-          PlayerController.video.removeEventListener("ended", this.endedHandler);
+        if (this.endedHandler) {
+          PlayerController.off("ended", this.endedHandler);
           this.endedHandler = null;
         }
         TrackingScrobbleService.cancel();

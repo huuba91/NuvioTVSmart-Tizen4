@@ -21,8 +21,7 @@ export function createPlayerScreenMethods23() {
 
   return {
     maybeAutoplayNextEpisode() {
-      const isAvPlayPlayback = typeof PlayerController.isUsingAvPlay === "function" && PlayerController.isUsingAvPlay();
-      const isVideoPaused = !isAvPlayPlayback && Boolean(PlayerController.video?.paused);
+      const isVideoPaused = PlayerController.isMediaElementPaused();
       if (this.nextEpisodeLaunching || this.paused || isVideoPaused || !this.hasPresentedPlaybackFrame) {
         return false;
       }

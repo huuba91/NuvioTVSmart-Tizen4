@@ -74,7 +74,7 @@ export function createPlayerScreenMethods11() {
     },
     getTrackProbeUrl() {
       const currentCandidate = this.getCurrentStreamCandidate();
-      return String(this.activePlaybackUrl || currentCandidate?.url || PlayerController.video?.currentSrc || "").trim();
+      return String(this.activePlaybackUrl || currentCandidate?.url || PlayerController.getMediaElementSourceUrl() || "").trim();
     },
     isCurrentSourceAdaptiveManifest() {
       const probeUrl = this.getTrackProbeUrl();
