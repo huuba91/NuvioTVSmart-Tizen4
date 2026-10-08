@@ -56,9 +56,12 @@ left edge, the right edge or the whole picture (center), or stays off.
    ```
 
    This writes `ambilight-bulbs.json` in the repo root (git-ignored: it holds local keys).
+
 2. Build and install as usual (`scripts/deploy-tizen4.ps1`). The packager picks up
-   `ambilight-bulbs.json` automatically (or `NUVIO_AMBILIGHT_BULBS=<path>`) and then also declares
-   the filesystem and system privileges the research app used. Store builds refuse the file.
+   `ambilight-bulbs.json` automatically (or `NUVIO_AMBILIGHT_BULBS=<path>`). Every non-Store
+   package with the EngineFS service declares the filesystem and system privileges the screen
+   capture needs, with or without a bulb list (so an LED-strip-only setup works too). Store builds
+   refuse the bulb list and do not declare those privileges.
 3. In Nuvio: Settings > Playback > Ambilight. Turn it on, set the overall max brightness, and set
    each bulb to Left, Center, Right or Off with its own max brightness. "Find bulbs" reloads the
    list from the service. During playback, More actions > Lights (the % button) opens a vertical
