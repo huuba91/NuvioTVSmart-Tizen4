@@ -1,3 +1,11 @@
+/* global __NUVIO_DEV_DIAGNOSTICS__ */
+
+// The Console debug screen exists only in developer-diagnostics builds.
+const DEV_DIAGNOSTICS_SCREENS =
+  typeof __NUVIO_DEV_DIAGNOSTICS__ !== "undefined" && __NUVIO_DEV_DIAGNOSTICS__
+    ? `<div id="debugConsole" class="screen"></div>`
+    : "";
+
 const APP_SHELL = `
   <div id="app">
     <div id="account" class="screen"></div>
@@ -16,8 +24,7 @@ const APP_SHELL = `
     <div id="live" class="screen"></div>
     <div id="discover" class="screen"></div>
     <div id="settings" class="screen"></div>
-    <div id="debugConsole" class="screen"></div>
-    <div id="tizen4PlaybackMatrix" class="screen"></div>
+    ${DEV_DIAGNOSTICS_SCREENS}
     <div id="trakt" class="screen"></div>
     <div id="supportersContributors" class="screen"></div>
     <div id="licensesAttributions" class="screen"></div>

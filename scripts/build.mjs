@@ -19,7 +19,16 @@ const requireConfiguredRuntimeEnv = /^(1|true|yes|on)$/i.test(
   String(process.env.NUVIO_REQUIRE_LOCAL_PROPERTIES || "")
 );
 const debugBundle = /^(1|true|yes|on)$/i.test(String(process.env.NUVIO_DEBUG_BUNDLE || ""));
-const tizen4ProbeMediaFile = String(process.env.NUVIO_TIZEN4_PROBE_MEDIA_FILE || "").trim();
+// Developer diagnostics (Settings > About > Console debug and the console
+// capture buffer) are compiled in only on request: NUVIO_DEV_DIAGNOSTICS=1 or
+// --dev-diagnostics. Production bundles get __NUVIO_DEV_DIAGNOSTICS__ = false,
+// so esbuild drops that code entirely.
+const devDiagnostics =
+  /^(1|true|yes|on)$/i.test(String(process.env.NUVIO_DEV_DIAGNOSTICS || "")) ||
+  process.argv.slice(2).includes("--dev-diagnostics");
+const cacheDir = path.join(rootDir, ".cache");
+// Read by package-tizen.mjs so a package flavour never mismatches its bundle.
+const buildFlavourMarkerPath = path.join(cacheDir, "build-flavour.json");
 const legacyViewport = {
   width: 1920,
   height: 1080,
@@ -584,7 +593,8 @@ async function buildBundle() {
     metafile: true,
     define: {
       "process.env.NODE_ENV": '"production"',
-      __NUVIO_APP_VERSION__: JSON.stringify(version)
+      __NUVIO_APP_VERSION__: JSON.stringify(version),
+      __NUVIO_DEV_DIAGNOSTICS__: JSON.stringify(devDiagnostics)
     }
   });
   if (
@@ -612,10 +622,6 @@ async function runBuild() {
       cp(path.join(rootDir, "boot-guard.js"), path.join(distDir, "boot-guard.js")),
       cp(path.join(rootDir, "docs", "youtube-proxy.html"), path.join(distDir, "youtube-proxy.html"))
     ]);
-    if (tizen4ProbeMediaFile) {
-      await cp(tizen4ProbeMediaFile, path.join(distDir, "assets", "tizen4-probe.mp4"));
-      console.log("included optional Tizen 4 packaged media probe");
-    }
     await buildI18nBundles({ rootDir, distDir });
     await buildCoreJsBundle();
     await Promise.all([
@@ -692,6 +698,10 @@ async function runBuild() {
     } else if (envSourceBaseName === "local.example.properties") {
       console.warn("WARNING: using local.example.properties as fallback.");
     }
+
+    await mkdir(cacheDir, { recursive: true });
+    await writeFile(buildFlavourMarkerPath, `${JSON.stringify({ devDiagnostics })}\n`);
+    console.log(`developer diagnostics: ${devDiagnostics ? "included" : "excluded (production)"}`);
 
     console.log(`\nbuild finished successfully in: ${distDir}`);
   } catch (error) {

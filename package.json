@@ -17,6 +17,7 @@
     "lint:home:incremental": "eslint \"js/ui/screens/home/**/*.js\" \"eslint.config.mjs\"",
     "lint:runtime": "eslint \"js/**/*.js\" --quiet --rule \"no-unused-vars: off\"",
     "package:tizen": "npm run build && node ./scripts/package-tizen.mjs",
+    "package:tizen:dev": "node ./scripts/build.mjs --dev-diagnostics && node ./scripts/package-tizen.mjs --dev-diagnostics",
     "package:tizen:store": "npm run build && node ./scripts/package-tizen.mjs --store",
     "package:webos": "npm run build && node ./scripts/package-webos.mjs",
     "format": "prettier --write .",

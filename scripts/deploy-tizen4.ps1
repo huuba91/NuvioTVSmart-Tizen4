@@ -12,7 +12,10 @@ param(
   [switch]$SkipInstall,
   [switch]$Launch,
   [switch]$FollowLogs,
-  [switch]$IncludePluginService
+  [switch]$IncludePluginService,
+  # Builds the developer-diagnostics flavour (Console debug screen, /netcheck).
+  # Without it the deployed package is the production flavour.
+  [switch]$DevDiagnostics
 )
 
 $ErrorActionPreference = "Stop"
@@ -139,7 +142,9 @@ try {
   if (-not $SkipBuild) {
     $PreviousRequireLocalProperties = $env:NUVIO_REQUIRE_LOCAL_PROPERTIES
     $PreviousIncludePluginService = $env:TIZEN_INCLUDE_PLUGIN_SERVICE
+    $PreviousDevDiagnostics = $env:NUVIO_DEV_DIAGNOSTICS
     $env:NUVIO_REQUIRE_LOCAL_PROPERTIES = "1"
+    $env:NUVIO_DEV_DIAGNOSTICS = if ($DevDiagnostics) { "1" } else { "0" }
     # Executable scraper plugins require the newer Tizen service runtime.
     # The Tizen 4 deployment always keeps EngineFS but excludes PluginService
     # unless an explicit diagnostic run requests it.
@@ -151,10 +156,13 @@ try {
     }
     if ($LASTEXITCODE -ne 0) { throw "Frontend build failed with exit code $LASTEXITCODE" }
 
-    & $Node (Join-Path $ProjectRoot "scripts\package-tizen.mjs")
+    $PackageArguments = @((Join-Path $ProjectRoot "scripts\package-tizen.mjs"))
+    if ($DevDiagnostics) { $PackageArguments += "--dev-diagnostics" }
+    & $Node @PackageArguments
     if ($LASTEXITCODE -ne 0) { throw "Tizen packaging failed with exit code $LASTEXITCODE" }
     $env:NUVIO_REQUIRE_LOCAL_PROPERTIES = $PreviousRequireLocalProperties
     $env:TIZEN_INCLUDE_PLUGIN_SERVICE = $PreviousIncludePluginService
+    $env:NUVIO_DEV_DIAGNOSTICS = $PreviousDevDiagnostics
   }
 
   if (-not (Test-Path -LiteralPath $UnsignedWgt)) {

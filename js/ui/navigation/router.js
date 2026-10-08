@@ -1,3 +1,4 @@
+/* global __NUVIO_DEV_DIAGNOSTICS__ */
 import { HomeScreen } from "../screens/home/homeScreen.js";
 import { PlayerScreen } from "../screens/player/playerScreen.js";
 import { AccountScreen } from "../screens/account/accountScreen.js";
@@ -13,7 +14,6 @@ import { DiscoverScreen } from "../screens/search/discoverScreen.js";
 import { LiveScreen } from "../screens/live/liveScreen.js";
 import { SettingsScreen } from "../screens/settings/settingsScreen.js";
 import { ConsoleDebugScreen } from "../screens/debug/consoleDebugScreen.js";
-import { Tizen4PlaybackMatrixScreen } from "../screens/debug/tizen4PlaybackMatrixScreen.js";
 import { TraktScreen } from "../screens/trakt/traktScreen.js";
 import { SupportersContributorsScreen } from "../screens/supporters/supportersContributorsScreen.js";
 import { ExperienceModeSelectionScreen } from "../screens/onboarding/experienceModeSelectionScreen.js";
@@ -53,7 +53,6 @@ export {
   DiscoverScreen,
   LiveScreen,
   SettingsScreen,
-  ConsoleDebugScreen,
   TraktScreen,
   SupportersContributorsScreen,
   ExperienceModeSelectionScreen,
@@ -181,8 +180,10 @@ Object.assign(Router, {
     discover: DiscoverScreen,
     live: LiveScreen,
     settings: SettingsScreen,
-    debugConsole: ConsoleDebugScreen,
-    tizen4PlaybackMatrix: Tizen4PlaybackMatrixScreen,
+    // Developer-diagnostics builds only; dropped from production bundles.
+    ...(typeof __NUVIO_DEV_DIAGNOSTICS__ !== "undefined" && __NUVIO_DEV_DIAGNOSTICS__
+      ? { debugConsole: ConsoleDebugScreen }
+      : {}),
     trakt: TraktScreen,
     supportersContributors: SupportersContributorsScreen,
     licensesAttributions: LicensesAttributionsScreen,

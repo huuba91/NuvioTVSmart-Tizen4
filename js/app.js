@@ -1,6 +1,8 @@
 /* global __NUVIO_APP_VERSION__ */
 
-import "./core/diagnostics/consoleDebugBuffer.js";
+// First import so the console capture (developer-diagnostics builds only)
+// starts before any other module runs.
+import "./core/diagnostics/installDevDiagnostics.js";
 import { detailWatchedEnrichmentService } from "./data/repository/detailWatchedEnrichmentService.js";
 import { Router } from "./ui/navigation/router.js";
 import { FocusEngine } from "./ui/navigation/focusEngine.js";
@@ -288,11 +290,6 @@ async function enterWithLastProfile({ restoreWebOsRoute = false } = {}) {
 
 async function routeAfterAuthentication() {
   loginTrace("authenticated route begin", { currentRoute: Router.getCurrent() || "" });
-  globalThis.__NUVIO_TIZEN4_REPORT_STAGE__?.("authenticated-route");
-  if (Platform.isTizen() && globalThis.__NUVIO_TIZEN4_MATRIX_AUTO_RUN__) {
-    await Router.navigate("tizen4PlaybackMatrix", {}, { replaceHistory: true, skipStackPush: true });
-    return;
-  }
   const profileRoute = await shouldShowProfileSelection();
   loginTrace("authenticated route profile decision", { show: profileRoute.show === true });
   if (profileRoute.show) {
@@ -556,15 +553,6 @@ async function bootstrapApp() {
   setupProviderCredentialForegroundLifecycle();
   setupPluginRuntimeLifecycle();
   setupWebOsAppLifecycle();
-
-  // Diagnostic packages must be able to exercise playback on a clean TV
-  // install before authentication. The flag is injected only into explicit
-  // matrix builds; normal production packages continue through auth below.
-  if (Platform.isTizen() && globalThis.__NUVIO_TIZEN4_MATRIX_AUTO_RUN__) {
-    globalThis.__NUVIO_TIZEN4_REPORT_STAGE__?.("diagnostic-route");
-    await Router.navigate("tizen4PlaybackMatrix", {}, { replaceHistory: true, skipStackPush: true });
-    return;
-  }
 
   ThemeManager.apply();
   I18n.apply();

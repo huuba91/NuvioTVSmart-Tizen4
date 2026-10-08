@@ -1,4 +1,14 @@
-import { access, cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import {
+  access,
+  cp,
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+  writeFile
+} from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
@@ -35,6 +45,16 @@ const tizen4ForkBuildLabel = "NU7100-T4 M1 · QR VERIFIED";
 // next to the EngineFS service only for development builds.
 const defaultAmbilightBulbsPath = path.join(rootDir, "ambilight-bulbs.json");
 const tizenAmbilightBulbsRelativePath = "services/tizen/ambilight-bulbs.json";
+const tizenNetcheckRelativePath = `${tizenEngineFsRuntimeDirRelativePath}/netcheck.cjs`;
+// Written by scripts/build.mjs: whether dist/ was built with developer diagnostics.
+const buildFlavourMarkerPath = path.join(cacheDir, "build-flavour.json");
+// Privileges the ambilight screen capture needs (gdbus dcapture into /dev/shm),
+// for bulbs and for the LED strip alike.
+export const ambilightCapturePrivileges = [
+  "http://tizen.org/privilege/filesystem.read",
+  "http://tizen.org/privilege/filesystem.write",
+  "http://tizen.org/privilege/system"
+];
 
 function buildTizenServiceBridgeMarkup(enabled) {
   if (!enabled) return "";
@@ -51,10 +71,29 @@ function isTruthy(value) {
   return /^(1|true|yes|on)$/i.test(String(value || ""));
 }
 
-const tizen4MatrixAutoRun = isTruthy(process.env.NUVIO_TIZEN4_MATRIX_AUTO_RUN);
-const tizen4MatrixReportUrl = String(process.env.NUVIO_TIZEN4_MATRIX_REPORT_URL || "").trim();
-const tizen4MatrixLanMediaUrl = String(process.env.NUVIO_TIZEN4_MATRIX_LAN_MEDIA_URL || "").trim();
-const tizen4MatrixP2p = isTruthy(process.env.NUVIO_TIZEN4_MATRIX_P2P);
+/*
+ * Files that are present in dist/ or services/ but must not ship in a Tizen
+ * WGT of the given flavour (paths relative to the WGT root).
+ * - assets/libs/webOSTV.js is the webOS runtime; Tizen never loads it (the
+ *   webOS packager still needs it in dist/).
+ * - netcheck.cjs is the EngineFS network self-test behind /netcheck; it ships
+ *   only in developer-diagnostics packages.
+ */
+export function tizenPackageExcludedPaths({ devDiagnostics = false } = {}) {
+  return ["assets/libs/webOSTV.js", ...(devDiagnostics ? [] : [tizenNetcheckRelativePath])];
+}
+
+/*
+ * The ambilight runtime (bulbs and LED strip) runs inside the EngineFS
+ * service of development (non-Store) packages. Store packages keep their
+ * previous manifest: no capture privileges and no bulb list.
+ */
+export function includesAmbilightRuntime({
+  includeEngineFsService = false,
+  storeBuild = false
+} = {}) {
+  return Boolean(includeEngineFsService && !storeBuild);
+}
 
 function normalizeVersion(version) {
   const parts = String(version || "0.0.0")
@@ -74,6 +113,25 @@ async function pathExists(filePath) {
   } catch {
     return false;
   }
+}
+
+async function readBuiltDevDiagnostics() {
+  try {
+    return JSON.parse(await readFile(buildFlavourMarkerPath, "utf8")).devDiagnostics === true;
+  } catch {
+    // No marker: dist/ predates the flag, which means a production bundle.
+    return false;
+  }
+}
+
+async function assertBuildFlavour(devDiagnostics) {
+  const builtDevDiagnostics = await readBuiltDevDiagnostics();
+  if (builtDevDiagnostics === devDiagnostics) return;
+  throw new Error(
+    builtDevDiagnostics
+      ? 'dist/ was built with developer diagnostics. Rebuild without NUVIO_DEV_DIAGNOSTICS ("npm run build") for a production package, or pass --dev-diagnostics.'
+      : 'dist/ is a production build. Rebuild with NUVIO_DEV_DIAGNOSTICS=1 (or use "npm run package:tizen:dev") for a developer-diagnostics package.'
+  );
 }
 
 async function assertDistExists() {
@@ -105,7 +163,7 @@ async function assertDistExists() {
   }
 }
 
-function buildConfigXml({
+export function buildConfigXml({
   appId,
   packageId,
   version,
@@ -125,16 +183,11 @@ function buildConfigXml({
     ? '  <tizen:privilege name="http://tizen.org/privilege/application.launch"/>\n'
     : "";
   const serviceMetadata = serviceMetadataXml ? `\n    ${serviceMetadataXml}` : "";
-  // The ambilight research app reached the TV's capture service (gdbus) and
-  // /dev/shm from its web service with these privileges declared.
+  // The ambilight capture reaches the TV's capture service (gdbus) and
+  // /dev/shm from the EngineFS web service with these privileges declared.
+  // It is needed with or without a bulb list (LED-strip-only setups).
   const ambilightPrivileges = includeAmbilight
-    ? [
-        "http://tizen.org/privilege/filesystem.read",
-        "http://tizen.org/privilege/filesystem.write",
-        "http://tizen.org/privilege/system"
-      ]
-        .map((name) => `  <tizen:privilege name="${name}"/>\n`)
-        .join("")
+    ? ambilightCapturePrivileges.map((name) => `  <tizen:privilege name="${name}"/>\n`).join("")
     : "";
   const engineFsService = includeEngineFsService
     ? `  <tizen:service id="${engineFsServiceId}" type="ui" auto-restart="false" on-boot="false">
@@ -210,7 +263,11 @@ function validateStoreServiceOptions({
   }
 }
 
-function buildIndexHtml({ includeEngineFsService = false, includePluginService = false, mainEntryFileName = "main.js" } = {}) {
+function buildIndexHtml({
+  includeEngineFsService = false,
+  includePluginService = false,
+  mainEntryFileName = "main.js"
+} = {}) {
   const pluginServiceBridge = buildTizenServiceBridgeMarkup(
     includeEngineFsService || includePluginService
   );
@@ -234,9 +291,8 @@ ${pluginServiceBridge}  <link rel="stylesheet" href="css/bundle.css" />
 `;
 }
 
-function buildMainJs({
+export function buildMainJs({
   packageId,
-  version,
   includeEngineFsService,
   includePluginService,
   appBundleFileName,
@@ -254,28 +310,10 @@ function buildMainJs({
   });
   return `window.__NUVIO_PLATFORM__ = "tizen";
 window.__NUVIO_FORK_BUILD__ = ${JSON.stringify(tizen4ForkBuildLabel)};
-window.__NUVIO_TIZEN4_MATRIX_AUTO_RUN__ = ${tizen4MatrixAutoRun};
-window.__NUVIO_TIZEN4_MATRIX_REPORT_URL__ = ${JSON.stringify(tizen4MatrixReportUrl)};
-window.__NUVIO_TIZEN4_MATRIX_LAN_MEDIA_URL__ = ${JSON.stringify(tizen4MatrixLanMediaUrl)};
-window.__NUVIO_TIZEN4_MATRIX_P2P__ = ${tizen4MatrixP2p};
 window.__NUVIO_TIZEN_ENGINEFS_SERVICE_ENABLED__ = ${includeEngineFsService};
 window.__NUVIO_TIZEN_ENGINEFS_SERVICE_ID__ = ${JSON.stringify(configuredServiceId)};
 window.__NUVIO_TIZEN_PLUGIN_SERVICE_ENABLED__ = ${includePluginService};
 window.__NUVIO_TIZEN_PLUGIN_SERVICE_ID__ = ${JSON.stringify(configuredPluginServiceId)};
-window.__NUVIO_TIZEN4_REPORT_STAGE__ = function reportTizen4Stage(stage, details) {
-  var reportUrl = String(window.__NUVIO_TIZEN4_MATRIX_REPORT_URL__ || "");
-  if (!reportUrl) return;
-  try {
-    var request = new XMLHttpRequest();
-    request.open("POST", reportUrl, true);
-    request.setRequestHeader("Content-Type", "text/plain;charset=UTF-8");
-    request.send(JSON.stringify(Object.assign(
-      { phase: String(stage || "unknown"), appVersion: ${JSON.stringify(version)} },
-      details && typeof details === "object" ? details : {}
-    )));
-  } catch (_) {}
-};
-window.__NUVIO_TIZEN4_REPORT_STAGE__("bootstrap");
 
 var tvInput = window.tizen && window.tizen.tvinputdevice;
 if (tvInput && typeof tvInput.registerKey === "function") {
@@ -391,17 +429,27 @@ async function pruneDisabledPluginRuntimeAssets() {
   ]);
 }
 
+async function removeExcludedPackagePaths({ devDiagnostics }) {
+  await Promise.all(
+    tizenPackageExcludedPaths({ devDiagnostics }).map((relativePath) =>
+      rm(path.join(stagingDir, relativePath), { force: true })
+    )
+  );
+}
+
 async function stagePackage({
   appId,
   packageId,
   version,
   envSourcePath,
+  storeBuild,
+  devDiagnostics,
   includeEngineFsService,
   includePluginService,
   ambilightBulbsPath,
   serviceMetadataXml
 }) {
-  const includeAmbilight = Boolean(includeEngineFsService && ambilightBulbsPath);
+  const includeAmbilight = includesAmbilightRuntime({ includeEngineFsService, storeBuild });
   const appBundleSourcePath = path.join(distDir, "app.bundle.js");
   const appBundleBytes = await readFile(appBundleSourcePath);
   const appBundleHash = createHash("sha256").update(appBundleBytes).digest("hex").slice(0, 16);
@@ -458,7 +506,6 @@ async function stagePackage({
       path.join(stagingDir, mainEntryFileName),
       buildMainJs({
         packageId,
-        version,
         includeEngineFsService,
         includePluginService,
         appBundleFileName,
@@ -468,13 +515,16 @@ async function stagePackage({
     )
   ]);
   if (includeEngineFsService) {
-    await stageTizenEngineFsService({ ambilightBulbsPath: includeAmbilight ? ambilightBulbsPath : "" });
+    await stageTizenEngineFsService({
+      ambilightBulbsPath: includeAmbilight && ambilightBulbsPath ? ambilightBulbsPath : ""
+    });
   }
   if (includePluginService) {
     await stageTizenPluginService();
   } else {
     await pruneDisabledPluginRuntimeAssets();
   }
+  await removeExcludedPackagePaths({ devDiagnostics });
 
   if (await pathExists(path.join(distDir, "app.bundle.js.map"))) {
     await cp(path.join(distDir, "app.bundle.js.map"), path.join(stagingDir, "app.bundle.js.map"));
@@ -507,6 +557,7 @@ function parseArgs(argv) {
     packageId: process.env.TIZEN_PACKAGE_ID || defaultTizenPackageId,
     envSourcePath: process.env.TIZEN_ENV_SOURCE || "",
     storeBuild,
+    devDiagnostics: false,
     includeEngineFsService:
       configuredIncludeService == null ? true : isTruthy(configuredIncludeService),
     includePluginService:
@@ -514,7 +565,9 @@ function parseArgs(argv) {
     signingProfile: process.env.TIZEN_SECURITY_PROFILE || "",
     tizenCli: process.env.TIZEN_CLI || "tizen",
     serviceMetadataXml: String(process.env.TIZEN_SERVICE_METADATA_XML || "").trim(),
-    ambilightBulbsPath: process.env.NUVIO_AMBILIGHT_BULBS ? path.resolve(process.env.NUVIO_AMBILIGHT_BULBS) : ""
+    ambilightBulbsPath: process.env.NUVIO_AMBILIGHT_BULBS
+      ? path.resolve(process.env.NUVIO_AMBILIGHT_BULBS)
+      : ""
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -533,6 +586,8 @@ function parseArgs(argv) {
       index += 1;
     } else if (arg === "--store") {
       options.storeBuild = true;
+    } else if (arg === "--dev-diagnostics") {
+      options.devDiagnostics = true;
     } else if (arg === "--include-enginefs-service") {
       options.includeEngineFsService = true;
     } else if (arg === "--no-enginefs-service") {
@@ -571,8 +626,16 @@ function parseArgs(argv) {
 
   validateStoreServiceOptions(options);
 
+  if (options.storeBuild && options.devDiagnostics) {
+    throw new Error(
+      "Store packages must not contain developer diagnostics; drop --dev-diagnostics."
+    );
+  }
+
   if (options.storeBuild && options.ambilightBulbsPath) {
-    throw new Error("Store packages must not contain ambilight-bulbs.json: it holds the bulbs' local keys.");
+    throw new Error(
+      "Store packages must not contain ambilight-bulbs.json: it holds the bulbs' local keys."
+    );
   }
 
   return options;
@@ -726,9 +789,15 @@ function requiredTizenServiceFiles({
 
 async function assertTizenServicePackage(
   outputPath,
-  { requireEngineFsService = false, requirePluginService = false } = {}
+  { requireEngineFsService = false, requirePluginService = false, devDiagnostics = false } = {}
 ) {
   const zip = await JSZip.loadAsync(await readFile(outputPath));
+  const excludedEntry = tizenPackageExcludedPaths({ devDiagnostics }).find((fileName) =>
+    zip.file(fileName)
+  );
+  if (excludedEntry) {
+    throw new Error(`Tizen WGT must not contain ${excludedEntry} in this package flavour.`);
+  }
   const runtimeEnvEntries = Object.keys(zip.files).filter((name) =>
     /^nuvio\.env\.[a-f0-9]{16}\.js$/.test(name)
   );
@@ -751,13 +820,17 @@ async function assertTizenServicePackage(
   const contentSource = configXml.match(/<content\s+src=["']([^"']+)["']/i)?.[1] || "";
   const indexEntry = zip.file(contentSource);
   if (!contentSource || !indexEntry) {
-    throw new Error(`Tizen WGT is missing its configured entry document: ${contentSource || "(blank)"}`);
+    throw new Error(
+      `Tizen WGT is missing its configured entry document: ${contentSource || "(blank)"}`
+    );
   }
   const indexHtml = await indexEntry.async("string");
   const mainSource = indexHtml.match(/<script\b[^>]*\bsrc=["'](main\.[^"']+\.js)["']/i)?.[1] || "";
   const mainEntry = zip.file(mainSource);
   if (!mainEntry) {
-    throw new Error(`Tizen WGT is missing its versioned bootstrap script: ${mainSource || "(blank)"}`);
+    throw new Error(
+      `Tizen WGT is missing its versioned bootstrap script: ${mainSource || "(blank)"}`
+    );
   }
   const mainJs = await mainEntry.async("string");
   if (!mainJs.includes(JSON.stringify(runtimeEnvEntries[0]))) {
@@ -900,7 +973,7 @@ async function assertTizenServicePackage(
 
 async function assertSignedTizenPackage(
   outputPath,
-  { requireEngineFsService = false, requirePluginService = false } = {}
+  { requireEngineFsService = false, requirePluginService = false, devDiagnostics = false } = {}
 ) {
   const zip = await JSZip.loadAsync(await readFile(outputPath));
   const requiredFiles = ["config.xml", "author-signature.xml", "signature1.xml"];
@@ -924,7 +997,8 @@ async function assertSignedTizenPackage(
   }
   await assertTizenServicePackage(outputPath, {
     requireEngineFsService,
-    requirePluginService
+    requirePluginService,
+    devDiagnostics
   });
 }
 
@@ -972,10 +1046,15 @@ async function packageTizen() {
 
   await syncVersionFiles();
   await assertDistExists();
+  await assertBuildFlavour(options.devDiagnostics);
 
   const { version: rawVersion } = await readAppMetadata();
   const version = normalizeVersion(rawVersion);
-  if (!options.storeBuild && !options.ambilightBulbsPath && (await pathExists(defaultAmbilightBulbsPath))) {
+  if (
+    !options.storeBuild &&
+    !options.ambilightBulbsPath &&
+    (await pathExists(defaultAmbilightBulbsPath))
+  ) {
     options.ambilightBulbsPath = defaultAmbilightBulbsPath;
   }
   if (options.ambilightBulbsPath && !(await pathExists(options.ambilightBulbsPath))) {
@@ -1009,7 +1088,8 @@ async function packageTizen() {
     await writeFile(outputPath, buffer);
     await assertTizenServicePackage(outputPath, {
       requireEngineFsService: options.includeEngineFsService,
-      requirePluginService: options.includePluginService
+      requirePluginService: options.includePluginService,
+      devDiagnostics: options.devDiagnostics
     });
   }
 
@@ -1019,20 +1099,29 @@ async function packageTizen() {
   console.log(
     `Tizen package profile: ${options.storeBuild ? "official Store-signed" : "development (unsigned)"}`
   );
+  console.log(
+    `Tizen developer diagnostics: ${options.devDiagnostics ? "included" : "no (production)"}`
+  );
   console.log(`Tizen EngineFS service packaged: ${options.includeEngineFsService ? "yes" : "no"}`);
   console.log(`Tizen Plugin service packaged: ${options.includePluginService ? "yes" : "no"}`);
   console.log(
-    `Ambilight bulb list packaged: ${options.includeEngineFsService && options.ambilightBulbsPath ? options.ambilightBulbsPath : "no"}`
+    `Ambilight runtime and capture privileges: ${includesAmbilightRuntime(options) ? "yes" : "no"}`
+  );
+  console.log(
+    `Ambilight bulb list packaged: ${includesAmbilightRuntime(options) && options.ambilightBulbsPath ? options.ambilightBulbsPath : "no"}`
   );
   console.log(
     `Runtime env bundled from: ${options.envSourcePath || path.join(distDir, "nuvio.env.js")}`
   );
 }
 
-try {
-  await packageTizen();
-} catch (error) {
-  console.error("\nTizen packaging failed:");
-  console.error(error);
-  process.exit(1);
+// Run only as a script; tests import the pure helpers above.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    await packageTizen();
+  } catch (error) {
+    console.error("\nTizen packaging failed:");
+    console.error(error);
+    process.exit(1);
+  }
 }
