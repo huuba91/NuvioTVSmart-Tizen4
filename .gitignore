@@ -24,3 +24,5 @@ scripts/commit-build-poller.mjs
 
 # Ambilight bulb list with Tuya local keys (scripts/make-ambilight-bulbs.py)
 ambilight-bulbs.json
+__pycache__/
+*.pyc
