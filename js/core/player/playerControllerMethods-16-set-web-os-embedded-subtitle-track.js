@@ -92,9 +92,12 @@ export function createPlayerControllerMethods16() {
           }
           this.applyStartupAudioGateToVideo();
           const playPromise = this.video.play();
-          return this.handleNativePlayStartedUnderStartupGate(playPromise);
+          // Wrapped so the chain does not adopt the play() promise: its rejection must reach
+          // onRejected below (the engine fallbacks), not the generic catch at the end.
+          return { playPromise: this.handleNativePlayStartedUnderStartupGate(playPromise) };
         })
-        .then((playPromise) => {
+        .then((started) => {
+          const playPromise = started ? started.playPromise : null;
           if (!playPromise || typeof playPromise.catch !== "function") {
             return null;
           }

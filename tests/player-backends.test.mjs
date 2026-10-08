@@ -651,3 +651,28 @@ test("play() records an AVPlay startup failure on Tizen before the native fallba
     TizenPlaybackProxy.resolve = previousResolve;
   }
 });
+
+test("attemptVideoPlay hands a rejected video.play() to onRejected so engine fallbacks run", async () => {
+  const error = new Error("MEDIA_ERR_SRC_NOT_SUPPORTED");
+  error.name = "NotSupportedError";
+  const fake = Object.create(PlayerController);
+  fake.video = { play: () => Promise.reject(error) };
+  fake.playRequestToken = 1;
+  fake.applyStartupAudioGateToVideo = () => {};
+  fake.handleNativePlayStartedUnderStartupGate = (promise) => promise;
+  fake.isExpectedPlayInterruption = () => false;
+  fake.stopProgressSaving = () => {};
+  const seen = [];
+  await new Promise((resolve) => {
+    fake.attemptVideoPlay({
+      playToken: 1,
+      onRejected: (reason) => {
+        seen.push(reason);
+        resolve();
+        return true;
+      }
+    });
+    setTimeout(resolve, 200);
+  });
+  assert.deepEqual(seen, [error]);
+});
