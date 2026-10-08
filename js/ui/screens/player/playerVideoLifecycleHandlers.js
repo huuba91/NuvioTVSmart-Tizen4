@@ -75,7 +75,7 @@ export function createPlayerVideoLifecycleHandlers(video, isTizenAvPlayPlayback)
     this.startupSourceFallbackAttempts = 0;
     this.startupSourceRefreshAttempts = 0;
     this.beginPlaybackEngineValidation();
-    // Lights follow the screen once real playback runs; a no-op when disabled or already on.
+    // Lights follow the screen once real playback runs (and come back after a pause or error); a no-op when disabled.
     AmbilightController.start();
     this.bufferingActive = false;
     this.clearBufferingSpinnerTimer();
@@ -202,6 +202,7 @@ export function createPlayerVideoLifecycleHandlers(video, isTizenAvPlayPlayback)
     if (TrackingScrobbleService.isEnabled()) {
       TrackingScrobbleService.pause(this.buildScrobbleContext());
     }
+    AmbilightController.pause(); // dark or hold, per the blackoutOnPause setting
     this.clearPlaybackStallGuard();
     this.paused = true;
     this.updateMediaSessionPlaybackState();

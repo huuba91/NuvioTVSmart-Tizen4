@@ -1,14 +1,24 @@
 import * as internals from "./settingsScreenContext.js";
 import {
+  AMBILIGHT_DEFAULT_STRIP_IP,
   AMBILIGHT_LEVEL_OPTIONS,
   AMBILIGHT_POSITIONS,
+  AMBILIGHT_SATURATION_OPTIONS,
+  AMBILIGHT_SMOOTHING_OPTIONS,
+  AMBILIGHT_STRIP_LAYOUTS,
   AMBILIGHT_STRIP_STARTS,
   AmbilightSettingsStore,
   getBulbMaxBrightness,
-  getBulbPosition
+  getBulbPosition,
+  normalizeAmbilightIp
 } from "../../../data/local/ambilightSettingsStore.js";
 import { AmbilightController } from "../../../core/ambilight/ambilightController.js";
-import { ambilightPositionLabel, ambilightStripStartLabel } from "./settingsScreenPlaybackMarkup-07-ambilight.js";
+import {
+  ambilightLayoutLabel,
+  ambilightPositionLabel,
+  ambilightSmoothingLabel,
+  ambilightStripStartLabel
+} from "./settingsScreenPlaybackMarkup-07-ambilight.js";
 
 export function registerPlaybackAmbilightActions() {
   const { t } = internals;
@@ -54,6 +64,62 @@ export function registerPlaybackAmbilightActions() {
   this.actionMap.set("playback:ambilightStripEnabled", () => {
     AmbilightSettingsStore.setStrip({ enabled: !AmbilightSettingsStore.get().strip.enabled });
     AmbilightController.applySettings();
+  });
+  this.actionMap.set("playback:ambilightBlackoutOnPause", () => {
+    AmbilightController.updateConfig({ blackoutOnPause: !AmbilightSettingsStore.get().blackoutOnPause });
+  });
+  this.actionMap.set("playback:ambilightStripIp", () => {
+    this.openTextDialog({
+      title: t("settings.playback.ambilight.strip.ip.title", {}, "Strip address"),
+      value: AmbilightSettingsStore.get().strip.ip,
+      placeholder: AMBILIGHT_DEFAULT_STRIP_IP,
+      returnFocusKey: "playback:ambilightStripIp",
+      onSubmit: (value) => {
+        const ip = normalizeAmbilightIp(value);
+        if (!ip) {
+          if (this.textDialog) {
+            this.textDialog.statusMessage = t("settings.playback.ambilight.strip.ip.invalid", {}, "Enter an address like 192.168.1.20.");
+            this.textDialog.statusKind = "error";
+          }
+          return false;
+        }
+        AmbilightController.updateConfig({ strip: { ip } });
+        return true;
+      }
+    });
+  });
+  this.actionMap.set("playback:ambilightStripLayout", () => {
+    this.openOptionDialog({
+      title: t("settings.playback.ambilight.strip.layout.title", {}, "Strip layout"),
+      options: AMBILIGHT_STRIP_LAYOUTS.map((layout) => ({ id: layout.id, label: ambilightLayoutLabel(layout) })),
+      selectedId: AmbilightSettingsStore.get().strip.layout,
+      returnFocusKey: "playback:ambilightStripLayout",
+      onSelect: (option) => {
+        AmbilightController.updateConfig({ strip: { layout: String(option.id) } });
+      }
+    });
+  });
+  this.actionMap.set("playback:ambilightStripSaturation", () => {
+    this.openOptionDialog({
+      title: t("settings.playback.ambilight.strip.saturation.title", {}, "Strip saturation"),
+      options: AMBILIGHT_SATURATION_OPTIONS.map((value) => ({ id: value, label: `${value}%` })),
+      selectedId: AmbilightSettingsStore.get().strip.saturation,
+      returnFocusKey: "playback:ambilightStripSaturation",
+      onSelect: (option) => {
+        AmbilightController.updateConfig({ strip: { saturation: Number(option.id) } });
+      }
+    });
+  });
+  this.actionMap.set("playback:ambilightStripSmoothing", () => {
+    this.openOptionDialog({
+      title: t("settings.playback.ambilight.strip.smoothing.title", {}, "Strip smoothing"),
+      options: AMBILIGHT_SMOOTHING_OPTIONS.map((value) => ({ id: value, label: ambilightSmoothingLabel(value) })),
+      selectedId: AmbilightSettingsStore.get().strip.smoothing,
+      returnFocusKey: "playback:ambilightStripSmoothing",
+      onSelect: (option) => {
+        AmbilightController.updateConfig({ strip: { smoothing: String(option.id) } });
+      }
+    });
   });
   this.actionMap.set("playback:ambilightStripStatus", async () => {
     try {
