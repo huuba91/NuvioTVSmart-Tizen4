@@ -31,6 +31,22 @@ import { WATCH_PROGRESS_UNKNOWN_DURATION_PERCENT } from "../../domain/model/watc
 import { parseAspectRatio } from "./playerAspect.js";
 import { canFallbackFromPlaybackEngine } from "./playbackEngineFallbackPolicy.js";
 import { buildTizenAddonHlsProxyUrl } from "./tizenAddonHlsProxy.js";
+import {
+  choosePreferredPlaybackEngine,
+  computePlaybackEngineCandidates,
+  isEngineFsUrl,
+  isRemoteDirectHttpUrl
+} from "./backends/engineCandidates.js";
+import { decidePlayback } from "./backends/playbackDecision.js";
+import {
+  createPlayerEventEmitter,
+  MEDIA_EVENT_TO_BACKEND_EVENT
+} from "./backends/playerBackend.js";
+import { createAvplayBackend } from "./backends/avplayBackend.js";
+import { createHtml5Backend, HTML5_ENGINES } from "./backends/html5Backend.js";
+import { inspectStream } from "./inspection/streamInspection.js";
+import { AmbilightController } from "../ambilight/ambilightController.js";
+import { AmbilightSettingsStore } from "../../data/local/ambilightSettingsStore.js";
 
 import { createPlayerControllerMethods01 } from "./playerControllerMethods-01-is-expected-play-interruption.js";
 import { createPlayerControllerMethods02 } from "./playerControllerMethods-02-is-likely-direct-file-url.js";
@@ -52,6 +68,7 @@ import { createPlayerControllerMethods17 } from "./playerControllerMethods-17-sa
 import { createPlayerControllerMethods18 } from "./playerControllerMethods-18-play.js";
 import { createPlayerControllerMethods19 } from "./playerControllerMethods-19-pause.js";
 import { createPlayerControllerMethods20 } from "./playerControllerMethods-20-flush-progress.js";
+import { createPlayerControllerMethods21 } from "./playerControllerMethods-21-backend-architecture.js";
 
 export {
   createPlayerControllerMethods01,
@@ -73,7 +90,8 @@ export {
   createPlayerControllerMethods17,
   createPlayerControllerMethods18,
   createPlayerControllerMethods19,
-  createPlayerControllerMethods20
+  createPlayerControllerMethods20,
+  createPlayerControllerMethods21
 };
 export {
   watchProgressRepository,
@@ -103,6 +121,19 @@ export {
   parseAspectRatio,
   canFallbackFromPlaybackEngine,
   buildTizenAddonHlsProxyUrl,
+  choosePreferredPlaybackEngine,
+  computePlaybackEngineCandidates,
+  isEngineFsUrl,
+  isRemoteDirectHttpUrl,
+  decidePlayback,
+  createPlayerEventEmitter,
+  MEDIA_EVENT_TO_BACKEND_EVENT,
+  createAvplayBackend,
+  createHtml5Backend,
+  HTML5_ENGINES,
+  inspectStream,
+  AmbilightController,
+  AmbilightSettingsStore,
   MIN_PROGRESS_SYNC_DURATION_MS,
   WATCH_PROGRESS_SAVE_INTERVAL_MS,
   WATCH_PROGRESS_SAVE_THRESHOLD_MS,
@@ -361,6 +392,19 @@ export const PlayerController = {
   webOsPlaybackRateRequestToken: 0,
   webOsPlaybackRateCommandPromise: null,
   webOsPlaybackRateReapplyPromise: null,
+  // Backend-neutral layer (playerControllerMethods-21).
+  playbackInspection: null,
+  playbackInspectionContext: null,
+  playbackStreamMetadata: null,
+  playbackEngineMediaInfoKey: "",
+  playbackDecision: null,
+  playbackDecisionKey: "",
+  playbackFallbackHistory: [],
+  pepperAnalysisCapabilities: null,
+  playerEventEmitter: null,
+  playerEventBridgeVideo: null,
+  avplayBackendAdapter: null,
+  html5BackendAdapter: null,
   ...createPlayerControllerMethods01(),
   ...createPlayerControllerMethods02(),
   ...createPlayerControllerMethods03(),
@@ -380,5 +424,6 @@ export const PlayerController = {
   ...createPlayerControllerMethods17(),
   ...createPlayerControllerMethods18(),
   ...createPlayerControllerMethods19(),
-  ...createPlayerControllerMethods20()
+  ...createPlayerControllerMethods20(),
+  ...createPlayerControllerMethods21()
 };

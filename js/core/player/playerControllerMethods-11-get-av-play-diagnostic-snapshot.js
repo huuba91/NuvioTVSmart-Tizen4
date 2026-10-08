@@ -168,7 +168,7 @@ export function createPlayerControllerMethods11() {
       }
 
       this.avplayFallbackAttempts.add(url);
-      console.warn("Forcing AVPlay fallback:", { reason, url });
+      this.recordPlaybackFallback(this.playbackEngine, this.getPlatformAvplayEngineName(), reason);
       this.play(url, {
         itemId: this.currentItemId,
         itemType: this.currentItemType || "movie",

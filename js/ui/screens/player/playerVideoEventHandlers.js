@@ -208,12 +208,11 @@ export function createPlayerVideoEventHandlers(video, isTizenAvPlayPlayback) {
         this.paused = false;
         this.sourcesError = null;
         this.updateLoadingVisibility();
-        console.warn("Playback failed during startup; switching player engine", {
-          url: this.activePlaybackUrl,
-          mediaErrorCode,
-          from: PlayerController.playbackEngine,
-          to: targetEngine
-        });
+        PlayerController.recordPlaybackFallback?.(
+          PlayerController.playbackEngine,
+          targetEngine,
+          `startup-error mediaErrorCode=${mediaErrorCode}`
+        );
         void this.playStreamByUrl(this.activePlaybackUrl, {
           preservePanel: true,
           resetSilentAudioState: false,

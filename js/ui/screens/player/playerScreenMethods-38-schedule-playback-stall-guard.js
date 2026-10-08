@@ -179,11 +179,11 @@ export function createPlayerScreenMethods38() {
             ? PlayerController.getAlternativePlaybackEngine(this.activePlaybackUrl)
             : null;
         if (targetEngine && !skipAutomaticPlaybackRecovery) {
-          console.warn("Playback stalled; switching player engine", {
-            url: this.activePlaybackUrl,
-            from: PlayerController.playbackEngine,
-            to: targetEngine
-          });
+          PlayerController.recordPlaybackFallback?.(
+            PlayerController.playbackEngine,
+            targetEngine,
+            startup ? "startup-stall" : "playback-stall"
+          );
           void this.playStreamByUrl(this.activePlaybackUrl, {
             preservePlaybackState: true,
             resetSilentAudioState: false,
